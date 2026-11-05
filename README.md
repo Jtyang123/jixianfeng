@@ -15,7 +15,9 @@
 - 实时运行轨迹：FastAPI SSE 推送调度、需求、RAG、匹配、核验、重规划和交付事件
 - Agent 编排中心：五核心模块、四 Agent 契约、工具注册、DAG 与条件回环可视化
 - 评估中心：基线对比、截断指标、重复计算一致性、需求覆盖和评分维度映射
-- 华为云：`demand_agent` 已完成真实 AgentArts `/invocations` 调用并通过 SSE 解析
+- 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
+- Agent 注册表：动态注册、能力发现、版本发布与在线切换
+- 安全与审计：登录、四类角色、失败锁定和操作审计
 - 交付结果：方案对比、调拨明细、评分、风险提示、执行清单和打印报告
 - 演练兜底：本地确定性编排不依赖外网，AgentArts 适配器可单独接入
 - 真实运营事件：手工确认事件，预留 Webhook 接入
@@ -32,47 +34,44 @@
 - 实时通信：Server-Sent Events
 - 数据上传：CSV / XLSX
 
-## 快速启动
+## 零配置运行
 
-### 1. 安装后端依赖
+默认使用 SQLite、演练数据和本地智能体回退，不需要华为云、高德 Key 或 PostgreSQL 也能运行。
 
-```powershell
-cd D:\tentative
-pip install -r backend\requirements.txt
-```
-
-### 2. 构建前端
+### Windows
 
 ```powershell
-cd D:\tentative\frontend
-$env:PATH = 'D:\node;' + $env:PATH
-npm install
-npm run build
+git clone https://github.com/Jtyang123/jixianfeng.git
+cd jixianfeng
+.\setup.cmd
+.\start.cmd
 ```
 
-### 3. 启动系统
+### Linux/macOS
 
-```powershell
-cd D:\tentative
-.\start.ps1
+```bash
+chmod +x setup.sh start.sh
+./setup.sh
+./start.sh
 ```
 
-浏览器打开 `http://127.0.0.1:8010`。
+### Docker
 
-也可以分别启动：
-
-```powershell
-cd backend
-python -m uvicorn app.main:app --reload --port 8000
+```bash
+docker compose up --build -d
 ```
 
-```powershell
-cd frontend
-$env:PATH = 'D:\node;' + $env:PATH
-npm run dev
-```
+访问：`http://127.0.0.1:8010`。
 
-开发模式访问 `http://127.0.0.1:5173`。
+安装要求：Python 3.10+、Node.js 18+、npm；Docker Compose 可选。`setup` 会自动创建 `.venv`、安装依赖、构建前端，并在缺少 `.env` 时从 `.env.example` 创建。
+
+未配置华为云 AgentArts 时使用本地四智能体执行器；未配置高德时手工填写经纬度；未配置 PostgreSQL 时使用 SQLite。
+
+> 为保护账号安全，云端 API Key、管理员密码和本地业务数据库不会上传 GitHub。下载者填写自己的 Key 后即可获得相同的云端能力；不填写时使用本地回退。
+
+## 可选外部服务
+
+编辑 `.env` 可启用 AgentArts、高德地址解析、PostgreSQL 和自建 OSRM。任何 `.env` 和 API Key 都不得提交到 Git。
 
 ## 推荐演示流程
 
@@ -201,7 +200,7 @@ cd backend
 pytest -q
 ```
 
-测试覆盖两轮核验闭环、Agent 编排产物、RAG 证据、基准评估、物资导入、库存快照和 API 主流程。当前结果：4 passed。
+测试覆盖两轮核验闭环、四智能体编排、AgentArts 适配、动态 Agent 注册、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：15 passed。
 
 ## 边界说明
 

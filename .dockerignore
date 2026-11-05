@@ -7,3 +7,7 @@ data/pgdata
 __pycache__
 .pytest_cache
 docs/screenshots
+.edge-*
+data
+release
+docs

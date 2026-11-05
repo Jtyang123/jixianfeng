@@ -8,7 +8,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8000`。
+访问 `http://服务器IP:8010`。
 
 ## 二、华为云 ECS 部署
 
