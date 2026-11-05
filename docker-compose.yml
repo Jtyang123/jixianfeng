@@ -1,0 +1,39 @@
+﻿services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: farmmatch
+      POSTGRES_USER: farmmatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
+    volumes:
+      - farmmatch_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farmmatch -d farmmatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://farmmatch:${POSTGRES_PASSWORD:-change-me-in-production}@db:5432/farmmatch
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-local}
+      AGENTARTS_ENABLED: ${AGENTARTS_ENABLED:-false}
+      AGENTARTS_BASE_URL: ${AGENTARTS_BASE_URL:-}
+      AGENTARTS_API_KEY: ${AGENTARTS_API_KEY:-}
+      AGENTARTS_INVOKE_PATH: ${AGENTARTS_INVOKE_PATH:-/invocations}
+      AGENTARTS_AGENT_ENDPOINTS_JSON: ${AGENTARTS_AGENT_ENDPOINTS_JSON:-{}}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    ports:
+      - "8000:8000"
+
+volumes:
+  farmmatch_pgdata:

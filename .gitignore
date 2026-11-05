@@ -1,0 +1,27 @@
+﻿node_modules/
+frontend/dist/
+__pycache__/
+*.py[cod]
+*.db
+.env
+.venv/
+.pytest_cache/
+.DS_Store
+data/pgdata/
+data/postgres.log
+server.pid
+
+# Local runtime and secrets
+data/
+.edge-*
+release/
+docs/a03-endpoint-crop.png
+docs/a04-key-crop.png
+docs/急先锋_项目方案书.pdf
+docs/急先锋_项目讲解PPT.pptx
+docs/急先锋_初赛提交包.zip
+docs/*-verify.png
+
+# Generated review artifacts
+/$null
+docs/competition_deck_text.txt

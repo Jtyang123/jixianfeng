@@ -1,0 +1,3 @@
+﻿仓库编码,物资编码,数量,单位,批次号,有效期,状态
+WH-A,MAT-WATER-001,9000,瓶,BATCH-WATER-A1,2027-11-01,available
+WH-B,MAT-FOOD-001,2200,盒,BATCH-FOOD-B1,2027-11-01,available

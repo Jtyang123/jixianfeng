@@ -1,0 +1,38 @@
+﻿{
+  "workflow": "jixianfeng-emergency-dispatch",
+  "runtime_contract": "AgentArts callers send {run_id, input_artifact_ids, constraints, data_scope} and return AgentResult.",
+  "agents": [
+    {
+      "id": "demand_agent",
+      "name": "需求研判智能体",
+      "role": "把灾情与安置点信息转化为结构化、可追溯的物资需求。",
+      "tools": ["demand_estimator", "material_catalog_query", "unit_normalizer"],
+      "output_schema": "DemandPlan",
+      "must_not": ["allocate_inventory", "create_routes", "approve_plan"]
+    },
+    {
+      "id": "matching_agent",
+      "name": "资源匹配智能体",
+      "role": "基于上传库存快照、车辆和路网生成多目标候选方案。",
+      "tools": ["inventory_query", "vehicle_query", "route_query", "multi_objective_planner"],
+      "output_schema": "DispatchPlanList",
+      "must_not": ["mutate_inventory", "mark_verified", "dispatch_vehicle"]
+    },
+    {
+      "id": "verifier_agent",
+      "name": "独立核验智能体",
+      "role": "使用原始数据和确定性规则独立审查方案，输出通过、退回或人工介入。",
+      "tools": ["inventory_verify", "capacity_verify", "route_verify", "eta_verify", "rule_engine"],
+      "output_schema": "VerificationReport",
+      "must_not": ["edit_plan", "read_generator_chain_of_thought"]
+    },
+    {
+      "id": "delivery_agent",
+      "name": "方案交付智能体",
+      "role": "汇总已通过核验的方案，生成对比、风险提示、执行清单和报告。",
+      "tools": ["plan_comparator", "report_renderer", "export_pdf"],
+      "output_schema": "DeliveryPackage",
+      "must_not": ["change_plan_numbers", "hide_risks", "approve_without_human"]
+    }
+  ]
+}

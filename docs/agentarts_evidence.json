@@ -1,0 +1,211 @@
+{
+  "run_id": "RUN-20261104-174349-9A1D",
+  "status": "awaiting_approval",
+  "runtime": "agentarts",
+  "agentarts_status": {
+    "enabled": true,
+    "runtime": "huaweicloud-agentarts",
+    "protocol": "AgentArts SDK /invocations",
+    "base_url_configured": false,
+    "api_key_configured": true,
+    "agent_endpoints": [
+      "demand_agent"
+    ],
+    "invoke_path": "/invocations",
+    "session_header": "x-hw-agentarts-session-id",
+    "stream_parser": "sse+json",
+    "fallback": "local-deterministic"
+  },
+  "workflow": "farmmatch-demand-v1",
+  "model": "DeepSeek-V4.1-Flash-1017",
+  "trace_mode": "agentarts",
+  "stream_events": 7,
+  "text": "{\"summary\":\"基于18条安置点需求汇总为6类物资需求；P0为饮用水、自热食品、急救药品包，P1为帐篷、发电机、口罩；数量按输入汇总，未进行库存扣减、仓库分配或运输方案生成。\",\"items\":[{\"material_code\":\"MAT-WATER-001\",\"material_name\":\"瓶装饮用水\",\"quantity\":12000,\"unit\":\"瓶\",\"priority\":\"P0\",\"deadline_hours\":6.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=4200、DST-02=3600、DST-03=4200\",\"KB-DEMAND-001：饮用水按每人每日1.5升起步测算\"]},{\"material_code\":\"MAT-FOOD-001\",\"material_name\":\"自热方便食品\",\"quantity\":6000,\"unit\":\"盒\",\"priority\":\"P0\",\"deadline_hours\":8.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100\",\"KB-DEMAND-001：按安置人口和保障时长测算食品需求\"]},{\"material_code\":\"MAT-MED-001\",\"material_name\":\"急救药品包\",\"quantity\":300,\"unit\":\"包\",\"priority\":\"P0\",\"deadline_hours\":6.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=105、DST-02=90、DST-03=105\",\"KB-DEMAND-001：II级灾害需提高医疗保障优先级\"]},{\"material_code\":\"MAT-TENT-001\",\"material_name\":\"12㎡救灾帐篷\",\"quantity\":180,\"unit\":\"顶\",\"priority\":\"P1\",\"deadline_hours\":12.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=63、DST-02=54、DST-03=63\",\"输入优先级P1及时限12小时\"]},{\"material_code\":\"MAT-GEN-001\",\"material_name\":\"5kW汽油发电机\",\"quantity\":16.0,\"unit\":\"台\",\"priority\":\"P1\",\"deadline_hours\":10.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=5.6、DST-02=4.8、DST-03=5.6，合计16.0台\",\"KB-DEMAND-001：II级灾害需提高照明保障优先级\"]},{\"material_code\":\"MAT-MASK-001\",\"material_name\":\"医用防护口罩\",\"quantity\":6000,\"unit\":\"只\",\"priority\":\"P1\",\"deadline_hours\":8.0,\"basis\":[\"输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100\",\"输入优先级P1及时限8小时\"]}],\"assumptions\":[\"需求计划按物资编码汇总18条安置点需求，未扣减库存。\",\"未生成仓库分配、车辆、路线或运输方案；相关约束由后续环节处理。\",\"发电机输入为小数台数，汇总为16.0台；是否按整台取整需业务确认。\",\"优先级和时限沿用输入；P0物资优先保障。\",\"未虚构库存、仓库、车辆、路线或认证信息。\"],\"evidence_refs\":[\"KB-DEMAND-001\"],\"confidence\":0.9}",
+  "parsed": {
+    "summary": "基于18条安置点需求汇总为6类物资需求；P0为饮用水、自热食品、急救药品包，P1为帐篷、发电机、口罩；数量按输入汇总，未进行库存扣减、仓库分配或运输方案生成。",
+    "items": [
+      {
+        "material_code": "MAT-WATER-001",
+        "material_name": "瓶装饮用水",
+        "quantity": 12000,
+        "unit": "瓶",
+        "priority": "P0",
+        "deadline_hours": 6.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=4200、DST-02=3600、DST-03=4200",
+          "KB-DEMAND-001：饮用水按每人每日1.5升起步测算"
+        ]
+      },
+      {
+        "material_code": "MAT-FOOD-001",
+        "material_name": "自热方便食品",
+        "quantity": 6000,
+        "unit": "盒",
+        "priority": "P0",
+        "deadline_hours": 8.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100",
+          "KB-DEMAND-001：按安置人口和保障时长测算食品需求"
+        ]
+      },
+      {
+        "material_code": "MAT-MED-001",
+        "material_name": "急救药品包",
+        "quantity": 300,
+        "unit": "包",
+        "priority": "P0",
+        "deadline_hours": 6.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=105、DST-02=90、DST-03=105",
+          "KB-DEMAND-001：II级灾害需提高医疗保障优先级"
+        ]
+      },
+      {
+        "material_code": "MAT-TENT-001",
+        "material_name": "12㎡救灾帐篷",
+        "quantity": 180,
+        "unit": "顶",
+        "priority": "P1",
+        "deadline_hours": 12.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=63、DST-02=54、DST-03=63",
+          "输入优先级P1及时限12小时"
+        ]
+      },
+      {
+        "material_code": "MAT-GEN-001",
+        "material_name": "5kW汽油发电机",
+        "quantity": 16.0,
+        "unit": "台",
+        "priority": "P1",
+        "deadline_hours": 10.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=5.6、DST-02=4.8、DST-03=5.6，合计16.0台",
+          "KB-DEMAND-001：II级灾害需提高照明保障优先级"
+        ]
+      },
+      {
+        "material_code": "MAT-MASK-001",
+        "material_name": "医用防护口罩",
+        "quantity": 6000,
+        "unit": "只",
+        "priority": "P1",
+        "deadline_hours": 8.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100",
+          "输入优先级P1及时限8小时"
+        ]
+      }
+    ],
+    "assumptions": [
+      "需求计划按物资编码汇总18条安置点需求，未扣减库存。",
+      "未生成仓库分配、车辆、路线或运输方案；相关约束由后续环节处理。",
+      "发电机输入为小数台数，汇总为16.0台；是否按整台取整需业务确认。",
+      "优先级和时限沿用输入；P0物资优先保障。",
+      "未虚构库存、仓库、车辆、路线或认证信息。"
+    ],
+    "evidence_refs": [
+      "KB-DEMAND-001"
+    ],
+    "confidence": 0.9
+  },
+  "demand_interpretation": {
+    "summary": "基于18条安置点需求汇总为6类物资需求；P0为饮用水、自热食品、急救药品包，P1为帐篷、发电机、口罩；数量按输入汇总，未进行库存扣减、仓库分配或运输方案生成。",
+    "items": [
+      {
+        "material_code": "MAT-WATER-001",
+        "material_name": "瓶装饮用水",
+        "quantity": 12000,
+        "unit": "瓶",
+        "priority": "P0",
+        "deadline_hours": 6.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=4200、DST-02=3600、DST-03=4200",
+          "KB-DEMAND-001：饮用水按每人每日1.5升起步测算"
+        ]
+      },
+      {
+        "material_code": "MAT-FOOD-001",
+        "material_name": "自热方便食品",
+        "quantity": 6000,
+        "unit": "盒",
+        "priority": "P0",
+        "deadline_hours": 8.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100",
+          "KB-DEMAND-001：按安置人口和保障时长测算食品需求"
+        ]
+      },
+      {
+        "material_code": "MAT-MED-001",
+        "material_name": "急救药品包",
+        "quantity": 300,
+        "unit": "包",
+        "priority": "P0",
+        "deadline_hours": 6.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=105、DST-02=90、DST-03=105",
+          "KB-DEMAND-001：II级灾害需提高医疗保障优先级"
+        ]
+      },
+      {
+        "material_code": "MAT-TENT-001",
+        "material_name": "12㎡救灾帐篷",
+        "quantity": 180,
+        "unit": "顶",
+        "priority": "P1",
+        "deadline_hours": 12.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=63、DST-02=54、DST-03=63",
+          "输入优先级P1及时限12小时"
+        ]
+      },
+      {
+        "material_code": "MAT-GEN-001",
+        "material_name": "5kW汽油发电机",
+        "quantity": 16.0,
+        "unit": "台",
+        "priority": "P1",
+        "deadline_hours": 10.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=5.6、DST-02=4.8、DST-03=5.6，合计16.0台",
+          "KB-DEMAND-001：II级灾害需提高照明保障优先级"
+        ]
+      },
+      {
+        "material_code": "MAT-MASK-001",
+        "material_name": "医用防护口罩",
+        "quantity": 6000,
+        "unit": "只",
+        "priority": "P1",
+        "deadline_hours": 8.0,
+        "basis": [
+          "输入需求拆分18条汇总；DST-01=2100、DST-02=1800、DST-03=2100",
+          "输入优先级P1及时限8小时"
+        ]
+      }
+    ],
+    "assumptions": [
+      "需求计划按物资编码汇总18条安置点需求，未扣减库存。",
+      "未生成仓库分配、车辆、路线或运输方案；相关约束由后续环节处理。",
+      "发电机输入为小数台数，汇总为16.0台；是否按整台取整需业务确认。",
+      "优先级和时限沿用输入；P0物资优先保障。",
+      "未虚构库存、仓库、车辆、路线或认证信息。"
+    ],
+    "evidence_refs": [
+      "KB-DEMAND-001"
+    ],
+    "confidence": 0.9
+  },
+  "loop_metrics": {
+    "attempts": 2,
+    "initial_score": 0,
+    "final_score": 100,
+    "score_gain": 100,
+    "blockers_found": 7,
+    "final_blockers": 0,
+    "closed_routes_excluded": 12,
+    "converged": true
+  },
+  "final_verification_score": 100
+}

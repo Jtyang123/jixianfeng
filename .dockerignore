@@ -1,0 +1,9 @@
+﻿node_modules
+frontend/dist
+.git
+.env
+data/pgdata
+*.db
+__pycache__
+.pytest_cache
+docs/screenshots

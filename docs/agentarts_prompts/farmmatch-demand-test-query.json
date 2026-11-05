@@ -1,0 +1,38 @@
+﻿{
+  "agent_id": "demand_agent",
+  "session_id": "AGENTARTS-TEST-001",
+  "task": {
+    "scenario": {
+      "event_type": "暴雨洪涝",
+      "severity": "II级",
+      "location": "武汉市·模拟沿江区",
+      "affected_population": 12000
+    },
+    "demand_items": [
+      {
+        "material_code": "MAT-WATER-001",
+        "material_name": "瓶装饮用水",
+        "quantity": 12000,
+        "priority": "P0",
+        "deadline_hours": 6
+      },
+      {
+        "material_code": "MAT-MED-001",
+        "material_name": "急救药品包",
+        "quantity": 300,
+        "priority": "P0",
+        "deadline_hours": 6
+      }
+    ],
+    "evidence": [
+      {
+        "id": "KB-DEMAND-001",
+        "title": "安置点生活保障需求测算规则"
+      }
+    ]
+  },
+  "constraints": [
+    "不得虚构库存、路线或认证信息",
+    "只输出JSON"
+  ]
+}
