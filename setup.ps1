@@ -8,9 +8,41 @@ Set-Location $Root
 
 $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $pythonCmd) { throw 'Python 3.10+ is required. Install Python and enable Add Python to PATH.' }
+
+function Find-ExecutablePair {
+    param([string[]]$Candidates)
+    foreach ($candidate in $Candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCmd) {
+    $nodePath = Find-ExecutablePair @(
+        'D:\node\node.exe',
+        'C:\Program Files\nodejs\node.exe',
+        (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\node.exe')
+    )
+    if ($nodePath) {
+        $nodeDir = Split-Path -Parent $nodePath
+        $env:PATH = "$nodeDir;$env:PATH"
+        $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    }
+}
 $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
-if (-not $SkipFrontend -and (-not $nodeCmd -or -not $npmCmd)) { throw 'Node.js 18+ and npm are required for the frontend.' }
+if (-not $npmCmd -and $nodeCmd) {
+    $npmPath = Find-ExecutablePair @(
+        (Join-Path (Split-Path -Parent $nodeCmd.Source) 'npm.cmd'),
+        'D:\node\npm.cmd',
+        'C:\Program Files\nodejs\npm.cmd',
+        (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\npm.cmd')
+    )
+    if ($npmPath) { $npmCmd = Get-Command $npmPath -ErrorAction SilentlyContinue }
+}
+if (-not $SkipFrontend -and (-not $nodeCmd -or -not $npmCmd)) {
+    throw 'Node.js 18+ and npm are required. Install Node.js, reopen PowerShell, then run setup.cmd again.'
+}
 
 $venv = Join-Path $Root '.venv'
 $venvPython = Join-Path $venv 'Scripts\python.exe'

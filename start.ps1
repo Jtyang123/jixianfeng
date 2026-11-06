@@ -16,6 +16,19 @@ if (-not (Test-Path (Join-Path $Root '.env')) -and (Test-Path (Join-Path $Root '
 $distIndex = Join-Path $Root 'frontend\dist\index.html'
 if (-not $NoBuild -and ($Build -or -not (Test-Path $distIndex))) {
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        $nodeCandidates = @(
+            'D:\node\node.exe',
+            'C:\Program Files\nodejs\node.exe',
+            (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\node.exe')
+        )
+        $nodePath = $nodeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($nodePath) {
+            $nodeDir = Split-Path -Parent $nodePath
+            $env:PATH = "$nodeDir;$env:PATH"
+            $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+        }
+    }
     if (-not $npm) { throw 'Frontend build is missing and npm was not found. Run setup.cmd first.' }
     Push-Location (Join-Path $Root 'frontend')
     try {
