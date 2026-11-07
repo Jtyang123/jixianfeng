@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, Bell, ChevronRight, Database, History, KeyRound, LayoutDashboard, LogOut,
-  Menu, Network, ShieldCheck, UserRound, X,
+  Menu, Network, ShieldCheck, UserPlus, UserRound, X,
 } from 'lucide-vue-next'
 import Workbench from './views/Workbench.vue'
 import DataCenter from './views/DataCenter.vue'
@@ -86,6 +86,13 @@ function handleUnauthorized() {
   authRequired.value = true
 }
 
+function openAccountManagement() {
+  navigate('orchestration')
+  const url = new URL(window.location.href)
+  url.searchParams.set('tab', 'access')
+  window.history.replaceState({}, '', url)
+}
+
 function navigate(id) {
   active.value = id
   sidebarOpen.value = false
@@ -167,6 +174,7 @@ onBeforeUnmount(() => window.removeEventListener('farmmatch:unauthorized', handl
           <span class="simulation-chip"><span />{{ systemStatus.readiness?.mode === 'operational' ? '运营数据' : '演练数据' }}</span>
           <button class="icon-button" title="通知"><Bell :size="19" /></button>
           <div class="auth-user-chip"><UserRound :size="15" /><span><strong>{{ authUser?.display_name }}</strong><small>{{ authUser?.role_label }}</small></span></div>
+          <button v-if="authUser?.role === 'admin'" class="auth-manage-button" @click="openAccountManagement"><UserPlus :size="15" />账号管理</button>
           <button class="icon-button" title="修改密码" @click="passwordDialogOpen = true"><KeyRound :size="16" /></button>
           <button class="icon-button" title="退出登录" @click="logout"><LogOut :size="17" /></button>
         </div>

@@ -979,3 +979,6 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .registry-form-actions > span { display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 900px) { .registry-agent-grid { grid-template-columns: 1fr; } .registry-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 620px) { .registry-form-grid { grid-template-columns: 1fr; } }
+
+.auth-manage-button { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; color:var(--teal); background:var(--teal-soft); border:1px solid #c9e1d7; border-radius:8px; font-size:9px; font-weight:700; white-space:nowrap; }
+@media (max-width: 900px) { .auth-manage-button { display:none; } }
