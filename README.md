@@ -110,6 +110,7 @@ docker compose up --build -d
 - 评分标准对齐：`docs/评分标准对齐清单.md`
 - Agent 设计：`docs/AGENT_DESIGN.md`
 - AgentArts 联调记录：`docs/AGENTARTS_VERIFICATION.md`
+- 队友上手说明：`docs/TEAMMATE_GUIDE.md`
 - 系统截图：`docs/screenshots/`
 
 如需重新生成 HTML、PDF 与 PPT：
