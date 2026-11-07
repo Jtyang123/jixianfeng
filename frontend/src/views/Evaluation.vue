@@ -22,7 +22,7 @@ const featureChecks = computed(() => [
   { label: '负载感知调度', status: true, evidence: '延迟、失败率、排队负载调整优先级' },
   { label: 'AgentArts 决策闭环', status: true, evidence: '云端推荐参与已核验方案排序' },
   { label: '独立结果验证', status: true, evidence: '确定性硬规则 + 隔离上下文' },
-  { label: '自我循环与反馈优化', status: true, evidence: '结构化退回、重算、收敛' },
+  { label: '自我循环与反馈优化', status: true, evidence: '问题分类、策略切换、多轮收敛' },
   { label: 'RAG 与证据链', status: true, evidence: '6 条规则文档与引用编号' },
 ])
 
@@ -119,7 +119,7 @@ onMounted(load)
 
       <section class="content-card diagnostics-card">
         <div class="workflow-head">
-          <div><div class="eyebrow">STRESS & FAULT INJECTION</div><h2>并发压力、故障注入与误差分析</h2><p>完整两轮闭环分别在 1/5/10/20 并发下执行，并验证外部依赖故障时的安全降级。</p></div>
+          <div><div class="eyebrow">STRESS & FAULT INJECTION</div><h2>并发压力、故障注入与误差分析</h2><p>完整自适应闭环分别在 1/5/10/20 并发下执行，并验证外部依赖故障时的安全降级。</p></div>
           <button class="secondary-action" :disabled="diagnosticsLoading" @click="runDiagnostics"><Play :size="16" />{{ diagnosticsLoading ? '正在执行…' : '运行诊断' }}</button>
         </div>
         <div v-if="diagnosticsError" class="inline-error">{{ diagnosticsError }}</div>
@@ -175,7 +175,7 @@ onMounted(load)
           <article><span>闭环收敛率</span><strong>{{ (benchmark.quantitative.multi_agent.convergence_rate * 100).toFixed(1) }}%</strong><small>重算率 {{ (benchmark.quantitative.multi_agent.rework_rate * 100).toFixed(1) }}%</small></article>
         </div>
         <div class="table-wrap quantitative-table-wrap">
-          <table class="data-table"><thead><tr><th>指标</th><th>单 Agent / 无核验</th><th>多 Agent / 两轮核验</th><th>变化</th></tr></thead><tbody>
+          <table class="data-table"><thead><tr><th>指标</th><th>单 Agent / 无核验</th><th>多 Agent / 自适应多轮</th><th>变化</th></tr></thead><tbody>
             <tr v-for="row in benchmark.quantitative_rows" :key="row.metric"><td><strong>{{ row.metric }}</strong></td><td>{{ row.baseline }}</td><td>{{ row.multi }}</td><td><span class="quantitative-change">{{ row.change }}</span></td></tr>
           </tbody></table>
         </div>

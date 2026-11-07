@@ -60,6 +60,8 @@ def test_api_run_flow(tmp_path: Path):
     assert run["result"]["final_verification"]["verdict"] == "pass"
     assert run["result"]["delivery"]["status"] == "ready"
     assert len(run["result"]["rounds"]) == 2
+    assert run["result"]["loop_metrics"]["adaptive_categories"] == ["道路通行"]
+    assert run["result"]["rework_directives"][0]["policies"]["route_policy"] == "exclude_closed_routes"
     assert run["result"]["orchestration"]["parallel_branch"] is True
     assert len(run["result"]["retrieval"]) >= 2
     assert run["result"]["loop_metrics"]["converged"] is True

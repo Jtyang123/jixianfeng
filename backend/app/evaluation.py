@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from .agentarts import AgentArtsBridge, AgentArtsError
-from .agents import build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
+from .agents import build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
 from .database import Database
 from .orchestrator import _parse_json_text
 from .routing import generate_route_candidates
@@ -73,8 +73,9 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         demand = build_demand_plan(request, materials, destinations)
         plans_v1 = generate_plans(demand, inventory, warehouses, routes, vehicles, 1, closed_routes)
         verification_v1 = verify_plans(plans_v1, demand, inventory, routes, vehicles, closed_routes)
-        plans_v2 = generate_plans(demand, inventory, warehouses, routes, vehicles, 2, closed_routes)
-        verification_v2 = verify_plans(plans_v2, demand, inventory, routes, vehicles, closed_routes)
+        plans_v2, verification_v2, _, _ = _solve_adaptively(
+            demand, inventory, warehouses, routes, vehicles, closed_routes
+        )
         elapsed = (time.perf_counter() - started) * 1000
         return elapsed, demand, plans_v1, verification_v1, plans_v2, verification_v2
 
@@ -122,7 +123,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "reproducible": baseline_reproducible,
         },
         "multi_agent": {
-            "label": "多 Agent / 两轮独立核验",
+            "label": "多 Agent / 自适应多轮核验",
             "unsafe_acceptance_rate": multi_unsafe_acceptance,
             "risk_detection_rate": risk_detection_rate,
             "final_safe": verification_v2["verdict"] == "pass",
@@ -177,7 +178,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         "comparison": [
             {"label": "单 Agent / 无独立核验", "score": baseline_score, "unsafe_plans": len(plans_v1), "passed": False},
             {"label": "第一轮生成 / 核验退回", "score": verification_v1["score"], "unsafe_plans": len(plans_v1), "passed": False},
-            {"label": "多 Agent / 两轮闭环", "score": verification_v2["score"], "unsafe_plans": 0, "passed": verification_v2["verdict"] == "pass"},
+            {"label": "多 Agent / 自适应多轮闭环", "score": verification_v2["score"], "unsafe_plans": 0, "passed": verification_v2["verdict"] == "pass"},
         ],
         "notes": [
             f"基线 vs 多 Agent 各重复运行 {repetitions} 次，使用同一库存快照和同一事件约束。",
@@ -230,6 +231,35 @@ def _diagnostic_fixture(db: Database) -> dict:
     }
 
 
+def _solve_adaptively(
+    demand: dict,
+    inventory: list[dict],
+    warehouses: list[dict],
+    routes: list[dict],
+    vehicles: list[dict],
+    closed_routes: list[str],
+    max_attempts: int = 3,
+) -> tuple[list[dict], dict, list[dict], list[dict]]:
+    plans = generate_plans(demand, inventory, warehouses, routes, vehicles, 1, closed_routes)
+    rounds: list[dict] = []
+    directives: list[dict] = []
+    while len(rounds) < max_attempts:
+        attempt = len(rounds) + 1
+        verification = verify_plans(plans, demand, inventory, routes, vehicles, closed_routes)
+        rounds.append({"attempt": attempt, "plans": plans, "verification": verification})
+        if verification["verdict"] == "pass":
+            break
+        next_attempt = attempt + 1
+        directive = build_rework_directive(verification, next_attempt)
+        if not directive["can_retry"]:
+            break
+        directives.append(directive)
+        plans = generate_plans(
+            demand, inventory, warehouses, routes, vehicles,
+            attempt=next_attempt, closed_routes=closed_routes, rework_directive=directive,
+        )
+    return plans, rounds[-1]["verification"], rounds, directives
+
 def _run_multi_pipeline(fixture: dict) -> dict:
     started = time.perf_counter()
     demand = build_demand_plan(fixture["request"], fixture["materials"], fixture["destinations"])
@@ -241,32 +271,30 @@ def _run_multi_pipeline(fixture: dict) -> dict:
         plans_v1, demand, fixture["inventory"], fixture["routes"],
         fixture["vehicles"], fixture["scenario"]["closed_routes"],
     )
-    plans_v2 = generate_plans(
+    final_plans, final_verification, rounds, directives = _solve_adaptively(
         demand, fixture["inventory"], fixture["warehouses"], fixture["routes"],
-        fixture["vehicles"], 2, fixture["scenario"]["closed_routes"],
-    )
-    verification_v2 = verify_plans(
-        plans_v2, demand, fixture["inventory"], fixture["routes"],
         fixture["vehicles"], fixture["scenario"]["closed_routes"],
     )
     return {
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
         "initial_verdict": verification_v1["verdict"],
-        "final_verdict": verification_v2["verdict"],
+        "final_verdict": final_verification["verdict"],
         "initial_blockers": verification_v1["blocker_summary"],
-        "final_blockers": verification_v2["blocker_summary"],
+        "final_blockers": final_verification["blocker_summary"],
         "initial_warnings": sorted({
             warning["code"] for report in verification_v1["reports"]
             for warning in report["verification"]["warnings"]
         }),
-        "final_score": verification_v2["score"],
+        "attempts": len(rounds),
+        "adaptive_categories": sorted({
+            category for directive in directives for category in directive["categories"]
+        }),
+        "final_score": final_verification["score"],
         "final_coverage": max(
-            (report["metrics"]["coverage"] for report in verification_v2["reports"]), default=0.0
+            (report["metrics"]["coverage"] for report in final_verification["reports"]), default=0.0
         ),
-        "signature": json.dumps(_signature(verification_v2), ensure_ascii=False, sort_keys=True),
+        "signature": json.dumps(_signature(final_verification), ensure_ascii=False, sort_keys=True),
     }
-
-
 async def _run_concurrency_level(level: int, fixture: dict) -> dict:
     semaphore = asyncio.Semaphore(level)
     samples = level
@@ -399,13 +427,10 @@ def _vehicle_shortage_probe(fixture: dict) -> dict:
         plans, demand, fixture["inventory"], fixture["routes"], [],
         fixture["scenario"]["closed_routes"],
     )
-    codes = sorted({
-        warning["code"] for report in verification["reports"]
-        for warning in report["verification"]["warnings"] if warning["code"].startswith("VEHICLE-")
-    })
+    codes = [code for code in verification["blocker_summary"] if code.startswith("VEHICLE-")]
     return {
-        "passed": bool(codes),
-        "observed": f"识别运力告警 {len(codes)} 个：{', '.join(codes[:5])}" if codes else "未识别运力不足",
+        "passed": verification["verdict"] == "rework" and bool(codes),
+        "observed": f"识别运力硬阻断 {len(codes)} 个：{', '.join(codes[:5])}" if codes else "未识别运力不足",
     }
 
 
@@ -581,7 +606,7 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
                 if all_passed else "存在未达到预期的诊断项，请查看失败证据。"
             ),
             "notes": [
-                "并发测试使用同一冻结库存快照，每个并发级别运行相应数量的完整两轮闭环。",
+                "并发测试使用同一冻结库存快照，每个并发级别运行相应数量的完整自适应闭环。",
                 "故障注入是可重复的受控测试：不向公网发送 AgentArts 请求，OSRM 故障由 MockTransport 注入。",
                 "误差归类依据核验器真实阻断/告警代码，不使用人工填写的固定分数。",
             ],

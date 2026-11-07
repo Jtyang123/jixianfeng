@@ -79,8 +79,8 @@ WORKFLOW = {
         {"from": "decision", "to": "human_gate", "label": "PASS", "conditional": True},
         {"from": "human_gate", "to": "delivery_agent", "label": "人工确认"},
     ],
-    "max_loop_attempts": 2,
-    "stop_condition": "无硬阻断且核验评分不低于 80，或达到两轮上限转人工研判",
+    "max_loop_attempts": 3,
+    "stop_condition": "无硬阻断且核验评分不低于 80，或资源约束无法自动修复/达到三轮上限时转人工研判",
 }
 
 
@@ -103,11 +103,11 @@ def build_dynamic_schedule(request: dict, closed_routes: list[str], demand_count
         "dispatch": priorities,
         "loop": {
             "enabled": True,
-            "max_attempts": 2,
+            "max_attempts": 3,
             "feedback_channel": "structured verification issue codes only",
             "escalation": "human_escalation",
         },
-        "rationale": "并行执行需求研判与规则检索；匹配完成后由独立核验门控；核验失败仅回传问题代码、证据和修正要求，最多重算两轮。",
+        "rationale": "并行执行需求研判与规则检索；匹配完成后由独立核验门控；核验失败仅回传问题代码、证据和修正要求，按道路、库存、运力、时效问题选择修复策略，最多执行三轮。",
     }
 
 

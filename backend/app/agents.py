@@ -93,6 +93,47 @@ def _available_inventory(inventory: list[dict]) -> dict[tuple[str, int], float]:
     return stock
 
 
+def build_rework_directive(verification: dict, next_attempt: int) -> dict:
+    warning_codes = sorted({
+        warning["code"]
+        for report in verification.get("reports", [])
+        for warning in report.get("verification", {}).get("warnings", [])
+    })
+    codes = sorted(set(verification.get("blocker_summary", [])) | set(warning_codes))
+    categories: list[str] = []
+    policies: dict[str, str] = {}
+    tool_overrides: list[str] = []
+
+    if any(code.startswith("ROAD-") for code in codes):
+        categories.append("道路通行")
+        policies["route_policy"] = "exclude_closed_routes"
+        tool_overrides.append("route_query:排除事件封闭路线并优先后备通道")
+    if any(code.startswith(("STOCK-", "COVERAGE-")) for code in codes):
+        categories.append("库存与覆盖")
+        policies["allocation_policy"] = "multi_warehouse"
+        tool_overrides.append("inventory_query:跨仓拆分并校验总可用量")
+    if any(code.startswith("VEHICLE-") for code in codes):
+        categories.append("运力")
+        policies["fleet_policy"] = "capacity_first"
+        policies["allocation_policy"] = "multi_warehouse"
+        tool_overrides.append("vehicle_query:优先有可用车队的仓库并校验趟次")
+    if any(code.startswith("ETA-") for code in codes):
+        categories.append("时效")
+        policies["objective_policy"] = "deadline_first"
+        tool_overrides.append("multi_objective_planner:提高截止时间惩罚")
+
+    hard_resource_issue = any(code.startswith(("STOCK-", "COVERAGE-", "VEHICLE-", "ROAD-")) for code in codes)
+    can_retry = bool(codes) and not (next_attempt >= 3 and hard_resource_issue)
+    return {
+        "attempt": next_attempt,
+        "issue_codes": codes,
+        "categories": categories,
+        "policies": policies,
+        "tool_overrides": tool_overrides,
+        "can_retry": can_retry,
+        "reason": "根据核验问题代码选择路线、库存分配、运力和时效修复策略。",
+    }
+
 def _select_route(
     warehouse_id: str,
     destination_id: str,
@@ -145,11 +186,17 @@ def generate_plans(
     vehicles: list[dict],
     attempt: int,
     closed_routes: list[str],
+    rework_directive: dict | None = None,
 ) -> list[dict]:
     stock = _available_inventory(inventory)
     warehouse_map = {warehouse["id"]: warehouse for warehouse in warehouses}
     closed_set = set(closed_routes)
-    ignore_closures = attempt == 1
+    rework_directive = rework_directive or {}
+    policies = rework_directive.get("policies", {})
+    ignore_closures = attempt == 1 and policies.get("route_policy") != "exclude_closed_routes"
+    fleet_first = policies.get("fleet_policy") == "capacity_first"
+    deadline_first = policies.get("objective_policy") == "deadline_first"
+    multi_warehouse = policies.get("allocation_policy") == "multi_warehouse"
     vehicle_by_warehouse: dict[str, list[dict]] = defaultdict(list)
     for vehicle in vehicles:
         if vehicle.get("status") == "available":
@@ -187,15 +234,20 @@ def generate_plans(
                 take = min(remaining, available, take_limit)
                 weight_kg = take * _num(demand["unit_weight_kg"])
                 warehouse_vehicles = vehicle_by_warehouse.get(wh_id, [])
-                capacity = max([_num(vehicle["capacity_kg"]) for vehicle in warehouse_vehicles] or [4200])
+                capacity = max([_num(vehicle["capacity_kg"]) for vehicle in warehouse_vehicles] or [0])
                 trips = max(1, math.ceil(weight_kg / max(capacity, 1)))
+                vehicle_gap = max(0, trips - len(warehouse_vehicles))
                 trip_cost = _num(route["cost"]) * trips
+                eta = _num(route["eta_hours"])
+                overdue = max(0.0, eta - _num(demand["deadline_hours"], 12))
                 raw_candidates.append({
                     "warehouse": warehouse,
                     "route": route,
                     "available": available,
                     "take": take,
-                    "eta": _num(route["eta_hours"]),
+                    "eta": eta,
+                    "overdue": overdue,
+                    "vehicle_gap": vehicle_gap,
                     "trip_cost": trip_cost,
                     "unit_cost": trip_cost / max(take, 1.0),
                     "split": 0.0 if take + 0.001 >= remaining else 1.0,
@@ -209,9 +261,13 @@ def generate_plans(
                 eta_values = [item["eta"] for item in raw_candidates]
                 cost_values = [item["unit_cost"] for item in raw_candidates]
                 dispatch_cost_values = [item["trip_cost"] for item in raw_candidates]
+                vehicle_gap_values = [item["vehicle_gap"] for item in raw_candidates]
+                overdue_values = [item["overdue"] for item in raw_candidates]
                 min_eta, max_eta = min(eta_values), max(eta_values)
                 min_cost, max_cost = min(cost_values), max(cost_values)
                 min_dispatch, max_dispatch = min(dispatch_cost_values), max(dispatch_cost_values)
+                min_vehicle_gap, max_vehicle_gap = min(vehicle_gap_values), max(vehicle_gap_values)
+                min_overdue, max_overdue = min(overdue_values), max(overdue_values)
 
                 def norm(value: float, low: float, high: float) -> float:
                     if high - low <= 0.000001:
@@ -222,12 +278,17 @@ def generate_plans(
                     eta_score = norm(item["eta"], min_eta, max_eta)
                     cost_score = norm(item["unit_cost"], min_cost, max_cost)
                     dispatch_score = norm(item["trip_cost"], min_dispatch, max_dispatch)
+                    vehicle_gap_score = norm(item["vehicle_gap"], min_vehicle_gap, max_vehicle_gap)
+                    overdue_score = norm(item["overdue"], min_overdue, max_overdue)
+                    fleet_penalty = vehicle_gap_score * (0.32 if fleet_first else 0.08)
+                    deadline_penalty = overdue_score * (0.30 if deadline_first else 0.06)
+                    allocation_bonus = item["new_warehouse"] * (0.06 if multi_warehouse else 0.0)
                     if strategy["id"] == "speed":
-                        candidate_score = eta_score * 0.68 + cost_score * 0.12 + item["risk"] * 0.08 + item["split"] * 0.08 + item["new_warehouse"] * 0.04
+                        candidate_score = eta_score * 0.68 + cost_score * 0.12 + item["risk"] * 0.08 + item["split"] * 0.08 + item["new_warehouse"] * 0.04 + fleet_penalty + deadline_penalty + allocation_bonus
                     elif strategy["id"] == "cost":
-                        candidate_score = eta_score * 0.01 + dispatch_score * 0.58 + item["risk"] * 0.01 + item["split"] * 0.34 + item["new_warehouse"] * 0.06
+                        candidate_score = eta_score * 0.01 + dispatch_score * 0.58 + item["risk"] * 0.01 + item["split"] * 0.34 + item["new_warehouse"] * 0.06 + fleet_penalty + deadline_penalty + allocation_bonus
                     else:
-                        candidate_score = eta_score * 0.34 + cost_score * 0.22 + item["risk"] * 0.18 + item["split"] * 0.14 + item["load_pressure"] * 0.08 + item["new_warehouse"] * 0.04
+                        candidate_score = eta_score * 0.34 + cost_score * 0.22 + item["risk"] * 0.18 + item["split"] * 0.14 + item["load_pressure"] * 0.08 + item["new_warehouse"] * 0.04 + fleet_penalty + deadline_penalty + allocation_bonus
                     candidates.append((candidate_score, item["warehouse"], item["route"]))
 
             candidates.sort(key=lambda item: item[0])
@@ -237,7 +298,9 @@ def generate_plans(
                 key = (warehouse["id"], demand["material_id"])
                 available = max(0.0, stock.get(key, 0) - used[key])
                 take_cap = remaining
-                if len(candidates) > 1 and strategy["id"] == "speed" and remaining > 10:
+                if len(candidates) > 1 and multi_warehouse and remaining > 10:
+                    take_cap = max(1.0, remaining * (0.5 if strategy["id"] == "speed" else 0.6))
+                elif len(candidates) > 1 and strategy["id"] == "speed" and remaining > 10:
                     take_cap = max(1.0, remaining * 0.65)
                 elif len(candidates) > 1 and strategy["id"] == "balanced" and remaining > 10:
                     take_cap = max(1.0, remaining * 0.8)
@@ -334,8 +397,8 @@ def generate_plans(
         for (wh_id, dst_id), items in grouped.items():
             weight = sum(_num(item["quantity"]) * _num(item["unit_weight_kg"]) for item in items)
             available_vehicles = vehicle_by_warehouse.get(wh_id, [])
-            capacity = max([_num(vehicle["capacity_kg"]) for vehicle in available_vehicles] or [4200])
-            trips = max(1, math.ceil(weight / capacity))
+            capacity = max([_num(vehicle["capacity_kg"]) for vehicle in available_vehicles] or [0])
+            trips = max(1, math.ceil(weight / max(capacity, 1)))
             route = next(route for route in routes if route["id"] == items[0]["route_id"])
             effective_eta = round(_num(route["eta_hours"]) + _num(strategy["consolidation_delay_hours"]), 2)
             group_cost = round(_num(route["cost"]) * trips * _num(strategy["cost_factor"], 1.0), 2)
@@ -462,12 +525,15 @@ def verify_plans(
                 })
 
             if assignment["group_vehicle_trips"] > vehicle_count.get(assignment["warehouse_id"], 0):
-                warnings.append({
-                    "code": f"VEHICLE-{assignment['warehouse_id']}",
-                    "type": "运力",
-                    "message": f"{assignment['warehouse_name']} 所需趟次超过可用车辆数。",
-                    "evidence": f"需要 {assignment['group_vehicle_trips']} 趟 / 可用 {vehicle_count.get(assignment['warehouse_id'], 0)} 辆",
-                })
+                code = f"VEHICLE-{assignment['warehouse_id']}"
+                if code not in seen_blockers:
+                    blockers.append({
+                        "code": code,
+                        "type": "运力",
+                        "message": f"{assignment['warehouse_name']} 所需趟次超过可用车辆数。",
+                        "evidence": f"需要 {assignment['group_vehicle_trips']} 趟 / 可用 {vehicle_count.get(assignment['warehouse_id'], 0)} 辆",
+                    })
+                    seen_blockers.add(code)
 
         coverage = _num(plan["metrics"]["coverage"])
         if coverage < 0.99:
@@ -482,6 +548,7 @@ def verify_plans(
             {"name": "需求覆盖", "status": "pass" if coverage >= 0.99 else "fail", "value": f"{coverage * 100:.1f}%"},
             {"name": "道路通行", "status": "fail" if any(item["type"] == "道路" for item in blockers) else "pass"},
             {"name": "库存约束", "status": "fail" if any(item["type"] == "库存" for item in blockers) else "pass"},
+            {"name": "运力约束", "status": "fail" if any(item["type"] == "运力" for item in blockers) else "pass"},
             {"name": "时效约束", "status": "warn" if warnings else "pass"},
         ])
         score = max(0, round(100 - len(blockers) * 28 - len(warnings) * 6 - (1 - coverage) * 45))
@@ -575,7 +642,7 @@ def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | 
         return {
             "agent": "delivery_agent",
             "status": "human_escalation",
-            "summary": "两轮核验均未形成可交付方案，已转入人工研判。",
+            "summary": "多轮核验均未形成可交付方案，已转入人工研判。",
             "recommended_plan": None,
             "alternatives": [],
             "risk_alerts": verification["required_fixes"],

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
+from app.agents import build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
 from app.database import Database
 
 
@@ -109,3 +109,53 @@ def test_agentarts_recommendation_affects_delivery_selection():
     assert delivery["recommended_plan"]["plan_id"] == "PLAN-2-COST"
     assert delivery["agent_decision"]["applied"] is True
 
+
+
+def test_rework_directive_selects_route_fleet_and_deadline_policies():
+    verification = {
+        "blocker_summary": ["ROAD-R-A", "VEHICLE-WH-A"],
+        "reports": [{
+            "verification": {
+                "warnings": [{"code": "ETA-R-B"}],
+            },
+        }],
+    }
+    directive = build_rework_directive(verification, 2)
+    assert directive["can_retry"] is True
+    assert directive["categories"] == ["道路通行", "运力", "时效"]
+    assert directive["policies"]["route_policy"] == "exclude_closed_routes"
+    assert directive["policies"]["fleet_policy"] == "capacity_first"
+    assert directive["policies"]["allocation_policy"] == "multi_warehouse"
+    assert directive["policies"]["objective_policy"] == "deadline_first"
+    assert len(directive["tool_overrides"]) == 3
+
+
+def test_vehicle_shortage_is_a_hard_verification_blocker(tmp_path: Path):
+    db = Database(tmp_path / "vehicle.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("rainstorm-ii")
+    materials = db.list_materials()
+    material_ids = {item["code"]: item["id"] for item in materials}
+    request = {
+        "demand_items": [
+            {
+                "material_id": material_ids[item["material_code"]],
+                "quantity": item["quantity"],
+                "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ]
+    }
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    demand = build_demand_plan(request, materials, db.destination_rows())
+    plans = generate_plans(
+        demand, inventory, db.warehouse_rows(), db.route_rows(), [],
+        attempt=2, closed_routes=scenario["closed_routes"],
+    )
+    verification = verify_plans(
+        plans, demand, inventory, db.route_rows(), [], scenario["closed_routes"]
+    )
+    assert verification["verdict"] == "rework"
+    assert any(code.startswith("VEHICLE-") for code in verification["blocker_summary"])
+    assert any(check["name"] == "运力约束" and check["status"] == "fail" for check in verification["reports"][0]["verification"]["checks"])

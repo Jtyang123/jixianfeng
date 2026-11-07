@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from .agentarts import AgentArtsBridge
-from .agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
+from .agents import build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
@@ -300,53 +300,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         final_plans = round1_plans
         final_verification = round1_verification
 
-        if round1_verification["verdict"] == "rework":
-            emit(db, run_id, "rework.requested", "orchestrator", "触发退回重算", "匹配智能体仅接收结构化核验意见，不透传核验智能体推理过程。", {
-                "attempt": 2,
-                "constraints": round1_verification["required_fixes"][:5],
-            })
-            await pace(0.35)
-            emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体重新规划", "排除封闭主通道，改用备用路线并重新平衡仓库库存。")
-            await pace(0.45)
-            round2_plans = generate_plans(
-                demand_plan, inventory, warehouses, routes, vehicles,
-                attempt=2, closed_routes=closed_routes,
-            )
-            emit(db, run_id, "plan.revised", "matching_agent", "第二版方案生成", "已根据道路封闭约束重新计算运输路线与库存分配。", {
-                "plans": [
-                    {"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]}
-                    for plan in round2_plans
-                ]
-            })
-            emit(db, run_id, "agent.completed", "matching_agent", "修正方案生成完成", f"生成 {len(round2_plans)} 套修正方案。")
-            await pace(0.3)
-
-            emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体复审", "对修正方案重新执行全量规则校验。")
-            await pace(0.45)
-            round2_verification = verify_plans(
-                round2_plans, demand_plan, inventory, routes, vehicles, closed_routes
-            )
-            rounds.append({
-                "attempt": 2,
-                "plans": round2_plans,
-                "verification": round2_verification,
-                "mode": "revised",
-            })
-            final_plans = round2_plans
-            final_verification = round2_verification
-            emit(db, run_id, "agent.completed", "verifier_agent", "第二轮核验完成", f"核验结论：{round2_verification['verdict']}。")
-            if round2_verification["verdict"] == "pass":
-                emit(db, run_id, "verification.passed", "verifier_agent", "修正方案通过核验", f"最高评分 {round2_verification['score']}，可进入方案交付。", {
-                    "score": round2_verification["score"],
-                    "approved_plan_ids": round2_verification["approved_plan_ids"],
-                })
-            else:
-                emit(db, run_id, "verification.failed", "verifier_agent", "复审仍未通过", "需人工确认数据或调整资源约束。", {
-                    "score": round2_verification["score"],
-                    "blockers": round2_verification["blocker_summary"],
-                })
-            await pace(0.3)
-        else:
+        rework_directives: list[dict] = []
+        max_solution_attempts = 3
+        if final_verification["verdict"] == "pass":
             emit(db, run_id, "agent.completed", "verifier_agent", "首轮核验完成", "首轮方案通过核验。")
             emit(db, run_id, "verification.passed", "verifier_agent", "方案首轮通过核验", f"最高评分 {round1_verification['score']}。", {
                 "score": round1_verification["score"],
@@ -354,6 +310,73 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             await pace(0.25)
 
+        while final_verification["verdict"] == "rework" and len(rounds) < max_solution_attempts:
+            next_attempt = len(rounds) + 1
+            directive = build_rework_directive(final_verification, next_attempt)
+            if not directive["can_retry"]:
+                emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", directive["reason"], {
+                    "attempt": next_attempt,
+                    "issue_codes": directive["issue_codes"],
+                    "categories": directive["categories"],
+                })
+                break
+            rework_directives.append(directive)
+            emit(db, run_id, "rework.requested", "orchestrator", f"触发第 {next_attempt} 轮自适应重算", directive["reason"], {
+                "attempt": next_attempt,
+                "constraints": final_verification["required_fixes"][:5],
+                "directive": directive,
+            })
+            await pace(0.35)
+            emit(
+                db, run_id, "agent.started", "matching_agent", "资源匹配智能体应用修复策略",
+                "；".join(directive["tool_overrides"]) or "按结构化核验意见重新平衡约束。",
+                {"directive": directive},
+            )
+            await pace(0.45)
+            revised_plans = generate_plans(
+                demand_plan, inventory, warehouses, routes, vehicles,
+                attempt=next_attempt, closed_routes=closed_routes,
+                rework_directive=directive,
+            )
+            emit(db, run_id, "plan.revised", "matching_agent", f"第 {next_attempt} 版方案生成", "已按问题类别调整路线、库存分配、运力选择或时效惩罚。", {
+                "attempt": next_attempt,
+                "directive": directive,
+                "plans": [
+                    {"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]}
+                    for plan in revised_plans
+                ],
+            })
+            emit(db, run_id, "agent.completed", "matching_agent", "修正方案生成完成", f"生成 {len(revised_plans)} 套修正方案。")
+            await pace(0.3)
+
+            emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体复审", "对修正方案重新执行全量规则校验。")
+            await pace(0.45)
+            revised_verification = verify_plans(
+                revised_plans, demand_plan, inventory, routes, vehicles, closed_routes
+            )
+            rounds.append({
+                "attempt": next_attempt,
+                "plans": revised_plans,
+                "verification": revised_verification,
+                "mode": "adaptive-rework",
+                "rework_directive": directive,
+            })
+            final_plans = revised_plans
+            final_verification = revised_verification
+            emit(db, run_id, "agent.completed", "verifier_agent", f"第 {next_attempt} 轮核验完成", f"核验结论：{revised_verification['verdict']}。")
+            if revised_verification["verdict"] == "pass":
+                emit(db, run_id, "verification.passed", "verifier_agent", "修正方案通过核验", f"最高评分 {revised_verification['score']}，可进入方案交付。", {
+                    "attempt": next_attempt,
+                    "score": revised_verification["score"],
+                    "approved_plan_ids": revised_verification["approved_plan_ids"],
+                })
+            else:
+                emit(db, run_id, "verification.failed", "verifier_agent", f"第 {next_attempt} 轮复审仍未通过", "将依据新的问题代码选择下一轮修复策略，或转人工研判。", {
+                    "attempt": next_attempt,
+                    "score": revised_verification["score"],
+                    "blockers": revised_verification["blocker_summary"],
+                })
+            await pace(0.3)
         await run_stage_workflows("after_matching", {
             "scenario": scenario,
             "demand": demand_plan,
@@ -502,14 +525,19 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "extension_workflow_runs": extension_workflow_runs,
             "agentarts_status": agentarts.status,
             "llm_status": llm_service.status,
+            "rework_directives": rework_directives,
             "loop_metrics": {
                 "attempts": len(rounds),
+                "max_attempts": max_solution_attempts,
                 "initial_score": round1_verification["score"],
                 "final_score": final_verification["score"],
                 "score_gain": final_verification["score"] - round1_verification["score"],
                 "blockers_found": len(round1_verification["blocker_summary"]),
                 "final_blockers": len(final_verification["blocker_summary"]),
                 "closed_routes_excluded": len(closed_routes) if len(rounds) > 1 else 0,
+                "adaptive_categories": sorted({category for item in rework_directives for category in item["categories"]}),
+                "rework_rounds": len(rework_directives),
+                "exhausted": final_verification["verdict"] != "pass" and len(rounds) >= max_solution_attempts,
                 "converged": final_verification["verdict"] == "pass",
             },
             "data_mode": "SIMULATED",
