@@ -1,24 +1,41 @@
-﻿# 网页发布部署说明
+# 网页发布部署说明
 
 ## 一、容器化启动
 
 ```bash
 cp .env.example .env
-# 修改 POSTGRES_PASSWORD 和模型配置
+```
+
+生产 `.env` 至少修改：
+
+```env
+APP_PORT=8010
+POSTGRES_PASSWORD=替换为强密码
+AUTH_REQUIRED=true
+AUTH_COOKIE_SECURE=true
+AUTH_BOOTSTRAP_PASSWORD=替换为管理员强密码
+FARMMATCH_MODE=operational
+FARMMATCH_SEED_DEMO=false
+```
+
+> `AUTH_COOKIE_SECURE=true` 应在 HTTPS 配置完成后启用；仅用 HTTP 调试时可临时设为 `false`。
+
+```bash
+docker compose config
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8010`。
+访问 `http://服务器IP:8010`。生产环境应只向 Nginx 暴露 8010，公网入口使用 80/443。
 
 ## 二、华为云 ECS 部署
 
-1. 创建 Ubuntu 22.04/24.04 ECS，开放 80、443、8000 端口。
+1. 创建 Ubuntu 22.04/24.04 ECS，开放 80、443；8010 仅允许本机或反向代理访问。
 2. 安装 Docker 与 Docker Compose。
 3. 将代码上传到服务器。
 4. 配置 `.env`。
 5. 执行 `docker compose up -d --build`。
-6. 使用 Nginx 反向代理 `127.0.0.1:8000`。
-7. 绑定域名并配置 HTTPS 证书。
+6. 使用 Nginx 反向代理 `127.0.0.1:8010`。
+7. 参考 `deploy/nginx-farmmatch.conf.example` 配置 Nginx，绑定域名并配置 HTTPS 证书。
 
 ## 三、生产数据库
 
@@ -28,7 +45,7 @@ Docker Compose 已配置 PostgreSQL 18。正式环境建议使用华为云 RDS f
 DATABASE_URL=postgresql://用户名:密码@数据库地址:5432/farmmatch
 ```
 
-应用会自动建表并初始化演练数据。生产上线前应关闭演示数据初始化或通过管理员导入真实数据。
+应用会自动建表。生产上线前应设置 `FARMMATCH_MODE=operational`、`FARMMATCH_SEED_DEMO=false`，再通过管理员导入真实数据。
 
 ## 四、地图
 
@@ -50,10 +67,11 @@ VITE_MAP_ATTRIBUTION=地图版权声明
 
 ## 六、上线前检查
 
-- 修改默认密码
-- 配置 HTTPS
+- 设置 `AUTH_REQUIRED=true` 并修改默认密码
+- 配置 HTTPS 并设置 `AUTH_COOKIE_SECURE=true`
 - 配置备份
 - 配置日志和监控
 - 配置 AgentArts/LLM 密钥
 - 关闭调试端口
 - 确认数据授权和隐私声明
+- 先执行 `docker compose config`，再执行 `docker compose up -d --build`
