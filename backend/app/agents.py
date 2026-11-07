@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 from collections import defaultdict
@@ -223,11 +223,11 @@ def generate_plans(
                     cost_score = norm(item["unit_cost"], min_cost, max_cost)
                     dispatch_score = norm(item["trip_cost"], min_dispatch, max_dispatch)
                     if strategy["id"] == "speed":
-                        candidate_score = eta_score * 0.72 + cost_score * 0.12 + item["risk"] * 0.06 + item["split"] * 0.04
+                        candidate_score = eta_score * 0.68 + cost_score * 0.12 + item["risk"] * 0.08 + item["split"] * 0.08 + item["new_warehouse"] * 0.04
                     elif strategy["id"] == "cost":
-                        candidate_score = eta_score * 0.03 + dispatch_score * 0.92 + item["risk"] * 0.03 + item["split"] * 0.0 + item["new_warehouse"] * 0.0
+                        candidate_score = eta_score * 0.01 + dispatch_score * 0.58 + item["risk"] * 0.01 + item["split"] * 0.34 + item["new_warehouse"] * 0.06
                     else:
-                        candidate_score = eta_score * 0.34 + cost_score * 0.26 + item["risk"] * 0.24 + item["split"] * 0.08 + item["load_pressure"] * 0.08
+                        candidate_score = eta_score * 0.34 + cost_score * 0.22 + item["risk"] * 0.18 + item["split"] * 0.14 + item["load_pressure"] * 0.08 + item["new_warehouse"] * 0.04
                     candidates.append((candidate_score, item["warehouse"], item["route"]))
 
             candidates.sort(key=lambda item: item[0])
@@ -236,7 +236,12 @@ def generate_plans(
                     break
                 key = (warehouse["id"], demand["material_id"])
                 available = max(0.0, stock.get(key, 0) - used[key])
-                take = min(remaining, available)
+                take_cap = remaining
+                if len(candidates) > 1 and strategy["id"] == "speed" and remaining > 10:
+                    take_cap = max(1.0, remaining * 0.65)
+                elif len(candidates) > 1 and strategy["id"] == "balanced" and remaining > 10:
+                    take_cap = max(1.0, remaining * 0.8)
+                take = min(remaining, available, take_cap)
                 if take <= 0:
                     continue
                 used[key] += take

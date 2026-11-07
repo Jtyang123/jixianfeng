@@ -28,6 +28,7 @@ const runId = ref('')
 const events = ref([])
 const runResult = ref(null)
 const selectedPlanId = ref('')
+const assignmentMaterialFilter = ref('all')
 const resultTab = ref('detail')
 const error = ref('')
 const approved = ref(false)
@@ -58,6 +59,31 @@ const materialByCode = computed(() => Object.fromEntries(materials.value.map((it
 const availableOptions = computed(() => materials.value.filter((item) => !demandItems.value.some((row) => row.material_id === item.id)))
 const finalReports = computed(() => runResult.value?.final_verification?.reports || [])
 const selectedReport = computed(() => finalReports.value.find((item) => item.plan_id === selectedPlanId.value) || finalReports.value[0])
+const runDemandMaterials = computed(() => {
+  const seen = new Map()
+  for (const item of runResult.value?.demand?.items || []) {
+    if (!seen.has(item.material_id)) {
+      seen.set(item.material_id, { material_id: item.material_id, name: item.material_name, unit: item.base_unit })
+    }
+  }
+  return [...seen.values()]
+})
+const cheapestPlanId = computed(() => {
+  return [...finalReports.value].sort((a, b) => a.metrics.total_cost - b.metrics.total_cost)[0]?.plan_id || ''
+})
+const fastestPlanId = computed(() => {
+  return [...finalReports.value].sort((a, b) => a.metrics.max_eta_hours - b.metrics.max_eta_hours)[0]?.plan_id || ''
+})
+const filteredAssignments = computed(() => {
+  const rows = selectedReport.value?.assignments || []
+  return assignmentMaterialFilter.value === 'all'
+    ? rows
+    : rows.filter((item) => String(item.material_id) === String(assignmentMaterialFilter.value))
+})
+function selectPlan(planId) {
+  selectedPlanId.value = planId
+  assignmentMaterialFilter.value = 'all'
+}
 const selectedPlan = computed(() => selectedReport.value || null)
 const firstRound = computed(() => runResult.value?.rounds?.[0])
 const secondRound = computed(() => runResult.value?.rounds?.[1])
@@ -443,7 +469,7 @@ onBeforeUnmount(() => eventSource?.close())
         <div class="plan-grid">
           <button v-for="report in finalReports" :key="report.plan_id" class="plan-card"
             :class="{ 'plan-card--active': selectedPlan?.plan_id === report.plan_id, 'plan-card--rejected': !report.approved }"
-            @click="selectedPlanId = report.plan_id">
+            @click="selectPlan(report.plan_id)">
             <div class="plan-topline">
               <span class="plan-tag">{{ report.tag }}</span>
               <span class="risk-score" :class="{ 'risk-score--warn': report.verification.score < 80 }">
@@ -453,8 +479,8 @@ onBeforeUnmount(() => eventSource?.close())
             <h3>{{ report.name }}</h3>
             <p v-if="report.policy_note" class="plan-policy-note">{{ report.policy_note }}</p>
             <div class="plan-metrics">
-              <div><span>预估成本</span><strong>¥{{ formatNumber(report.metrics.total_cost) }}</strong></div>
-              <div><span>最长时效</span><strong>{{ report.metrics.max_eta_hours }}<small>h</small></strong></div>
+              <div :class="{ 'plan-metric--best': report.plan_id === cheapestPlanId }"><span>预估成本 <em v-if="report.plan_id === cheapestPlanId">最低</em></span><strong>¥{{ formatNumber(report.metrics.total_cost) }}</strong></div>
+              <div :class="{ 'plan-metric--best': report.plan_id === fastestPlanId }"><span>最长时效 <em v-if="report.plan_id === fastestPlanId">最快</em></span><strong>{{ report.metrics.max_eta_hours }}<small>h</small></strong></div>
               <div><span>需求覆盖</span><strong>{{ (report.metrics.coverage * 100).toFixed(1) }}<small>%</small></strong></div>
             </div>
             <div class="plan-foot">
@@ -492,12 +518,16 @@ onBeforeUnmount(() => eventSource?.close())
               <div><ShieldCheck :size="17" /><span>核验评分</span><strong>{{ selectedReport.verification.score }}</strong></div>
               <div><PackageOpen :size="17" /><span>分配条目</span><strong>{{ selectedReport.assignments.length }}</strong></div>
             </div>
-            <div class="table-wrap">
+            <div class="assignment-toolbar">
+              <div class="demand-material-strip"><span>本次需求物资</span><em v-for="material in runDemandMaterials" :key="material.material_id">{{ material.name }}</em></div>
+              <label class="assignment-filter"><span>筛选物资</span><select v-model="assignmentMaterialFilter"><option value="all">全部物资（{{ selectedReport.assignments.length }} 条）</option><option v-for="material in runDemandMaterials" :key="material.material_id" :value="String(material.material_id)">{{ material.name }}</option></select></label>
+            </div>
+            <div class="table-wrap assignment-table-wrap">
               <table class="data-table compact-table">
                 <thead><tr><th>仓库</th><th>安置点</th><th>物资</th><th>数量</th><th>运输路线</th><th>时效</th></tr></thead>
                 <tbody>
-                  <tr v-for="item in selectedReport.assignments.slice(0, 9)" :key="`${item.group_id}-${item.material_id}`">
-                    <td>{{ item.warehouse_name }}</td><td>{{ item.destination_name }}</td><td>{{ item.material_name }}</td>
+                  <tr v-for="item in filteredAssignments" :key="`${item.group_id}-${item.material_id}`">
+                    <td>{{ item.warehouse_name }}</td><td>{{ item.destination_name }}</td><td><strong>{{ item.material_name }}</strong></td>
                     <td><strong>{{ formatNumber(item.quantity) }}</strong> {{ item.base_unit }}</td>
                     <td><span class="route-chip"><Route :size="12" />{{ item.route_name.split('→')[1] }}</span></td>
                     <td>{{ item.route_eta_hours }}h</td>
@@ -505,7 +535,6 @@ onBeforeUnmount(() => eventSource?.close())
                 </tbody>
               </table>
             </div>
-            <p v-if="selectedReport.assignments.length > 9" class="table-more">另有 {{ selectedReport.assignments.length - 9 }} 条分配记录，可导出报告查看完整明细。</p>
           </div>
 
           <div v-if="resultTab === 'verify'" class="detail-content verify-content">

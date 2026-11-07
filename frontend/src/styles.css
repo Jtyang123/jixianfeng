@@ -1005,3 +1005,15 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .cloud-runtime-table { margin-top:12px; border:1px solid var(--line); border-radius:9px; }
 @media(max-width:1000px){.cloud-runtime-summary{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:620px){.cloud-runtime-summary{grid-template-columns:1fr;}}
+
+.plan-metric--best strong { color: var(--teal); }
+.plan-metrics em { display: inline-flex; margin-left: 4px; padding: 1px 4px; color: var(--teal); background: var(--teal-soft); border-radius: 4px; font-size: 7px; font-style: normal; font-weight: 700; }
+.assignment-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.demand-material-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.demand-material-strip > span { margin-right: 3px; color: var(--muted); font-size: 8px; font-weight: 700; }
+.demand-material-strip em { padding: 3px 6px; color: var(--teal); background: var(--teal-soft); border-radius: 5px; font-size: 8px; font-style: normal; }
+.assignment-filter { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 8px; white-space: nowrap; }
+.assignment-filter select { min-width: 150px; padding: 6px 24px 6px 8px; color: var(--ink-2); background: #fffdf8; border: 1px solid var(--line); border-radius: 6px; font-size: 9px; }
+.assignment-table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.assignment-table-wrap thead th { position: sticky; top: 0; z-index: 1; }
+@media (max-width: 620px) { .assignment-toolbar { flex-direction: column; } .assignment-filter { width: 100%; justify-content: space-between; } .assignment-filter select { flex: 1; } }

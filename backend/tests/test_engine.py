@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 from app.agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
 from app.database import Database
@@ -39,6 +39,11 @@ def test_two_round_verification_loop(tmp_path: Path):
     assert metrics_by_strategy["speed"]["max_eta_hours"] == min(metrics["max_eta_hours"] for metrics in metrics_by_strategy.values())
     assert metrics_by_strategy["cost"]["total_cost"] == min(metrics["total_cost"] for metrics in metrics_by_strategy.values())
     assert metrics_by_strategy["cost"]["max_eta_hours"] > metrics_by_strategy["speed"]["max_eta_hours"]
+    demand_material_ids = {item["material_id"] for item in demand["items"]}
+    for plan in plans_v2:
+        assert {assignment["material_id"] for assignment in plan["assignments"]} <= demand_material_ids
+    assert metrics_by_strategy["speed"]["assignment_count"] > metrics_by_strategy["cost"]["assignment_count"]
+    assert len({metrics["assignment_count"] for metrics in metrics_by_strategy.values()}) >= 2
     assert all(plan.get("policy_note") for plan in plans_v2)
     verification_v2 = verify_plans(plans_v2, demand, inventory, routes, vehicles, scenario["closed_routes"])
     assert verification_v2["verdict"] == "pass"
