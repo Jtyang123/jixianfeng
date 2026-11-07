@@ -6,6 +6,7 @@ from pathlib import Path
 from app import orchestrator as orchestrator_module
 from app.database import Database
 from app.registry import AgentRegistryService
+from app.workflow_engine import WorkflowRepository
 
 
 class FakeAgentArts:
@@ -86,6 +87,21 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
         "model": "test",
         "prompt_version": "v1",
     })
+    WorkflowRepository(db).save_workflow("post-review", {
+        "name": "核验后扩展审查",
+        "stage": "post_verification",
+        "definition": {
+            "nodes": [
+                {
+                    "id": "A05",
+                    "type": "agent",
+                    "agent_id": "risk_extension",
+                    "depends_on": [],
+                    "on_error": "continue",
+                }
+            ]
+        },
+    })
     db.create_run(run_id, scenario["id"], request)
     fake = FakeAgentArts()
     monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: fake)
@@ -100,4 +116,5 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     }
     assert abs(fake.started_at["matching_agent"] - fake.started_at["verifier_agent"]) < 0.2
     assert run["result"]["extension_reviews"][0]["agent_id"] == "risk_extension"
+    assert run["result"]["extension_workflow_runs"][0]["status"] == "success"
     assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])

@@ -379,6 +379,47 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, status);
+                CREATE TABLE IF NOT EXISTS workflow_definitions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    description TEXT NOT NULL DEFAULT '',
+                    stage TEXT NOT NULL DEFAULT 'post_verification',
+                    definition_json TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    id TEXT PRIMARY KEY,
+                    workflow_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    context_json TEXT NOT NULL DEFAULT '{}',
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS workflow_node_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_run_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    node_type TEXT NOT NULL,
+                    agent_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    queued_at TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    wait_ms REAL NOT NULL DEFAULT 0,
+                    execution_ms REAL NOT NULL DEFAULT 0,
+                    output_json TEXT NOT NULL DEFAULT '{}',
+                    error TEXT NOT NULL DEFAULT ''
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(workflow_run_id, id);
                 """
             )
             self._ensure_geo_columns(conn)
@@ -392,7 +433,7 @@ class Database:
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
-                "agent_events", "runs", "inventory", "inventory_snapshots",
+                "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
                 conn.execute(f"DELETE FROM {table}")

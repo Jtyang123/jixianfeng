@@ -364,3 +364,39 @@ def test_route_geometry_is_fetched_and_cached(tmp_path: Path, monkeypatch):
     assert second.status_code == 200
     assert second.json()["routes"][0]["status"] == "cached"
     assert len(calls) == 1
+def test_workflow_definition_api(tmp_path: Path):
+    test_db = Database(tmp_path / "workflow-api.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+
+    valid = {
+        "nodes": [
+            {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": []},
+            {"id": "A05", "type": "agent", "agent_id": "risk_extension", "depends_on": ["A01"], "on_error": "continue"},
+        ]
+    }
+    validation = client.post("/api/workflows/validate", json={"definition": valid})
+    assert validation.status_code == 200, validation.text
+    assert validation.json()["execution_order"] == ["A01", "A05"]
+
+    saved = client.put("/api/workflows/review-v1", json={
+        "name": "核验后审查工作流",
+        "description": "API 测试",
+        "stage": "post_verification",
+        "definition": valid,
+        "enabled": True,
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["version"] == 1
+    assert client.get("/api/workflows/review-v1").json()["name"] == "核验后审查工作流"
+
+    cycle = client.post("/api/workflows/validate", json={"definition": {
+        "nodes": [
+            {"id": "A", "type": "agent", "agent_id": "a", "depends_on": ["B"]},
+            {"id": "B", "type": "agent", "agent_id": "b", "depends_on": ["A"]},
+        ]
+    }})
+    assert cycle.status_code == 400
+    assert "循环依赖" in cycle.json()["detail"]

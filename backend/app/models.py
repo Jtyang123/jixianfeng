@@ -196,6 +196,16 @@ class AgentRegisterRequest(BaseModel):
     activate: bool = True
 
 
+class WorkflowValidateRequest(BaseModel):
+    definition: dict
+
+class WorkflowUpsertRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=500)
+    stage: Literal["post_verification", "standalone"] = "post_verification"
+    definition: dict
+    enabled: bool = True
+
 class AgentInvokeRequest(BaseModel):
     task: dict = Field(default_factory=dict)
     session_id: str | None = Field(default=None, max_length=100)

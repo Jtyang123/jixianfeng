@@ -15,6 +15,7 @@ from .knowledge import retrieve
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
 from .scheduler import build_dynamic_schedule
+from .workflow_engine import WorkflowEngine, WorkflowRepository
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
 
@@ -91,6 +92,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         item for item in registry.list_agents()
         if item["id"] not in CORE_AGENT_IDS and item.get("enabled") and item.get("endpoint_configured")
     ][:5]
+    workflow_repo = WorkflowRepository(db)
+    extension_workflows = workflow_repo.list_workflows(stage="post_verification", enabled_only=True)
 
     async def call_agentarts(agent_id: str, payload: dict) -> dict:
         if not agentarts.enabled:
@@ -352,7 +355,77 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     {"local_verdict": final_verification["verdict"], "agentarts_verdict": remote_verdict},
                 )
         extension_reviews = []
-        if extension_agents:
+        extension_workflow_runs = []
+        if extension_workflows:
+            workflow_context = {
+                "scenario": scenario,
+                "demand": demand_plan,
+                "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
+                "verification": {
+                    "verdict": final_verification["verdict"],
+                    "score": final_verification["score"],
+                    "blockers": final_verification["blocker_summary"],
+                    "warnings": final_verification.get("warnings", []),
+                },
+            }
+
+            async def invoke_workflow_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
+                emit(db, run_id, "workflow.node.started", agent_id, f"工作流节点 {node['id']} 开始", f"调用 Agent：{agent_id}")
+                payload = {
+                    **workflow_context,
+                    "node_id": node["id"],
+                    "node_outputs": workflow_state.get("node_outputs", {}),
+                }
+                return await call_agentarts(agent_id, payload)
+
+            for workflow_record in extension_workflows:
+                try:
+                    engine = WorkflowEngine(
+                        db,
+                        invoke_agent=invoke_workflow_agent,
+                        load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
+                        event_sink=lambda node_id, message: emit(
+                            db, run_id, "workflow.node", node_id, message, "",
+                            {"workflow_id": workflow_record["id"]},
+                        ),
+                        agent_metrics=runtime_metrics,
+                        max_workers=4,
+                    )
+                    workflow_result = await engine.execute(
+                        workflow_record["id"], workflow_record["definition"], workflow_context,
+                    )
+                    extension_workflow_runs.append({
+                        "workflow_id": workflow_record["id"],
+                        "workflow_name": workflow_record["name"],
+                        "run_id": workflow_result["run_id"],
+                        "status": workflow_result["status"],
+                        "metrics": workflow_result["metrics"],
+                        "outputs": workflow_result["outputs"],
+                    })
+                    agent_names = {item["id"]: item["name"] for item in registry.list_agents()}
+                    for output in workflow_result["outputs"].values():
+                        if not isinstance(output, dict) or not output.get("agent_id"):
+                            continue
+                        agent_id = str(output["agent_id"])
+                        extension_reviews.append({
+                            "agent_id": agent_id,
+                            "agent_name": agent_names.get(agent_id, agent_id),
+                            "role": "workflow-extension",
+                            "mode": output.get("mode", ""),
+                            "parsed": output.get("parsed"),
+                            "text": output.get("text", ""),
+                        })
+                except Exception as exc:
+                    extension_workflow_runs.append({
+                        "workflow_id": workflow_record["id"],
+                        "workflow_name": workflow_record["name"],
+                        "status": "failed",
+                        "error": str(exc)[:500],
+                    })
+                    emit(db, run_id, "workflow.failed", "orchestrator", "扩展工作流执行失败", str(exc)[:240], {
+                        "workflow_id": workflow_record["id"],
+                    })
+        elif extension_agents:
             async def run_extension(agent: dict) -> dict:
                 agent_id = agent["id"]
                 emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
@@ -378,7 +451,6 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 }
 
             extension_reviews = await asyncio.gather(*(run_extension(agent) for agent in extension_agents))
-
         emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
         await pace(0.4)
         delivery = build_delivery_package(
@@ -427,6 +499,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "agentarts_trace": agentarts_trace,
             "agent_decision": agent_decision,
             "extension_reviews": extension_reviews,
+            "extension_workflow_runs": extension_workflow_runs,
             "agentarts_status": agentarts.status,
             "llm_status": llm_service.status,
             "loop_metrics": {

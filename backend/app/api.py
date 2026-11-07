@@ -26,6 +26,7 @@ from .models import (
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
     MaterialImportResult, OperationalEventCreate, PasswordChange, RouteGenerateRequest, RunRequest,
     TaskStatusUpdate, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
+    WorkflowUpsertRequest, WorkflowValidateRequest,
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
@@ -33,6 +34,7 @@ from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
 from .scheduler import platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
+from .workflow_engine import WorkflowRepository, WorkflowValidationError, validate_workflow
 
 router = APIRouter(prefix="/api")
 db = Database()
@@ -206,6 +208,56 @@ def activate_agent_version(agent_id: str, version: str, request: Request) -> dic
     except AgentRegistryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+
+@router.get("/workflows")
+def list_workflows(stage: str | None = None, enabled_only: bool = False) -> list[dict]:
+    return WorkflowRepository(db).list_workflows(stage=stage, enabled_only=enabled_only)
+
+
+@router.post("/workflows/validate")
+def validate_workflow_definition(payload: WorkflowValidateRequest) -> dict:
+    try:
+        definition = validate_workflow(payload.definition)
+    except WorkflowValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"valid": True, "execution_order": definition["execution_order"], "definition": definition}
+
+
+@router.get("/workflow-runs/{run_id}")
+def get_workflow_run(run_id: str) -> dict:
+    run = WorkflowRepository(db).get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="工作流运行记录不存在")
+    return run
+
+@router.get("/workflows/{workflow_id}")
+def get_workflow(workflow_id: str) -> dict:
+    workflow = WorkflowRepository(db).get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    return workflow
+
+
+@router.put("/workflows/{workflow_id}")
+def save_workflow(workflow_id: str, payload: WorkflowUpsertRequest, request: Request) -> dict:
+    current = _require_admin(request)
+    try:
+        workflow = WorkflowRepository(db).save_workflow(workflow_id, payload.model_dump())
+    except WorkflowValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_service.audit("workflow_saved", "PUT", f"/api/workflows/{workflow_id}", 200,
+                       current, resource_type="workflow", resource_id=workflow_id)
+    return workflow
+
+
+@router.delete("/workflows/{workflow_id}")
+def delete_workflow(workflow_id: str, request: Request) -> dict:
+    current = _require_admin(request)
+    if not WorkflowRepository(db).delete_workflow(workflow_id):
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    auth_service.audit("workflow_deleted", "DELETE", f"/api/workflows/{workflow_id}", 200,
+                       current, resource_type="workflow", resource_id=workflow_id)
+    return {"deleted": True}
 
 @router.post("/agents/{agent_id}/invoke")
 async def invoke_registered_agent(agent_id: str, payload: AgentInvokeRequest, request: Request) -> dict:

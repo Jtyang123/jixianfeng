@@ -136,7 +136,16 @@ export const api = {
   }),
   deleteUser: (id) => request(`/api/auth/users/${id}`, { method: 'DELETE' }),
   auditLogs: (limit = 200) => request(`/api/auth/audit-logs?limit=${limit}`),
-  agents: () => request('/api/agents'),
+  workflows: () => request('/api/workflows'),
+  workflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`),
+  workflowRun: (id) => request(`/api/workflow-runs/${encodeURIComponent(id)}`),
+  saveWorkflow: (id, payload) => request(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  validateWorkflow: (definition) => request('/api/workflows/validate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ definition }),
+  }),
+  deleteWorkflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' }),  agents: () => request('/api/agents'),
   discoverAgents: (role = '') => request(`/api/agents/discover${role ? `?role=${encodeURIComponent(role)}` : ''}`),
   registerAgent: (payload) => request('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   addAgentVersion: (id, payload) => request(`/api/agents/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
