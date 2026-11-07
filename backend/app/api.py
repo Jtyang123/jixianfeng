@@ -27,7 +27,7 @@ from .models import (
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
     MaterialImportResult, OperationalEventCreate, PasswordChange, RouteGenerateRequest, RunRequest,
     TaskStatusUpdate, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
-    WorkflowUpsertRequest, WorkflowValidateRequest,
+    WorkflowRunRequest, WorkflowUpsertRequest, WorkflowValidateRequest,
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
@@ -35,7 +35,7 @@ from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
 from .scheduler import platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
-from .workflow_engine import WorkflowRepository, WorkflowValidationError, validate_workflow
+from .workflow_engine import WorkflowEngine, WorkflowRepository, WorkflowValidationError, validate_workflow
 
 router = APIRouter(prefix="/api")
 db = Database()
@@ -230,6 +230,53 @@ def get_workflow_run(run_id: str) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="工作流运行记录不存在")
     return run
+
+@router.post("/workflows/{workflow_id}/run")
+async def run_workflow_definition(workflow_id: str, payload: WorkflowRunRequest, request: Request) -> dict:
+    current = _require_admin(request)
+    repository = WorkflowRepository(db)
+    workflow = repository.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+
+    bridge = AgentArtsBridge()
+    for agent_id, endpoint in registry_service.active_endpoints().items():
+        bridge.override_endpoint(agent_id, endpoint)
+
+    async def invoke_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
+        task = {
+            **payload.context,
+            "node_id": node["id"],
+            "node_outputs": workflow_state.get("node_outputs", {}),
+        }
+        if not bridge.enabled:
+            return {
+                "agent_id": agent_id,
+                "mode": "local-fallback",
+                "reason": "AgentArts 未配置，试运行仅验证 DAG 调度与节点依赖。",
+                "node_id": node["id"],
+            }
+        try:
+            response = await bridge.invoke(agent_id, task, session_id=f"workflow-test-{workflow_id}")
+            return {"agent_id": agent_id, **response}
+        except Exception as exc:
+            return {
+                "agent_id": agent_id,
+                "mode": "local-fallback-after-agentarts-error",
+                "error": str(exc)[:240],
+                "node_id": node["id"],
+            }
+
+    engine = WorkflowEngine(
+        db,
+        invoke_agent=invoke_agent,
+        load_workflow=repository.get_workflow,
+        max_workers=payload.max_workers,
+    )
+    result = await engine.execute(workflow["id"], workflow["definition"], payload.context)
+    auth_service.audit("workflow_tested", "POST", f"/api/workflows/{workflow_id}/run", 200,
+                       current, resource_type="workflow", resource_id=workflow_id)
+    return {"workflow_id": workflow["id"], "status": result["status"], **result}
 
 @router.get("/workflows/{workflow_id}")
 def get_workflow(workflow_id: str) -> dict:

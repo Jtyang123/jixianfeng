@@ -148,6 +148,10 @@ export const api = {
   workflows: () => request('/api/workflows'),
   workflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`),
   workflowRun: (id) => request(`/api/workflow-runs/${encodeURIComponent(id)}`),
+  runWorkflow: (id, context, maxWorkers = 4) => request(`/api/workflows/${encodeURIComponent(id)}/run`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context, max_workers: maxWorkers }),
+  }),
   saveWorkflow: (id, payload) => request(`/api/workflows/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),

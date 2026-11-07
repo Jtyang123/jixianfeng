@@ -448,20 +448,21 @@ onBeforeUnmount(() => eventSource?.close())
         </div>
 
         <div class="closure-strip" :class="{ 'closure-strip--risk': runResult.delivery.status !== 'ready' }">
+          <template v-for="(round, index) in runResult.rounds" :key="round.attempt">
+            <div class="closure-step">
+              <span class="closure-num">{{ String(index + 1).padStart(2, '0') }}</span>
+              <div>
+                <strong>{{ index === 0 ? '首轮生成' : '自适应修正' }}</strong>
+                <small v-if="index === 0">{{ round.plans?.length || 0 }} 套候选方案</small>
+                <small v-else>{{ round.rework_directive?.categories?.join(' / ') || '约束修正' }} · {{ round.plans?.length || 0 }} 套</small>
+              </div>
+            </div>
+            <div class="closure-arrow" :class="{ 'closure-arrow--risk': round.verification?.verdict === 'rework' }">
+              <RotateCcw :size="17" />{{ round.verification?.verdict === 'rework' ? '独立核验退回' : '核验通过' }}
+            </div>
+          </template>
           <div class="closure-step">
-            <span class="closure-num">01</span>
-            <div><strong>第一轮生成</strong><small>{{ firstRound?.plans?.length || 0 }} 套候选方案</small></div>
-          </div>
-          <div class="closure-arrow" :class="{ 'closure-arrow--risk': firstRound?.verification?.verdict === 'rework' }">
-            <RotateCcw :size="17" />{{ firstRound?.verification?.verdict === 'rework' ? '独立核验退回' : '首轮通过' }}
-          </div>
-          <div class="closure-step" v-if="secondRound">
-            <span class="closure-num">02</span>
-            <div><strong>约束修正</strong><small>排除 {{ closedRoutes.length }} 条封闭路线</small></div>
-          </div>
-          <div class="closure-arrow" v-if="secondRound">核验 {{ secondRound.verification.verdict === 'pass' ? '通过' : '未通过' }}</div>
-          <div class="closure-step">
-            <span class="closure-num">03</span>
+            <span class="closure-num">{{ String(runResult.rounds.length + 1).padStart(2, '0') }}</span>
             <div><strong>{{ runResult.delivery.status === 'ready' ? '方案交付' : '人工研判' }}</strong><small>{{ finalReports.length }} 套方案进入对比</small></div>
           </div>
         </div>

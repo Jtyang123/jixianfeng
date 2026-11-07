@@ -206,6 +206,10 @@ class WorkflowUpsertRequest(BaseModel):
     definition: dict
     enabled: bool = True
 
+class WorkflowRunRequest(BaseModel):
+    context: dict = Field(default_factory=dict)
+    max_workers: int = Field(default=4, ge=1, le=8)
+
 class AgentInvokeRequest(BaseModel):
     task: dict = Field(default_factory=dict)
     session_id: str | None = Field(default=None, max_length=100)

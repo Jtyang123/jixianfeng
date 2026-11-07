@@ -415,6 +415,18 @@ def test_workflow_definition_api(tmp_path: Path):
     assert saved.json()["version"] == 1
     assert client.get("/api/workflows/review-v1").json()["name"] == "核验后审查工作流"
 
+    workflow_run = client.post("/api/workflows/review-v1/run", json={
+        "context": {"test_case": "workflow-preview"},
+        "max_workers": 2,
+    })
+    assert workflow_run.status_code == 200, workflow_run.text
+    assert workflow_run.json()["status"] == "success"
+    assert workflow_run.json()["completed"] == ["A01", "A05"]
+    assert workflow_run.json()["metrics"]["completed_nodes"] == 2
+    persisted_workflow_run = client.get(f"/api/workflow-runs/{workflow_run.json()['run_id']}")
+    assert persisted_workflow_run.status_code == 200
+    assert persisted_workflow_run.json()["status"] == "success"
+
     cycle = client.post("/api/workflows/validate", json={"definition": {
         "nodes": [
             {"id": "A", "type": "agent", "agent_id": "a", "depends_on": ["B"]},

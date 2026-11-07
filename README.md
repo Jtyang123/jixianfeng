@@ -17,7 +17,7 @@
 - 评估中心：基线对比、重复计算一致性、1/5/10/20 并发压力、6 类故障注入、误差分类与 Wilson 95% 区间
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
 - Agent 注册表：动态注册、能力发现、版本发布、在线切换和激活端点直接调用测试
-- 代码化工作流设计：JSON 定义 DAG、并行、条件、优先队列、节点重试和子工作流嵌套
+- 代码化工作流设计：JSON 定义 DAG、并行、条件、节点重试、子工作流嵌套，并可在设计器中直接试运行和查看节点记录
 - 可上传知识库：TXT/Markdown/CSV/JSON/DOCX/XLSX/PDF 上传、自动分块与 RAG 检索
 - AgentArts 决策闭环：匹配智能体的推荐从已核验方案中影响最终排序
 - 量化评估：单 Agent 基线与多 Agent 闭环各重复 20 次，统计安全率和 P95 耗时；另单列四个 Agent 全部走 AgentArts 的真实运行证据；实际 AgentArts 调用由 asyncio.PriorityQueue 和 3 个 Worker 调度，并记录排队、执行和并发峰值
@@ -168,6 +168,7 @@ AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /i
 - `GET /api/workflows`
 - `POST /api/workflows/validate`
 - `PUT /api/workflows/{workflow_id}`
+- `POST /api/workflows/{workflow_id}/run`
 - `GET /api/workflow-runs/{run_id}`
 - `GET /api/knowledge/documents`
 - `POST /api/knowledge/documents`

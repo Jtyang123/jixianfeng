@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, GitBranch, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
+import { CheckCircle2, GitBranch, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })
@@ -9,9 +9,15 @@ const selectedId = ref('post-verification-review')
 const loading = ref(true)
 const saving = ref(false)
 const validating = ref(false)
+const running = ref(false)
 const error = ref('')
 const message = ref('')
 const validation = ref(null)
+const runResult = ref(null)
+const testContext = ref(JSON.stringify({
+  scenario: { name: '工作流试运行场景' },
+  demand: { items: [] },
+}, null, 2))
 const form = ref({
   name: '核验后扩展审查',
   description: '在独立核验通过后运行动态注册 Agent 或子工作流。',
@@ -91,6 +97,29 @@ async function validate() {
   }
 }
 
+async function runWorkflow() {
+  if (!isAdmin.value) return
+  running.value = true
+  error.value = ''
+  message.value = ''
+  runResult.value = null
+  try {
+    let context
+    try {
+      context = JSON.parse(testContext.value)
+    } catch (_) {
+      throw new Error('试运行上下文 JSON 格式不正确')
+    }
+    const saved = await save()
+    if (!saved) throw new Error(error.value || '工作流保存失败')
+    runResult.value = await api.runWorkflow(selectedId.value, context, 4)
+    message.value = `试运行完成：${runResult.value.completed.length} 个节点执行成功`
+  } catch (exc) {
+    error.value = exc.message
+  } finally {
+    running.value = false
+  }
+}
 async function save() {
   if (!isAdmin.value) return
   saving.value = true
@@ -106,8 +135,10 @@ async function save() {
     })
     message.value = `工作流已保存为 v${saved.version}`
     await load()
+    return saved
   } catch (exc) {
     error.value = exc.message
+    return null
   } finally {
     saving.value = false
   }
@@ -166,8 +197,10 @@ onMounted(load)
           <label class="full-span"><span>说明</span><input v-model="form.description" :disabled="!isAdmin" /></label>
         </div>
         <label class="workflow-json-label"><span>工作流定义 JSON</span><textarea v-model="form.json" rows="22" spellcheck="false" :readonly="!isAdmin" /></label>
+        <label class="workflow-json-label"><span>试运行上下文 JSON</span><textarea v-model="testContext" rows="8" spellcheck="false" :readonly="!isAdmin" /></label>
         <div class="workflow-editor-actions">
           <button class="secondary-action" :disabled="validating" @click="validate"><ShieldCheck :size="14" />{{ validating ? '校验中...' : '校验 DAG' }}</button>
+          <button v-if="isAdmin" class="secondary-action" :disabled="running" @click="runWorkflow"><Play :size="14" />{{ running ? '试运行中...' : '保存并试运行' }}</button>
           <button v-if="isAdmin" class="primary-action" :disabled="saving" @click="save"><Save :size="14" />{{ saving ? '保存中...' : '保存并发布' }}</button>
         </div>
       </section>
@@ -187,6 +220,16 @@ onMounted(load)
           <span>{{ index + 1 }}</span><strong>{{ nodeId }}</strong>
           <small>{{ validation.definition.nodes.find((node) => node.id === nodeId)?.type }}</small>
         </article>
+      </div>
+    </section>
+
+    <section v-if="runResult" class="content-card workflow-preview-card">
+      <div class="workflow-head"><div><div class="eyebrow">WORKFLOW TEST RUN</div><h2>试运行结果</h2><p>任务已真实写入 workflow_runs 与 workflow_node_runs。</p></div><CheckCircle2 :size="18" /></div>
+      <div class="diagnostic-summary">
+        <article :class="runResult.status === 'success' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>运行状态</span><strong>{{ runResult.status === 'success' ? '成功' : '失败' }}</strong><small>{{ runResult.run_id }}</small></article>
+        <article><span>完成节点</span><strong>{{ runResult.metrics.completed_nodes }}</strong><small>跳过 {{ runResult.metrics.skipped_nodes }} · 失败 {{ runResult.metrics.failed_nodes }}</small></article>
+        <article><span>峰值并发</span><strong>{{ runResult.metrics.peak_concurrency }}</strong><small>试运行最大 Worker 并发</small></article>
+        <article><span>端到端耗时</span><strong>{{ runResult.metrics.end_to_end_ms }} ms</strong><small>{{ runResult.completed.join(' → ') }}</small></article>
       </div>
     </section>
   </div>
