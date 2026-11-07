@@ -151,7 +151,7 @@ function draw() {
 
   if (eventPoint.value) {
     L.marker(eventPoint.value, {
-      icon: makeIcon('event', props.eventLocation.title || '事件位置', props.eventLocation.title || '事件位置'),
+      icon: makeIcon('event', props.eventLocation.title || '事件位置', `当前事件 · ${props.eventLocation.title || '事件位置'}`),
       zIndexOffset: 700,
     }).addTo(layerGroup).bindPopup(
       `<strong>${escapeHtml(props.eventLocation.title || '事件位置')}</strong><br>${escapeHtml(props.eventLocation.location || '')}<br>事件等级：${escapeHtml(props.eventLocation.severity || '')}`
@@ -238,6 +238,7 @@ onBeforeUnmount(() => {
         <h2>应急资源地理态势</h2>
       </div>
       <div class="map-legend">
+        <span><i class="legend-dot legend-dot--event" />当前事件</span>
         <span><i class="legend-dot legend-dot--wh" />库存仓库</span>
         <span><i class="legend-dot legend-dot--dst" />安置点</span>
         <span><i class="legend-line" />方案路线</span>

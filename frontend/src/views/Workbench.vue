@@ -408,7 +408,7 @@ onBeforeUnmount(() => eventSource?.close())
         </section>
 
         <div class="center-stack">
-          <MapCanvas :network="network" :plan="selectedPlan" :closed-routes="closedRoutes" :running="running" :event-location="selectedOperationalEvent" :inventory="inventoryData.items || []" />
+          <MapCanvas :network="network" :plan="selectedPlan" :closed-routes="closedRoutes" :running="running" :event-location="runSource === 'event' ? selectedOperationalEvent : null" :inventory="inventoryData.items || []" />
           <div class="map-status-strip">
             <div class="status-main">
               <span class="status-pulse" :class="{ 'status-pulse--live': running }" />

@@ -707,7 +707,10 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .geo-marker span { color: white; font-size: 10px; font-weight: 800; }
 .geo-marker i { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #fffdf8; bottom: -5px; }
 .geo-marker--warehouse { border-radius: 6px; background: var(--teal); }
-.geo-marker--destination { border-radius: 50%; background: var(--orange); }
+.geo-marker--destination { border-radius: 50%; background: #2f7ea1; }
+.geo-marker--event { width: 38px; height: 38px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 7px rgba(198,67,50,.16), 0 4px 14px rgba(18,43,40,.28); animation: event-pulse 1.8s ease-in-out infinite; }
+.legend-dot--event { background: var(--red); border-radius: 50%; box-shadow: 0 0 0 3px rgba(198,67,50,.14); }
+@keyframes event-pulse { 0%, 100% { box-shadow: 0 0 0 5px rgba(198,67,50,.13), 0 4px 14px rgba(18,43,40,.28); } 50% { box-shadow: 0 0 0 12px rgba(198,67,50,.04), 0 4px 14px rgba(18,43,40,.28); } }
 .geo-marker-label { position: absolute; left: 36px; top: 1px; width: max-content; max-width: 145px; padding: 3px 6px; color: #465752; background: rgba(255,253,248,.9); border: 1px solid rgba(222,216,203,.85); border-radius: 4px; box-shadow: 0 2px 7px rgba(20,40,35,.08); font-size: 8px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .map-tile-warning { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; color: #8d6321; background: rgba(255,245,223,.94); border: 1px solid #ead5a8; border-radius: 6px; font-size: 8px; z-index: 500; }
 .leaflet-popup-content { margin: 10px 12px !important; color: var(--ink); font-size: 9px !important; line-height: 1.7; }
@@ -809,9 +812,9 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .shortage-panel strong { font-size: 10px; }
 .shortage-panel p { color: #8a5f54; font-size: 8px; line-height: 1.5; }
 
-.geo-marker--event { width: 34px; height: 34px; border-radius: 50%; background: var(--orange); animation: eventPulse 1.8s ease-out infinite; }
+.geo-marker--event { width: 38px; height: 38px; border-radius: 50%; background: var(--red); border-width: 3px; animation: eventPulse 1.8s ease-out infinite; }
 .geo-marker--event span { font-size: 8px; }
-@keyframes eventPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(230,91,53,.32); } 50% { box-shadow: 0 0 0 10px rgba(230,91,53,0); } }
+@keyframes eventPulse { 0%,100% { box-shadow: 0 0 0 4px rgba(198,67,50,.16); } 50% { box-shadow: 0 0 0 13px rgba(198,67,50,0); } }
 
 .geocode-field { display: flex; gap: 7px; }
 .geocode-field input { flex: 1; }
