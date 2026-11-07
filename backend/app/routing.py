@@ -32,6 +32,7 @@ def _fallback_route(warehouse: dict, destination: dict) -> dict:
         "is_primary": True,
         "status": "open",
         "source": "fallback",
+        "geometry": [],
     }
 
 
@@ -39,13 +40,15 @@ async def _fetch_osrm_route(client: httpx.AsyncClient, warehouse: dict, destinat
     coordinates = f"{warehouse['lng']},{warehouse['lat']};{destination['lng']},{destination['lat']}"
     response = await client.get(
         f"{OSRM_BASE_URL}/route/v1/driving/{coordinates}",
-        params={"overview": "false", "alternatives": "false", "steps": "true", "annotations": "false"},
+        params={"overview": "full", "geometries": "geojson", "alternatives": "false", "steps": "true", "annotations": "false"},
     )
     response.raise_for_status()
     payload = response.json()
     if payload.get("code") != "Ok" or not payload.get("routes"):
         raise RuntimeError(payload.get("message") or "OSRM 未返回可用路线")
     route = payload["routes"][0]
+    raw_coordinates = ((route.get("geometry") or {}).get("coordinates") or [])
+    geometry = [[float(point[1]), float(point[0])] for point in raw_coordinates if len(point) >= 2]
     distance = round(float(route["distance"]) / 1000, 2)
     eta_hours = round(float(route["duration"]) / 3600 + 0.25, 2)
     legs = route.get("legs") or [{}]
@@ -65,9 +68,15 @@ async def _fetch_osrm_route(client: httpx.AsyncClient, warehouse: dict, destinat
         "is_primary": True,
         "status": "open",
         "source": "osrm",
+        "geometry": geometry,
     }
 
 
+async def fetch_route_geometry(warehouse: dict, destination: dict) -> list[list[float]]:
+    headers = {"User-Agent": "FarmMatch-Emergency-Dispatch/1.0"}
+    async with httpx.AsyncClient(timeout=OSRM_TIMEOUT, headers=headers) as client:
+        route = await _fetch_osrm_route(client, warehouse, destination)
+    return route.get("geometry", [])
 async def generate_route_candidates(warehouses: list[dict], destinations: list[dict]) -> tuple[list[dict], list[str]]:
     semaphore = asyncio.Semaphore(4)
 

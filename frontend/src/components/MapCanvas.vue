@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crosshair, Layers3, MapPin, Warehouse } from '@lucide/vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { api } from '../api'
 
 const props = defineProps({
   network: { type: Object, default: () => ({}) },
@@ -15,6 +16,10 @@ const props = defineProps({
 
 const mapEl = ref(null)
 const tileFailed = ref(false)
+const routeGeometries = ref({})
+const geometryLoading = ref(false)
+const geometryMissingCount = ref(0)
+const fetchingRoutes = new Set()
 const basemapMode = ref('satellite')
 const provider = import.meta.env.VITE_MAP_PROVIDER || 'amap'
 let map = null
@@ -53,6 +58,43 @@ const activeRoutes = computed(() => {
 const warehouseMap = computed(() => Object.fromEntries(warehouses.value.map((item) => [item.id, item])))
 const destinationMap = computed(() => Object.fromEntries(destinations.value.map((item) => [item.id, item])))
 
+function visibleRoutesForMap() {
+  return props.plan?.groups?.length
+    ? routes.value.filter((route) => activeRoutes.value.has(route.id) || closedSet.value.has(route.id))
+    : routes.value.filter((route) => route.is_primary)
+}
+
+function routeLatLngs(geometry) {
+  return (geometry || [])
+    .filter((point) => Array.isArray(point) && point.length >= 2)
+    .map(([lat, lng]) => provider === 'amap' ? wgs84ToGcj02(Number(lat), Number(lng)) : [Number(lat), Number(lng)])
+}
+
+async function refreshRouteGeometries() {
+  const ids = [...new Set(visibleRoutesForMap().map((route) => route.id))]
+  const missing = ids.filter((id) => !(routeGeometries.value[id]?.length > 1) && !fetchingRoutes.has(id))
+  if (!missing.length) {
+    geometryMissingCount.value = ids.filter((id) => !(routeGeometries.value[id]?.length > 1)).length
+    return
+  }
+  missing.forEach((id) => fetchingRoutes.add(id))
+  geometryLoading.value = true
+  try {
+    const result = await api.routeGeometry(missing)
+    const unavailable = []
+    for (const item of result.routes || []) {
+      if (item.geometry?.length > 1) routeGeometries.value[item.id] = item.geometry
+      else unavailable.push(item.id)
+    }
+    geometryMissingCount.value = unavailable.length
+  } catch (_) {
+    geometryMissingCount.value = missing.length
+  } finally {
+    missing.forEach((id) => fetchingRoutes.delete(id))
+    geometryLoading.value = false
+    draw()
+  }
+}
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
@@ -97,9 +139,7 @@ function draw() {
   layerGroup.clearLayers()
   const points = []
 
-  const visibleRoutes = props.plan?.groups?.length
-    ? routes.value.filter((route) => activeRoutes.value.has(route.id) || closedSet.value.has(route.id))
-    : routes.value.filter((route) => route.is_primary)
+  const visibleRoutes = visibleRoutesForMap()
 
   for (const route of visibleRoutes) {
     const from = pointOf(warehouseMap.value[route.warehouse_id])
@@ -107,11 +147,15 @@ function draw() {
     if (!from || !to) continue
     const active = activeRoutes.value.has(route.id)
     const closed = closedSet.value.has(route.id) && !active
-    const line = L.polyline([from, to], {
+    const latLngs = routeLatLngs(routeGeometries.value[route.id])
+    if (latLngs.length < 2) continue
+    const line = L.polyline(latLngs, {
       color: active ? '#e65b35' : closed ? '#c64332' : '#91a29b',
       weight: active ? 4 : closed ? 3 : 2,
       opacity: active ? 0.95 : closed ? 0.78 : 0.25,
       dashArray: active ? '9 7' : closed ? '5 6' : null,
+      lineCap: 'round',
+      lineJoin: 'round',
     }).addTo(layerGroup)
     line.bindPopup(`<strong>${escapeHtml(route.road_name)}</strong><br>ETA ${route.eta_hours}h · ${closed ? '道路封闭' : active ? '方案采用' : '候选道路'}`)
     points.push(from, to)
@@ -217,12 +261,22 @@ onMounted(async () => {
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   switchBasemap('satellite')
   layerGroup = L.layerGroup().addTo(map)
+  await refreshRouteGeometries()
   draw()
   resizeObserver = new ResizeObserver(() => map?.invalidateSize())
   resizeObserver.observe(mapEl.value)
 })
 
-watch(() => [props.network, props.plan, props.closedRoutes, props.running, props.inventory], draw, { deep: true })
+watch(() => props.network, () => {
+  routeGeometries.value = {}
+  draw()
+  refreshRouteGeometries()
+}, { deep: true })
+watch(() => [props.plan, props.closedRoutes, props.running], () => {
+  draw()
+  refreshRouteGeometries()
+}, { deep: true })
+watch(() => props.inventory, draw, { deep: true })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   map?.remove()
@@ -252,6 +306,8 @@ onBeforeUnmount(() => {
       <div class="map-corner map-corner--tl"><Crosshair :size="14" /> GEO LIVE · OPERATIONS</div>
       <div class="map-corner map-corner--br"><MapPin :size="14" /> 纯净底图 · 业务点位</div>
       <div v-if="tileFailed" class="map-tile-warning"><Layers3 :size="14" />地图瓦片加载失败，路线与点位仍有效</div>
+      <div v-if="geometryLoading" class="map-route-warning">正在获取实际道路路线…</div>
+      <div v-else-if="geometryMissingCount" class="map-route-warning map-route-warning--error">有 {{ geometryMissingCount }} 条路线未能获取道路几何，请重新生成路线</div>
     </div>
 
     <div class="map-footer">

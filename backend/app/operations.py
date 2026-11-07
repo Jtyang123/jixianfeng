@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -66,19 +66,27 @@ class OperationsRepository:
                 """
                 INSERT INTO routes
                 (id, warehouse_id, destination_id, road_name, distance_km, eta_hours,
-                 cost, temp_zone, is_primary, status, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cost, temp_zone, is_primary, status, source, geometry_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   warehouse_id=excluded.warehouse_id, destination_id=excluded.destination_id,
                   road_name=excluded.road_name, distance_km=excluded.distance_km,
                   eta_hours=excluded.eta_hours, cost=excluded.cost, temp_zone=excluded.temp_zone,
-                  is_primary=excluded.is_primary, status=excluded.status, source=excluded.source
+                  is_primary=excluded.is_primary, status=excluded.status, source=excluded.source,
+                  geometry_json=excluded.geometry_json
                 """,
                 (data["id"], data["warehouse_id"], data["destination_id"], data["road_name"],
                  data["distance_km"], data["eta_hours"], data["cost"], data.get("temp_zone", "常温"),
-                 int(bool(data.get("is_primary", True))), data.get("status", "open"), data.get("source", "manual")),
+                 int(bool(data.get("is_primary", True))), data.get("status", "open"), data.get("source", "manual"),
+                 json.dumps(data.get("geometry", []), ensure_ascii=False)),
             )
 
+    def update_route_geometry(self, route_id: str, geometry: list[list[float]]) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE routes SET geometry_json = ? WHERE id = ?",
+                (json.dumps(geometry, ensure_ascii=False), route_id),
+            )
     def delete_route(self, route_id: str) -> dict | None:
         with self.db.connect() as conn:
             row = conn.execute("SELECT * FROM routes WHERE id = ?", (route_id,)).fetchone()

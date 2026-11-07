@@ -179,6 +179,7 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
   deleteVehicle: (id) => request(`/api/vehicles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+routeGeometry: (ids) => request(`/api/routes/geometry?ids=${encodeURIComponent(ids.join(',') )}`),
   generateRoutes: (payload) => request('/api/routes/generate', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),

@@ -1020,3 +1020,6 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .assignment-table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .assignment-table-wrap thead th { position: sticky; top: 0; z-index: 1; }
 @media (max-width: 620px) { .assignment-toolbar { flex-direction: column; } .assignment-filter { width: 100%; justify-content: space-between; } .assignment-filter select { flex: 1; } }
+
+.map-route-warning { position:absolute; left:50%; top:52px; transform:translateX(-50%); z-index:600; padding:6px 10px; color:#55645f; background:rgba(255,253,248,.94); border:1px solid var(--line); border-radius:6px; font-size:8px; box-shadow:0 3px 10px rgba(20,40,35,.08); }
+.map-route-warning--error { color:var(--red); border-color:#ecc4b9; background:rgba(251,233,228,.96); }

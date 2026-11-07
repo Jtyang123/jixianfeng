@@ -339,3 +339,28 @@ def test_validation_and_http_errors_are_chinese(tmp_path: Path):
     missing = client.get("/api/not-a-real-endpoint")
     assert missing.status_code == 404
     assert missing.json()["detail"] == "请求的资源不存在"
+def test_route_geometry_is_fetched_and_cached(tmp_path: Path, monkeypatch):
+    test_db = Database(tmp_path / "route-geometry.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+    route = client.get("/api/network").json()["routes"][0]
+    calls = []
+
+    async def fake_geometry(warehouse, destination):
+        calls.append((warehouse["id"], destination["id"]))
+        return [[warehouse["lat"], warehouse["lng"]], [destination["lat"], destination["lng"]]]
+
+    monkeypatch.setattr(api_module, "fetch_route_geometry", fake_geometry)
+    first = client.get(f"/api/routes/geometry?ids={route['id']}")
+    assert first.status_code == 200, first.text
+    item = first.json()["routes"][0]
+    assert item["status"] == "osrm"
+    assert len(item["geometry"]) == 2
+    assert len(calls) == 1
+
+    second = client.get(f"/api/routes/geometry?ids={route['id']}")
+    assert second.status_code == 200
+    assert second.json()["routes"][0]["status"] == "cached"
+    assert len(calls) == 1

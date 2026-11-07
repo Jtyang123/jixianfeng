@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import math
@@ -202,6 +202,7 @@ class Database:
                     is_primary INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'open',
                     source TEXT NOT NULL DEFAULT 'manual',
+                    geometry_json TEXT NOT NULL DEFAULT '[]',
                     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
                     FOREIGN KEY (destination_id) REFERENCES destinations(id)
                 );
@@ -469,6 +470,8 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(routes)").fetchall()}
         if "source" not in columns:
             conn.execute("ALTER TABLE routes ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        if "geometry_json" not in columns:
+            conn.execute("ALTER TABLE routes ADD COLUMN geometry_json TEXT NOT NULL DEFAULT '[]'")
 
     def _seed(self, conn: sqlite3.Connection) -> None:
         created = now_iso()
@@ -730,7 +733,15 @@ class Database:
     def route_rows(self) -> list[dict]:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM routes ORDER BY warehouse_id, destination_id, is_primary DESC").fetchall()
-            return [dict(row) for row in rows]
+            result = []
+            for row in rows:
+                item = dict(row)
+                try:
+                    item["geometry"] = json.loads(item.pop("geometry_json", "[]") or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    item["geometry"] = []
+                result.append(item)
+            return result
 
     def vehicle_rows(self) -> list[dict]:
         with self.connect() as conn:

@@ -29,7 +29,7 @@ from .models import (
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
-from .routing import generate_route_candidates
+from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
 from .scheduler import platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
@@ -834,6 +834,41 @@ async def generate_routes(payload: RouteGenerateRequest) -> dict:
         "routes": routes,
     }
 
+
+@router.get("/routes/geometry")
+async def route_geometries(ids: str = "") -> dict:
+    requested = [item.strip() for item in ids.split(",") if item.strip()][:100]
+    if not requested:
+        return {"routes": []}
+    route_map = {item["id"]: item for item in db.route_rows()}
+    warehouse_map = {item["id"]: item for item in db.warehouse_rows()}
+    destination_map = {item["id"]: item for item in db.destination_rows()}
+    semaphore = asyncio.Semaphore(4)
+    results = []
+
+    async def resolve(route_id: str) -> dict:
+        route = route_map.get(route_id)
+        if not route:
+            return {"id": route_id, "geometry": [], "status": "missing"}
+        geometry = route.get("geometry") or []
+        if geometry:
+            return {"id": route_id, "geometry": geometry, "status": "cached"}
+        warehouse = warehouse_map.get(route["warehouse_id"])
+        destination = destination_map.get(route["destination_id"])
+        if not warehouse or not destination:
+            return {"id": route_id, "geometry": [], "status": "missing-points"}
+        async with semaphore:
+            try:
+                geometry = await fetch_route_geometry(warehouse, destination)
+                if geometry:
+                    ops.update_route_geometry(route_id, geometry)
+                    return {"id": route_id, "geometry": geometry, "status": "osrm"}
+            except Exception:
+                pass
+        return {"id": route_id, "geometry": [], "status": "unavailable"}
+
+    results = await asyncio.gather(*(resolve(route_id) for route_id in requested))
+    return {"routes": results}
 
 @router.delete("/routes/{route_id}")
 def delete_route(route_id: str) -> dict:
