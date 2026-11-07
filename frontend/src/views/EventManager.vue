@@ -13,6 +13,17 @@ const error = ref('')
 const message = ref('')
 const deletingId = ref('')
 const emit = defineEmits(['refresh-dashboard'])
+const sourceLabels = {
+  manual: '手工录入',
+  'file-import': '文件导入',
+  'official-notice': '官方通知',
+  'field-report': '现场上报',
+  webhook: '系统推送',
+  test: '测试数据',
+}
+function sourceLabel(value) {
+  return sourceLabels[value] || '其他来源'
+}
 const form = ref({
   title: '', event_type: '暴雨洪涝', severity: 'II级', location: '',
   affected_population: 0, description: '', source: 'manual', source_ref: '',
@@ -146,7 +157,7 @@ onMounted(load)
           <label><span>纬度</span><input v-model.number="form.lat" type="number" step="0.000001" placeholder="例如 30.5728" /></label>
           <label><span>经度</span><input v-model.number="form.lng" type="number" step="0.000001" placeholder="例如 114.3073" /></label>
           <label><span>影响人口</span><input v-model.number="form.affected_population" type="number" min="0" /></label>
-          <label><span>来源</span><input v-model="form.source" placeholder="manual / 应急值班 / 气象通知" /></label>
+          <label><span>来源</span><select v-model="form.source"><option value="manual">手工录入</option><option value="official-notice">官方通知</option><option value="field-report">现场上报</option><option value="file-import">文件导入</option><option value="webhook">系统推送</option></select></label>
           <label class="full-span"><span>事件描述</span><textarea v-model="form.description" rows="4" placeholder="记录官方通知、现场情况、已确认的道路阻断等" /></label>
           <label class="full-span"><span>封闭路线编号（逗号分隔，可空）</span><input v-model="form.closed_routes_text" placeholder="R-ROUTE-01,R-ROUTE-02" /></label>
         </div>
@@ -162,7 +173,7 @@ onMounted(load)
             <div class="event-record-head"><span class="severity-badge">{{ event.severity }}</span><strong>{{ event.title }}</strong><button type="button" class="record-delete" :disabled="deletingId === event.id" @click="removeEvent(event)"><Trash2 :size="12" />{{ deletingId === event.id ? '删除中' : '删除' }}</button><span class="run-status run-status--awaiting_approval">{{ event.status }}</span></div>
             <p>{{ event.description || '无补充描述' }}</p>
             <div><span><MapPinned :size="13" />{{ event.location }}</span><span>{{ event.affected_population ? `${event.affected_population} 人` : '人口未填写' }}</span><span>{{ event.demand_items?.length || 0 }} 条需求</span><span>{{ formatTime(event.created_at) }}</span></div>
-            <small>{{ event.id }} · 来源：{{ event.source }}</small>
+            <small>{{ event.id }} · 来源：{{ sourceLabel(event.source) }}</small>
           </article>
         </div>
         <div v-else-if="!loading" class="empty-table"><AlertTriangle :size="30" /><strong>尚未录入真实事件</strong><span>有官方通知或人工确认事件时，在左侧创建。</span></div>
