@@ -15,7 +15,7 @@ from .knowledge import retrieve
 from .knowledge_base import KnowledgeRepository
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
-from .scheduler import build_dynamic_schedule
+from .scheduler import AsyncPriorityExecutor, build_dynamic_schedule
 from .workflow_engine import WorkflowEngine, WorkflowRepository
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
@@ -98,6 +98,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     extension_workflows = [item for item in all_extension_workflows if item["stage"] == "post_verification"]
     extension_reviews = []
     extension_workflow_runs = []
+    agent_executor: AsyncPriorityExecutor | None = None
 
     async def call_agentarts(agent_id: str, payload: dict) -> dict:
         if not agentarts.enabled:
@@ -107,22 +108,25 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             emit(db, run_id, "agentarts.called", agent_id, f"调用 AgentArts · {AGENT_NAMES.get(agent_id, agent_id)}", "已向华为云 AgentArts Runtime 提交结构化任务。", {
                 "endpoint": endpoint,
             })
-            task = asyncio.create_task(
-                agentarts.invoke(agent_id, payload, session_id=run_id, client=http_client)
-            )
-            waited = 0
-            while True:
-                done, _ = await asyncio.wait({task}, timeout=3)
-                if done:
-                    break
-                waited += 3
-                emit(
-                    db, run_id, "agentarts.waiting", agent_id,
-                    f"等待华为云推理 · {waited}s",
-                    "AgentArts 正在处理当前角色任务，系统仍在运行。",
-                    {"waited_seconds": waited},
+            async def invoke_and_wait() -> dict:
+                task = asyncio.create_task(
+                    agentarts.invoke(agent_id, payload, session_id=run_id, client=http_client)
                 )
-            response = await task
+                waited = 0
+                while True:
+                    done, _ = await asyncio.wait({task}, timeout=3)
+                    if done:
+                        break
+                    waited += 3
+                    emit(
+                        db, run_id, "agentarts.waiting", agent_id,
+                        f"等待华为云推理 · {waited}s",
+                        "AgentArts 正在处理当前角色任务，系统仍在运行。",
+                        {"waited_seconds": waited},
+                    )
+                return await task
+
+            response = await agent_executor.submit(agent_id, invoke_and_wait) if agent_executor else await invoke_and_wait()
             parsed = _parse_json_text(response.get("text", ""))
             if parsed:
                 response["parsed"] = parsed
@@ -213,6 +217,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         uploaded_evidence = KnowledgeRepository(db).search(query, top_k=3)
         evidence = sorted(evidence + uploaded_evidence, key=lambda item: float(item.get("score", 0)), reverse=True)[:7]
         schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics)
+        agent_executor = AsyncPriorityExecutor(
+            {item["agent_id"]: int(item["priority"]) for item in schedule["dispatch"]},
+            max_workers=3,
+        )
 
         emit(db, run_id, "data.snapshot.loaded", "orchestrator", "数据快照已冻结", f"{snapshot['label']}，共 {snapshot['row_count']} 条库存记录。", {
             "snapshot_id": snapshot["id"],
@@ -223,6 +231,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "complexity_score": schedule["complexity_score"],
             "parallel_branch": schedule["parallel_branch"],
             "loop": schedule["loop"],
+            "executor": "asyncio.PriorityQueue",
+            "workers": agent_executor.max_workers,
         })
         emit(db, run_id, "rag.retrieved", "orchestrator", "RAG 规则检索完成", f"检索到 {len(evidence)} 条可引用规则。", {
             "documents": [{"id": item["id"], "title": item["title"], "score": item["score"]} for item in evidence],
@@ -501,6 +511,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "recommended_plan": (delivery.get("recommended_plan") or {}).get("name"),
             "alternatives": len(delivery.get("alternatives", [])),
         })
+        scheduler_metrics = agent_executor.metrics() if agent_executor else {}
+        schedule["runtime_metrics"] = scheduler_metrics
 
         result = {
             "run_id": run_id,
@@ -553,5 +565,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         emit(db, run_id, "run.failed", "orchestrator", "推演执行失败", str(exc))
         db.update_run(run_id, "failed", {"error": str(exc), "run_id": run_id})
     finally:
+        if agent_executor is not None:
+            await agent_executor.close()
         if http_client is not None:
             await http_client.aclose()

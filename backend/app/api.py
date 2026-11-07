@@ -339,10 +339,20 @@ def benchmark() -> dict:
     runtime_registry = AgentRegistryService(db)
     all_runs = runtime_registry.run_performance_metrics()
     cloud_runs = runtime_registry.fully_cloud_run_metrics()
+    scheduler_evidence = {}
+    for run_summary in db.list_runs(limit=20):
+        if run_summary["status"] not in {"awaiting_approval", "needs_human", "approved"}:
+            continue
+        run = db.get_run(run_summary["id"])
+        metrics = ((run or {}).get("result") or {}).get("orchestration", {}).get("runtime_metrics") or {}
+        if metrics.get("total_tasks"):
+            scheduler_evidence = {"run_id": run_summary["id"], **metrics}
+            break
     data["runtime_evidence"] = {
         "agents": runtime_registry.runtime_metrics(run_ids=cloud_runs["run_ids"]),
         "runs": all_runs,
         "fully_cloud": cloud_runs,
+        "scheduler": scheduler_evidence,
     }
     return data
 

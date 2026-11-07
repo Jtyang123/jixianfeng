@@ -19,7 +19,7 @@ const featureChecks = computed(() => [
   { label: '多 Agent 角色定义', status: true, evidence: '4 个版本化 Agent 契约' },
   { label: '动态 Agent 注册与版本', status: true, evidence: '注册、发现、版本发布与在线切换' },
   { label: '可视化工作流编排', status: true, evidence: '并行、条件、循环与人工门控' },
-  { label: '负载感知调度', status: true, evidence: '延迟、失败率、排队负载调整优先级' },
+  { label: '真实异步调度', status: true, evidence: 'asyncio.PriorityQueue、3 Worker 与排队指标' },
   { label: 'AgentArts 决策闭环', status: true, evidence: '云端推荐参与已核验方案排序' },
   { label: '独立结果验证', status: true, evidence: '确定性硬规则 + 隔离上下文' },
   { label: '自我循环与反馈优化', status: true, evidence: '问题分类、策略切换、多轮收敛' },
@@ -117,6 +117,20 @@ onMounted(load)
         <div v-else class="empty-table"><Activity :size="28" /><strong>暂无历史运行样本</strong><span>完成一次完整调度后，这里会显示真实运行与 AgentArts 观测数据。</span></div>
       </section>
 
+      <section v-if="benchmark.runtime_evidence?.scheduler?.total_tasks" class="content-card cloud-runtime-card">
+        <div class="workflow-head"><div><div class="eyebrow">REAL TASK QUEUE EVIDENCE</div><h2>实际异步优先队列调度</h2><p>来自最近一次真实运行，记录 AgentArts 调用的排队、执行和并发峰值。</p></div><Activity :size="20" /></div>
+        <div class="diagnostic-summary">
+          <article><span>最近运行</span><strong>{{ benchmark.runtime_evidence.scheduler.run_id }}</strong><small>asyncio.PriorityQueue · {{ benchmark.runtime_evidence.scheduler.workers }} 个 Worker</small></article>
+          <article><span>调度任务</span><strong>{{ benchmark.runtime_evidence.scheduler.total_tasks }}</strong><small>成功 {{ benchmark.runtime_evidence.scheduler.successful_tasks }} · 失败 {{ benchmark.runtime_evidence.scheduler.failed_tasks }}</small></article>
+          <article><span>平均排队</span><strong>{{ benchmark.runtime_evidence.scheduler.average_wait_ms }} ms</strong><small>最大等待 {{ benchmark.runtime_evidence.scheduler.max_wait_ms }} ms</small></article>
+          <article><span>峰值并发</span><strong>{{ benchmark.runtime_evidence.scheduler.peak_concurrency }}</strong><small>平均执行 {{ benchmark.runtime_evidence.scheduler.average_execution_ms }} ms</small></article>
+        </div>
+        <div class="table-wrap diagnostic-table">
+          <table class="data-table"><thead><tr><th>Agent</th><th>优先级</th><th>排队时间</th><th>执行时间</th><th>状态</th></tr></thead><tbody>
+            <tr v-for="(record, index) in benchmark.runtime_evidence.scheduler.records.slice(0, 12)" :key="`${record.agent_id}-${index}`"><td><strong>{{ record.agent_id }}</strong></td><td>{{ record.priority }}</td><td>{{ record.wait_ms }} ms</td><td>{{ record.execution_ms }} ms</td><td><span class="inventory-status" :class="record.status === 'success' ? 'inventory-status--available' : 'inventory-status--expired'">{{ record.status === 'success' ? '成功' : '失败' }}</span></td></tr>
+          </tbody></table>
+        </div>
+      </section>
       <section class="content-card diagnostics-card">
         <div class="workflow-head">
           <div><div class="eyebrow">STRESS & FAULT INJECTION</div><h2>并发压力、故障注入与误差分析</h2><p>完整自适应闭环分别在 1/5/10/20 并发下执行，并验证外部依赖故障时的安全降级。</p></div>

@@ -135,6 +135,10 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
         "demand_agent", "matching_agent", "verifier_agent", "delivery_agent", "risk_extension", "demand_extension",
     }
     assert abs(fake.started_at["matching_agent"] - fake.started_at["verifier_agent"]) < 0.2
+    scheduler_metrics = run["result"]["orchestration"]["runtime_metrics"]
+    assert scheduler_metrics["engine"] == "asyncio.PriorityQueue"
+    assert scheduler_metrics["total_tasks"] >= 6
+    assert scheduler_metrics["peak_concurrency"] >= 2
     assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension", "demand_extension"}
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])

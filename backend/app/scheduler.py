@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import time
+from collections import defaultdict
+from datetime import datetime
+from statistics import mean
+from typing import Any, Awaitable, Callable
 
 from .config import AGENT_RUNTIME
 
@@ -83,6 +88,111 @@ WORKFLOW = {
     "stop_condition": "无硬阻断且核验评分不低于 80，或资源约束无法自动修复/达到三轮上限时转人工研判",
 }
 
+
+class AsyncPriorityExecutor:
+    """Real async priority queue used by AgentArts cloud calls."""
+
+    def __init__(self, priorities: dict[str, int], max_workers: int = 3, default_priority: int = 50) -> None:
+        self.priorities = priorities
+        self.max_workers = max(1, min(8, max_workers))
+        self.default_priority = default_priority
+        self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self.records: list[dict] = []
+        self.workers: list[asyncio.Task] = []
+        self.sequence = 0
+        self.active = 0
+        self.peak_active = 0
+        self.closed = False
+
+    async def _ensure_started(self) -> None:
+        if self.workers:
+            return
+        self.workers = [asyncio.create_task(self._worker(), name=f"farmmatch-agent-worker-{index}") for index in range(self.max_workers)]
+
+    async def submit(self, agent_id: str, operation: Callable[[], Awaitable[Any]]) -> Any:
+        if self.closed:
+            raise RuntimeError("调度器已关闭")
+        await self._ensure_started()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        self.sequence += 1
+        priority = int(self.priorities.get(agent_id, self.default_priority))
+        queued_at = datetime.now().astimezone()
+        await self.queue.put((-priority, self.sequence, agent_id, operation, future, queued_at))
+        return await future
+
+    async def _worker(self) -> None:
+        while True:
+            _, _, agent_id, operation, future, queued_at = await self.queue.get()
+            if operation is None:
+                self.queue.task_done()
+                return
+            started_at = datetime.now().astimezone()
+            started = time.perf_counter()
+            self.active += 1
+            self.peak_active = max(self.peak_active, self.active)
+            status = "success"
+            try:
+                result = await operation()
+            except Exception as exc:
+                status = "failed"
+                if not future.done():
+                    future.set_exception(exc)
+                result = None
+            finally:
+                elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+                completed_at = datetime.now().astimezone()
+                wait_ms = round((started_at - queued_at).total_seconds() * 1000, 2)
+                self.active -= 1
+                self.records.append({
+                    "agent_id": agent_id,
+                    "priority": int(self.priorities.get(agent_id, self.default_priority)),
+                    "queued_at": queued_at.isoformat(timespec="milliseconds"),
+                    "started_at": started_at.isoformat(timespec="milliseconds"),
+                    "completed_at": completed_at.isoformat(timespec="milliseconds"),
+                    "wait_ms": wait_ms,
+                    "execution_ms": elapsed_ms,
+                    "status": status,
+                })
+                self.queue.task_done()
+            if status == "success" and not future.done():
+                future.set_result(result)
+
+    def metrics(self) -> dict:
+        waits = [item["wait_ms"] for item in self.records]
+        executions = [item["execution_ms"] for item in self.records]
+        by_agent: dict[str, list[dict]] = defaultdict(list)
+        for item in self.records:
+            by_agent[item["agent_id"]].append(item)
+        return {
+            "engine": "asyncio.PriorityQueue",
+            "workers": self.max_workers,
+            "total_tasks": len(self.records),
+            "successful_tasks": sum(1 for item in self.records if item["status"] == "success"),
+            "failed_tasks": sum(1 for item in self.records if item["status"] == "failed"),
+            "peak_concurrency": self.peak_active,
+            "average_wait_ms": round(mean(waits), 2) if waits else 0.0,
+            "max_wait_ms": round(max(waits), 2) if waits else 0.0,
+            "average_execution_ms": round(mean(executions), 2) if executions else 0.0,
+            "agents": {
+                agent_id: {
+                    "samples": len(items),
+                    "average_wait_ms": round(mean(item["wait_ms"] for item in items), 2),
+                    "average_execution_ms": round(mean(item["execution_ms"] for item in items), 2),
+                }
+                for agent_id, items in by_agent.items()
+            },
+            "records": self.records,
+        }
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        for _ in self.workers:
+            self.sequence += 1
+            await self.queue.put((999, self.sequence, "", None, None, datetime.now().astimezone()))
+        await asyncio.gather(*self.workers, return_exceptions=True)
 
 def build_dynamic_schedule(request: dict, closed_routes: list[str], demand_count: int) -> dict:
     affected = int(request.get("event", {}).get("affected_population", 0))
