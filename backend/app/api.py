@@ -149,6 +149,21 @@ def update_user(user_id: int, payload: UserUpdate, request: Request) -> dict:
     return user
 
 
+@router.delete("/auth/users/{user_id}")
+def delete_user(user_id: int, request: Request) -> dict:
+    current = _require_admin(request)
+    if user_id == current["id"]:
+        raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+    try:
+        user = auth_service.delete_user(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    auth_service.audit("user_deleted", "DELETE", f"/api/auth/users/{user_id}", 200,
+                       current, resource_type="user", resource_id=str(user_id))
+    return {"deleted": True, "user": user}
+
 @router.get("/auth/audit-logs")
 def audit_logs(request: Request, limit: int = 200) -> list[dict]:
     _require_admin(request)

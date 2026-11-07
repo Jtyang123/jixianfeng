@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import api as api_module
@@ -54,6 +55,12 @@ def test_auth_login_and_admin_endpoints(tmp_path: Path):
     })
     assert created.status_code == 200, created.text
     assert created.json()["role"] == "viewer"
+    viewer_id = created.json()["id"]
+    deleted = client.delete(f"/api/auth/users/{viewer_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert all(item["id"] != viewer_id for item in client.get("/api/auth/users").json())
+    self_delete = client.delete(f"/api/auth/users/{admin['id']}")
+    assert self_delete.status_code == 400
 
     logs = client.get("/api/auth/audit-logs")
     assert logs.status_code == 200, logs.text
@@ -102,3 +109,18 @@ def test_change_password_revokes_sessions(tmp_path: Path):
     new_login = client.post("/api/auth/login", json={"username": user["username"], "password": "NewPassword456!"})
     assert new_login.status_code == 200
 
+def test_delete_user_revokes_sessions_and_protects_last_admin(tmp_path: Path):
+    test_db = Database(tmp_path / "auth-delete.db", database_url="")
+    test_db.initialize()
+    service = AuthService(test_db)
+    admin = service.create_user("delete-admin", "AdminPass123!", role="admin")
+    viewer = service.create_user("delete-viewer", "ViewerPass123!", role="viewer")
+    token, _, _ = service.create_session(viewer["id"])
+
+    deleted = service.delete_user(viewer["id"])
+    assert deleted and deleted["username"] == "delete-viewer"
+    assert service.resolve_session(token) is None
+    assert all(user["id"] != viewer["id"] for user in service.list_users())
+
+    with pytest.raises(ValueError, match="最后一个启用"):
+        service.delete_user(admin["id"])

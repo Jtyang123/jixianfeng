@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Activity, Plus, RefreshCw, ShieldCheck, UserCheck, UserX, Users } from '@lucide/vue'
+import { Activity, Plus, RefreshCw, ShieldCheck, Trash2, UserCheck, UserX, Users } from '@lucide/vue'
 import { api, formatTime } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })
@@ -8,6 +8,8 @@ const users = ref([])
 const logs = ref([])
 const loading = ref(true)
 const saving = ref(false)
+const refreshing = ref(false)
+const deletingId = ref(null)
 const error = ref('')
 const message = ref('')
 const form = ref({ username: '', display_name: '', password: '', role: 'viewer' })
@@ -25,6 +27,43 @@ async function load() {
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
 
+async function refreshUsers() {
+  if (refreshing.value) return
+  refreshing.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    const [userRows, auditRows] = await Promise.all([api.users(), api.auditLogs(200)])
+    users.value = userRows
+    logs.value = auditRows
+    message.value = `账号与审计数据已刷新 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+  } catch (exc) {
+    error.value = exc.message
+  } finally {
+    refreshing.value = false
+  }
+}
+
+async function deleteUser(user) {
+  if (user.id === props.user?.id) {
+    error.value = '不能删除当前登录账号'
+    return
+  }
+  if (!window.confirm(`确认永久删除账号“${user.username}”？该账号的登录会话将同时失效。`)) return
+  deletingId.value = user.id
+  error.value = ''
+  message.value = ''
+  try {
+    await api.deleteUser(user.id)
+    users.value = users.value.filter((item) => item.id !== user.id)
+    logs.value = await api.auditLogs(200)
+    message.value = `账号“${user.username}”已删除`
+  } catch (exc) {
+    error.value = exc.message
+  } finally {
+    deletingId.value = null
+  }
+}
 async function createUser() {
   if (form.value.username.trim().length < 2 || form.value.password.length < 10) {
     error.value = '用户名至少 2 个字符，密码至少 10 个字符'
@@ -88,9 +127,9 @@ onMounted(load)
       </section>
 
       <section class="content-card">
-        <div class="workflow-head"><div><div class="eyebrow">ACCOUNT DIRECTORY</div><h2>账号与权限</h2></div><button class="secondary-action" @click="load"><RefreshCw :size="14" />刷新</button></div>
+        <div class="workflow-head"><div><div class="eyebrow">ACCOUNT DIRECTORY</div><h2>账号与权限</h2></div><button class="secondary-action" :disabled="refreshing" @click="refreshUsers"><RefreshCw :size="14" :class="{ spin: refreshing }" />{{ refreshing ? '刷新中...' : '刷新' }}</button></div>
         <div class="table-wrap access-table-wrap"><table class="data-table"><thead><tr><th>账号</th><th>角色</th><th>状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody>
-          <tr v-for="item in users" :key="item.id"><td><strong>{{ item.display_name }}</strong><small class="cell-sub">{{ item.username }}</small></td><td><span class="soft-tag">{{ roleLabels[item.role] }}</span></td><td><span class="warehouse-state" :class="{ 'warehouse-state--closed': !item.is_active }">{{ item.is_active ? '启用' : '停用' }}</span></td><td>{{ item.last_login_at ? formatTime(item.last_login_at) : '尚未登录' }}</td><td><button type="button" class="record-edit" @click="toggleUser(item)"><UserX v-if="item.is_active" :size="12" /><UserCheck v-else :size="12" />{{ item.is_active ? '停用' : '启用' }}</button></td></tr>
+          <tr v-for="item in users" :key="item.id"><td><strong>{{ item.display_name }}</strong><small class="cell-sub">{{ item.username }}</small></td><td><span class="soft-tag">{{ roleLabels[item.role] }}</span></td><td><span class="warehouse-state" :class="{ 'warehouse-state--closed': !item.is_active }">{{ item.is_active ? '启用' : '停用' }}</span></td><td>{{ item.last_login_at ? formatTime(item.last_login_at) : '尚未登录' }}</td><td><div class="inventory-row-actions"><button type="button" class="record-edit" @click="toggleUser(item)"><UserX v-if="item.is_active" :size="12" /><UserCheck v-else :size="12" />{{ item.is_active ? '停用' : '启用' }}</button><button type="button" class="record-delete" :disabled="deletingId === item.id || item.id === user?.id" :title="item.id === user?.id ? '不能删除当前登录账号' : '永久删除账号'" @click="deleteUser(item)"><Trash2 :size="12" />{{ deletingId === item.id ? '删除中' : '删除' }}</button></div></td></tr>
         </tbody></table></div>
       </section>
 

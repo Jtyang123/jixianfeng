@@ -278,6 +278,22 @@ class AuthService:
             updated = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             return self.public_user(dict(updated))
 
+    def delete_user(self, user_id: int) -> dict | None:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            if item["role"] == "admin" and item["is_active"]:
+                active_admins = conn.execute(
+                    "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1"
+                ).fetchone()["count"]
+                if active_admins <= 1:
+                    raise ValueError("不能删除最后一个启用的管理员")
+            conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            return self.public_user(item)
+
     def audit(self, action: str, method: str, path: str, status_code: int | None = None,
               user: dict | None = None, resource_type: str = "", resource_id: str = "",
               ip: str = "", detail: str = "") -> None:

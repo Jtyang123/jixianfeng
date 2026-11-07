@@ -1,4 +1,4 @@
-﻿const FIELD_LABELS = {
+const FIELD_LABELS = {
   title: '事件标题',
   location: '影响区域',
   affected_population: '影响人口',
@@ -67,6 +67,7 @@ export const api = {
   updateUser: (id, payload) => request(`/api/auth/users/${id}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
+  deleteUser: (id) => request(`/api/auth/users/${id}`, { method: 'DELETE' }),
   auditLogs: (limit = 200) => request(`/api/auth/audit-logs?limit=${limit}`),
   agents: () => request('/api/agents'),
   discoverAgents: (role = '') => request(`/api/agents/discover${role ? `?role=${encodeURIComponent(role)}` : ''}`),
