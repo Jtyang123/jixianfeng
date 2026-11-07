@@ -62,7 +62,7 @@ onMounted(load)
               <em>{{ item.score }}</em>
             </div>
           </div>
-          <div class="benchmark-note"><GitCompare :size="16" /><span>基线代表“无独立核验直接采用候选方案”，用于说明验证闭环的实际拦截价值；不是正式行业基准。</span></div>
+          <div class="benchmark-note"><GitCompare :size="16" /><span>基线表示直接采用第一套候选方案且不执行独立核验；展示分数由同一规则事后计算，仅用于说明验证闭环的拦截价值。</span></div>
         </section>
 
         <section class="content-card reproducibility-card">
@@ -122,10 +122,10 @@ onMounted(load)
       </section>
 
       <section class="content-card rubric-table-card">
-        <div class="workflow-head"><div><div class="eyebrow">JUDGING ALIGNMENT</div><h2>评分维度与实现证据</h2></div><ShieldCheck :size="20" /></div>
+        <div class="workflow-head"><div><div class="eyebrow">EVIDENCE MAPPING</div><h2>赛题能力证据映射</h2></div><ShieldCheck :size="20" /></div>
         <div class="table-wrap">
-          <table class="data-table"><thead><tr><th>评分维度</th><th>分值</th><th>本项目证据</th></tr></thead>
-            <tbody><tr v-for="item in manifest?.score_alignment || []" :key="item.item"><td><strong>{{ item.item }}</strong></td><td><span class="score-pill">{{ item.score }} 分</span></td><td>{{ item.evidence }}</td></tr></tbody>
+          <table class="data-table"><thead><tr><th>能力维度</th><th>本项目证据</th></tr></thead>
+            <tbody><tr v-for="item in manifest?.score_alignment || []" :key="item.item"><td><strong>{{ item.item }}</strong></td><td>{{ item.evidence }}</td></tr></tbody>
           </table>
         </div>
         <div class="benchmark-note"><Target :size="16" /><span>{{ benchmark.notes.join(' ') }}</span></div>

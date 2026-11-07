@@ -1,10 +1,11 @@
-﻿import asyncio
+import asyncio
 import json
 import time
 from pathlib import Path
 
 from app import orchestrator as orchestrator_module
 from app.database import Database
+from app.registry import AgentRegistryService
 
 
 class FakeAgentArts:
@@ -30,6 +31,8 @@ class FakeAgentArts:
             text = json.dumps({"recommended_plan_id": payload["plans"][0]["plan_id"]})
         elif agent_id == "verifier_agent":
             text = json.dumps({"verdict": "pass", "score": 100})
+        elif agent_id == "risk_extension":
+            text = json.dumps({"risks": ["扩展风险：需核对夜间运输"]})
         else:
             text = json.dumps({"summary": "ok"})
         return {"mode": "agentarts", "agent_id": agent_id, "text": text, "stream_events": 1}
@@ -72,6 +75,17 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
         "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
     }
     run_id = "RUN-PARALLEL-TEST"
+    AgentRegistryService(db).register_agent({
+        "id": "risk_extension",
+        "name": "扩展风险审查",
+        "role": "risk-review",
+        "description": "动态注册的扩展审查节点",
+        "capabilities": ["night-transport-risk"],
+        "version": "v1",
+        "endpoint": "https://example.com/risk-extension/invocations",
+        "model": "test",
+        "prompt_version": "v1",
+    })
     db.create_run(run_id, scenario["id"], request)
     fake = FakeAgentArts()
     monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: fake)
@@ -82,6 +96,8 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     run = db.get_run(run_id)
     assert run["status"] == "awaiting_approval"
     assert set(run["result"]["agentarts_trace"]) == {
-        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent",
+        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent", "risk_extension",
     }
     assert abs(fake.started_at["matching_agent"] - fake.started_at["verifier_agent"]) < 0.2
+    assert run["result"]["extension_reviews"][0]["agent_id"] == "risk_extension"
+    assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])

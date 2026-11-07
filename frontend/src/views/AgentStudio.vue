@@ -102,6 +102,8 @@ onMounted(load)
             <div class="flow-arrow">→</div>
             <div class="flow-node flow-node--verify"><span>A03</span><strong>独立核验</strong></div>
             <div class="flow-arrow">→</div>
+            <div class="flow-node flow-node--dynamic"><span>A05+</span><strong>扩展审查</strong></div>
+            <div class="flow-arrow">→</div>
             <div class="flow-node flow-node--decision"><span>GATE</span><strong>通过？</strong></div>
           </div>
           <div class="loop-branch">
@@ -175,10 +177,10 @@ onMounted(load)
       </div>
 
       <section class="content-card score-alignment">
-        <div class="workflow-head"><div><div class="eyebrow">RUBRIC ALIGNMENT</div><h2>初赛评分标准对齐</h2></div><Layers3 :size="20" /></div>
+        <div class="workflow-head"><div><div class="eyebrow">EVIDENCE MAPPING</div><h2>赛题能力证据映射</h2></div><Layers3 :size="20" /></div>
         <div class="alignment-grid">
           <div v-for="item in manifest.score_alignment" :key="item.item" class="alignment-item">
-            <span>{{ item.score }}<small>分</small></span>
+            <span><CheckCircle2 :size="18" /></span>
             <div><strong>{{ item.item }}</strong><p>{{ item.evidence }}</p></div>
           </div>
         </div>

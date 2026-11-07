@@ -9,12 +9,14 @@ import httpx
 
 from .agentarts import AgentArtsBridge
 from .agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
-from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME
+from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
 from .scheduler import build_dynamic_schedule
+
+CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
 
 AGENT_NAMES = {
     "orchestrator": "编排控制器",
@@ -68,6 +70,12 @@ def emit(
     )
 
 
+async def pace(seconds: float) -> None:
+    delay = max(0.0, seconds * DEMO_PACING_FACTOR)
+    if delay:
+        await asyncio.sleep(delay)
+
+
 async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     llm_service = LLMService()
     agentarts = AgentArtsBridge()
@@ -79,6 +87,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     ai_reasoning: dict = {}
     agent_decision: dict = {"applied": False, "rationale": "AgentArts 未配置，使用确定性排序。"}
     agentarts_trace: dict = {}
+    extension_agents = [
+        item for item in registry.list_agents()
+        if item["id"] not in CORE_AGENT_IDS and item.get("enabled") and item.get("endpoint_configured")
+    ][:5]
 
     async def call_agentarts(agent_id: str, payload: dict) -> dict:
         if not agentarts.enabled:
@@ -124,7 +136,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "runtime": AGENT_RUNTIME,
             "scenario_id": request["scenario_id"],
         })
-        await asyncio.sleep(0.28)
+        await pace(0.28)
 
         scenario = db.get_scenario(request["scenario_id"])
         if not scenario:
@@ -160,10 +172,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         emit(db, run_id, "rag.retrieved", "orchestrator", "RAG 规则检索完成", f"检索到 {len(evidence)} 条可引用规则。", {
             "documents": [{"id": item["id"], "title": item["title"], "score": item["score"]} for item in evidence],
         })
-        await asyncio.sleep(0.25)
+        await pace(0.25)
 
         emit(db, run_id, "agent.started", "demand_agent", "需求研判智能体开始工作", "按安置人口拆分物资需求并校验主数据。")
-        await asyncio.sleep(0.45)
+        await pace(0.45)
         demand_plan = build_demand_plan(request, materials, destinations)
         demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
         ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
@@ -182,10 +194,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "items": len(demand_plan["items"]),
             "confidence": demand_plan["confidence"],
         })
-        await asyncio.sleep(0.3)
+        await pace(0.3)
 
         emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体开始计算", "基于物资库、库存、车辆与路网生成三种目标方案。")
-        await asyncio.sleep(0.45)
+        await pace(0.45)
         round1_plans = generate_plans(
             demand_plan, inventory, warehouses, routes, vehicles,
             attempt=1, closed_routes=closed_routes,
@@ -207,10 +219,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             ]
         })
         emit(db, run_id, "agent.completed", "matching_agent", "第一轮匹配完成", f"生成 {len(round1_plans)} 套候选方案。")
-        await asyncio.sleep(0.32)
+        await pace(0.32)
 
         emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体开始审查", "核验道路、库存、运力与时效约束。")
-        await asyncio.sleep(0.5)
+        await pace(0.5)
         round1_verification = verify_plans(
             round1_plans, demand_plan, inventory, routes, vehicles, closed_routes
         )
@@ -221,7 +233,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "blockers": round1_verification["blocker_summary"],
             "required_fixes": round1_verification["required_fixes"][:5],
         })
-        await asyncio.sleep(0.35)
+        await pace(0.35)
 
         rounds = [{
             "attempt": 1,
@@ -237,9 +249,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 "attempt": 2,
                 "constraints": round1_verification["required_fixes"][:5],
             })
-            await asyncio.sleep(0.35)
+            await pace(0.35)
             emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体重新规划", "排除封闭主通道，改用备用路线并重新平衡仓库库存。")
-            await asyncio.sleep(0.45)
+            await pace(0.45)
             round2_plans = generate_plans(
                 demand_plan, inventory, warehouses, routes, vehicles,
                 attempt=2, closed_routes=closed_routes,
@@ -251,10 +263,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 ]
             })
             emit(db, run_id, "agent.completed", "matching_agent", "修正方案生成完成", f"生成 {len(round2_plans)} 套修正方案。")
-            await asyncio.sleep(0.3)
+            await pace(0.3)
 
             emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体复审", "对修正方案重新执行全量规则校验。")
-            await asyncio.sleep(0.45)
+            await pace(0.45)
             round2_verification = verify_plans(
                 round2_plans, demand_plan, inventory, routes, vehicles, closed_routes
             )
@@ -277,14 +289,14 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "score": round2_verification["score"],
                     "blockers": round2_verification["blocker_summary"],
                 })
-            await asyncio.sleep(0.3)
+            await pace(0.3)
         else:
             emit(db, run_id, "agent.completed", "verifier_agent", "首轮核验完成", "首轮方案通过核验。")
             emit(db, run_id, "verification.passed", "verifier_agent", "方案首轮通过核验", f"最高评分 {round1_verification['score']}。", {
                 "score": round1_verification["score"],
                 "approved_plan_ids": round1_verification["approved_plan_ids"],
             })
-            await asyncio.sleep(0.25)
+            await pace(0.25)
 
         matching_payload = {
             "summary": "已完成多目标候选方案生成与约束修正。",
@@ -339,11 +351,48 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "保留本地确定性核验结论，云端意见仅作为辅助解释。",
                     {"local_verdict": final_verification["verdict"], "agentarts_verdict": remote_verdict},
                 )
+        extension_reviews = []
+        if extension_agents:
+            async def run_extension(agent: dict) -> dict:
+                agent_id = agent["id"]
+                emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
+                response = await call_agentarts(agent_id, {
+                    "scenario": scenario,
+                    "demand": demand_plan,
+                    "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
+                    "verification": {
+                        "verdict": final_verification["verdict"],
+                        "score": final_verification["score"],
+                        "blockers": final_verification["blocker_summary"],
+                        "warnings": final_verification.get("warnings", []),
+                    },
+                })
+                emit(db, run_id, "agent.completed", agent_id, f"扩展审查完成 · {agent['name']}", "扩展意见已写入交付包，不能覆盖确定性硬规则。")
+                return {
+                    "agent_id": agent_id,
+                    "agent_name": agent["name"],
+                    "role": agent.get("role", ""),
+                    "mode": response.get("mode", ""),
+                    "parsed": response.get("parsed"),
+                    "text": response.get("text", ""),
+                }
+
+            extension_reviews = await asyncio.gather(*(run_extension(agent) for agent in extension_agents))
+
         emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
-        await asyncio.sleep(0.4)
+        await pace(0.4)
         delivery = build_delivery_package(
             final_verification, scenario, snapshot, request.get("weights", {}), agent_decision=agent_decision
         )
+        delivery["extension_reviews"] = extension_reviews
+        for review in extension_reviews:
+            parsed = review.get("parsed") or {}
+            risks = parsed.get("risks") or parsed.get("warnings") or parsed.get("risk_alerts") or []
+            if isinstance(risks, str):
+                risks = [risks]
+            for risk in risks:
+                risk_text = risk if isinstance(risk, str) else json.dumps(risk, ensure_ascii=False)
+                delivery.setdefault("risk_alerts", []).append(f"{review['agent_name']}：{risk_text}")
         ai_reasoning["delivery_agent"] = await llm_service.reflect("delivery_agent", delivery, evidence)
         delivery_remote = await call_agentarts("delivery_agent", {"delivery": delivery, "evidence": evidence})
         remote_delivery = delivery_remote.get("parsed") if isinstance(delivery_remote, dict) else None
@@ -377,6 +426,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "ai_reasoning": ai_reasoning,
             "agentarts_trace": agentarts_trace,
             "agent_decision": agent_decision,
+            "extension_reviews": extension_reviews,
             "agentarts_status": agentarts.status,
             "llm_status": llm_service.status,
             "loop_metrics": {

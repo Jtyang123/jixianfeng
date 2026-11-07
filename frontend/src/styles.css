@@ -1023,3 +1023,14 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 
 .map-route-warning { position:absolute; left:50%; top:52px; transform:translateX(-50%); z-index:600; padding:6px 10px; color:#55645f; background:rgba(255,253,248,.94); border:1px solid var(--line); border-radius:6px; font-size:8px; box-shadow:0 3px 10px rgba(20,40,35,.08); }
 .map-route-warning--error { color:var(--red); border-color:#ecc4b9; background:rgba(251,233,228,.96); }
+
+.extension-review-block { margin: 12px 0; padding: 12px; background: #f4faf6; border: 1px solid #c9e1d7; border-radius: 8px; }
+.extension-review-block h4 { margin-bottom: 8px; color: var(--teal); font-size: 10px; }
+.extension-review-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid #dce7df; }
+.extension-review-row:first-of-type { border-top: 0; }
+.extension-review-row div { display: flex; flex-direction: column; gap: 2px; }
+.extension-review-row strong { font-size: 9px; }
+.extension-review-row span { color: var(--muted); font-size: 8px; }
+.extension-review-row p { color: var(--ink-2); font-size: 9px; line-height: 1.55; }
+
+.flow-node--dynamic { border-color:#c7b7e5; background:#f3eefb; color:#5e4685; }

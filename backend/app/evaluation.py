@@ -74,6 +74,8 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
     multi_times = [item[0] for item in multi_runs]
 
     _, demand, plans_v1, baseline_plan, baseline_truth = baseline_runs[0]
+    baseline_report = baseline_truth["reports"][0]
+    baseline_score = baseline_report["verification"]["score"]
     _, _, _, verification_v1, plans_v2, verification_v2 = multi_runs[0]
     available_demand = sum(item["quantity"] for item in demand["items"])
     approved_final = next((item for item in verification_v2["reports"] if item["approved"]), None)
@@ -103,7 +105,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "unsafe_acceptance_rate": baseline_unsafe_acceptance,
             "risk_detection_rate": 0.0,
             "final_safe": False if baseline_unsafe else True,
-            "verification_score": 0,
+            "verification_score": baseline_score,
             "coverage": round(baseline_coverage, 4),
             "average_latency_ms": baseline_avg,
             "p95_latency_ms": baseline_p95,
@@ -127,13 +129,13 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "latency_overhead_pct": overhead_pct,
             "unsafe_acceptance_reduction_pp": round((baseline_unsafe_acceptance - multi_unsafe_acceptance) * 100, 1),
             "risk_detection_gain_pp": round(risk_detection_rate * 100, 1),
-            "score_gain": verification_v2["score"] - 0,
+            "score_gain": verification_v2["score"] - baseline_score,
         },
     }
     quantitative_rows = [
         {"metric": "不安全方案验收率", "baseline": f"{baseline_unsafe_acceptance * 100:.1f}%", "multi": f"{multi_unsafe_acceptance * 100:.1f}%", "change": f"-{quantitative['tradeoff']['unsafe_acceptance_reduction_pp']:.1f} 个百分点"},
         {"metric": "硬风险检出率", "baseline": "0.0%", "multi": f"{risk_detection_rate * 100:.1f}%", "change": f"+{quantitative['tradeoff']['risk_detection_gain_pp']:.1f} 个百分点"},
-        {"metric": "最终核验评分", "baseline": "0", "multi": str(verification_v2["score"]), "change": f"+{verification_v2['score']}"},
+        {"metric": "最终核验评分", "baseline": str(baseline_score), "multi": str(verification_v2["score"]), "change": f"{verification_v2['score'] - baseline_score:+d}"},
         {"metric": "需求覆盖率", "baseline": f"{baseline_coverage * 100:.1f}%", "multi": f"{coverage * 100:.1f}%", "change": f"{(coverage - baseline_coverage) * 100:+.1f} 个百分点"},
         {"metric": "平均纯计算耗时", "baseline": f"{baseline_avg:.2f} ms", "multi": f"{multi_avg:.2f} ms", "change": f"+{overhead_ms:.2f} ms"},
         {"metric": "P95 纯计算耗时", "baseline": f"{baseline_p95:.2f} ms", "multi": f"{multi_p95:.2f} ms", "change": f"{multi_p95 - baseline_p95:+.2f} ms"},
@@ -163,7 +165,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         "quantitative": quantitative,
         "quantitative_rows": quantitative_rows,
         "comparison": [
-            {"label": "单 Agent / 无独立核验", "score": 0, "unsafe_plans": len(plans_v1), "passed": False},
+            {"label": "单 Agent / 无独立核验", "score": baseline_score, "unsafe_plans": len(plans_v1), "passed": False},
             {"label": "第一轮生成 / 核验退回", "score": verification_v1["score"], "unsafe_plans": len(plans_v1), "passed": False},
             {"label": "多 Agent / 两轮闭环", "score": verification_v2["score"], "unsafe_plans": 0, "passed": verification_v2["verdict"] == "pass"},
         ],

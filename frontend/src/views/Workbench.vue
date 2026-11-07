@@ -572,6 +572,13 @@ onBeforeUnmount(() => eventSource?.close())
               <ShieldCheck :size="22" />
               <div><strong>{{ runResult.delivery.summary }}</strong><p>{{ runResult.delivery.disclaimer }}</p></div>
             </div>
+            <div v-if="runResult.extension_reviews?.length" class="extension-review-block">
+              <h4>动态扩展 Agent 审查</h4>
+              <div v-for="review in runResult.extension_reviews" :key="review.agent_id" class="extension-review-row">
+                <div><strong>{{ review.agent_name }}</strong><span>{{ review.agent_id }} · {{ review.mode === 'agentarts' ? 'AgentArts' : '本地回退' }}</span></div>
+                <p>{{ review.parsed?.summary || review.parsed?.rationale || review.text || '扩展审查已完成' }}</p>
+              </div>
+            </div>
             <div class="delivery-grid">
               <div class="delivery-block">
                 <h4>风险与现场提示</h4>

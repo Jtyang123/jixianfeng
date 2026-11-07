@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -36,6 +36,7 @@ if not DB_PATH.is_absolute():
     DB_PATH = (PROJECT_DIR / DB_PATH).resolve()
 
 AGENT_RUNTIME = os.getenv("AGENT_RUNTIME", "local").strip().lower()
+DEMO_PACING_FACTOR = max(0.0, min(1.0, float(os.getenv("DEMO_PACING_FACTOR", "0.2"))))
 AGENTARTS_ENABLED = os.getenv("AGENTARTS_ENABLED", "false").strip().lower() == "true"
 AGENTARTS_BASE_URL = os.getenv("AGENTARTS_BASE_URL", "").rstrip("/")
 AGENTARTS_API_KEY = os.getenv("AGENTARTS_API_KEY", "")

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -61,6 +61,7 @@ WORKFLOW = {
         {"id": "demand_agent", "label": "A01 需求研判", "type": "agent", "agent": "demand_agent"},
         {"id": "matching_agent", "label": "A02 资源匹配", "type": "agent", "agent": "matching_agent"},
         {"id": "verifier_agent", "label": "A03 独立核验", "type": "agent", "agent": "verifier_agent"},
+        {"id": "extension_review", "label": "A05+ 动态扩展审查", "type": "dynamic", "agent": "registry"},
         {"id": "decision", "label": "通过？", "type": "condition", "agent": "orchestrator"},
         {"id": "rework", "label": "结构化反馈重算", "type": "loop", "agent": "matching_agent"},
         {"id": "human_gate", "label": "人工审批", "type": "human", "agent": "orchestrator"},
@@ -71,7 +72,8 @@ WORKFLOW = {
         {"from": "parallel_intake", "to": "demand_agent", "label": "需求分支"},
         {"from": "demand_agent", "to": "matching_agent", "label": "DemandPlan"},
         {"from": "matching_agent", "to": "verifier_agent", "label": "候选方案"},
-        {"from": "verifier_agent", "to": "decision", "label": "核验报告"},
+        {"from": "verifier_agent", "to": "extension_review", "label": "核验报告"},
+        {"from": "extension_review", "to": "decision", "label": "扩展意见"},
         {"from": "decision", "to": "rework", "label": "REWORK", "conditional": True},
         {"from": "rework", "to": "matching_agent", "label": "修正约束", "conditional": True},
         {"from": "decision", "to": "human_gate", "label": "PASS", "conditional": True},
@@ -128,9 +130,9 @@ def platform_manifest() -> dict[str, Any]:
             "replay_supported": True,
         },
         "score_alignment": [
-            {"item": "平台功能完整性", "score": 25, "evidence": "Agent 定义、DAG 编排、动态调度、运行监控、独立核验、PDCA 自循环"},
-            {"item": "技术可靠性与可复现性", "score": 25, "evidence": "本地确定性运行、库存快照、事件轨迹、测试用例、失败转人工"},
-            {"item": "人工智能使用合理性", "score": 25, "evidence": "LLM/AgentArts 适配、RAG 证据、工具调用、确定性核验护栏"},
-            {"item": "文档质量", "score": 25, "evidence": "方案书、演示脚本、Agent 契约、运行报告与接口文档"},
+            {"item": "平台功能完整性", "evidence": "Agent 定义、动态扩展审查、DAG 编排、运行监控、独立核验和反馈回路"},
+            {"item": "技术可靠性与可复现性", "evidence": "本地确定性运行、库存快照、事件轨迹、自动化测试和失败转人工"},
+            {"item": "人工智能使用合理性", "evidence": "AgentArts 受限推荐、扩展审查、RAG 证据和确定性核验护栏"},
+            {"item": "文档质量", "evidence": "方案书、演示脚本、Agent 契约、接口说明和可复现运行记录"},
         ],
     }
