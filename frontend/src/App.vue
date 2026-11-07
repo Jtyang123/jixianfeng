@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, ChevronRight, Database, History, KeyRound, LayoutDashboard, LogOut,
-  Menu, Network, ShieldCheck, UserPlus, UserRound, X,
+  Menu, Network, ShieldCheck, UserPlus, X,
 } from '@lucide/vue'
 import Workbench from './views/Workbench.vue'
 import DataCenter from './views/DataCenter.vue'
@@ -171,7 +171,6 @@ onBeforeUnmount(() => window.removeEventListener('farmmatch:unauthorized', handl
         </div>
         <div class="topbar-actions">
           <span class="date-chip">{{ dateLabel }}</span>
-          <div class="auth-user-chip"><UserRound :size="15" /><span><strong>{{ authUser?.display_name }}</strong><small>{{ authUser?.role_label }}</small></span></div>
           <button v-if="authUser?.role === 'admin'" class="auth-manage-button" @click="openAccountManagement"><UserPlus :size="15" />账号管理</button>
           <button class="icon-button" title="修改密码" @click="passwordDialogOpen = true"><KeyRound :size="16" /></button>
           <button class="icon-button" title="退出登录" @click="logout"><LogOut :size="17" /></button>
