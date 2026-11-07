@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue'
 import { CheckCircle2, GitBranch, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
@@ -43,7 +43,7 @@ function newWorkflow() {
     name: '核验后扩展审查',
     description: '在独立核验通过后运行动态注册 Agent 或子工作流。',
     stage: 'post_verification',
-    enabled: true,
+    enabled: false,
     json: JSON.stringify({
       nodes: [
         { id: 'A05', type: 'agent', agent_id: 'risk_extension', depends_on: [], priority: 80, on_error: 'continue' },
