@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import {
-  BrainCircuit, Check, CircleDot, FileCheck2, LoaderCircle,
+  BrainCircuit, Check, ChevronDown, CircleDot, FileCheck2, LoaderCircle,
   RotateCcw, ScanSearch, ShieldCheck, TriangleAlert,
 } from '@lucide/vue'
 
@@ -39,7 +39,7 @@ const latestMap = computed(() => {
   return result
 })
 
-const recentEvents = computed(() => props.events.slice(-7))
+const recentEvents = computed(() => props.events.slice(-5))
 
 function timeOf(value) {
   return new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
@@ -79,8 +79,11 @@ function timeOf(value) {
       </article>
     </div>
 
-    <div class="event-log">
-      <div class="event-log-head"><span>实时事件流</span><span class="mono">{{ events.length }} EVENTS</span></div>
+    <details class="event-log" :open="running || events.length > 0">
+      <summary class="event-log-head">
+        <span>实时事件流</span>
+        <span class="mono">{{ events.length }} EVENTS <ChevronDown :size="13" /></span>
+      </summary>
       <div v-if="!recentEvents.length" class="event-empty">
         <div class="event-empty-orbit" />
         <span>启动推演后，这里显示智能体交接、工具调用与核验结果。</span>
@@ -95,6 +98,6 @@ function timeOf(value) {
           </div>
         </div>
       </div>
-    </div>
+    </details>
   </aside>
 </template>
