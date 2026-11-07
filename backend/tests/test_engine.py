@@ -44,6 +44,7 @@ def test_two_round_verification_loop(tmp_path: Path):
         assert {assignment["material_id"] for assignment in plan["assignments"]} <= demand_material_ids
     assert metrics_by_strategy["speed"]["assignment_count"] > metrics_by_strategy["cost"]["assignment_count"]
     assert len({metrics["assignment_count"] for metrics in metrics_by_strategy.values()}) >= 2
+    assert all(plan["metrics"]["coverage"] == 1.0 for plan in plans_v2)
     assert all(plan.get("policy_note") for plan in plans_v2)
     verification_v2 = verify_plans(plans_v2, demand, inventory, routes, vehicles, scenario["closed_routes"])
     assert verification_v2["verdict"] == "pass"

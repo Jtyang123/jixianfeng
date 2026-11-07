@@ -10,6 +10,7 @@ const props = defineProps({
   closedRoutes: { type: Array, default: () => [] },
   running: { type: Boolean, default: false },
   eventLocation: { type: Object, default: null },
+  inventory: { type: Array, default: () => [] },
 })
 
 const mapEl = ref(null)
@@ -21,14 +22,28 @@ let layerGroup = null
 let activeTiles = null
 let resizeObserver = null
 
-const builtinWarehouseIds = new Set(['WH-A', 'WH-B', 'WH-C', 'WH-D'])
-const builtinDestinationIds = new Set(['DST-01', 'DST-02', 'DST-03'])
-const warehouses = computed(() => (props.network.warehouses || []).filter((item) => !builtinWarehouseIds.has(item.id)))
-const destinations = computed(() => (props.network.destinations || []).filter((item) => !builtinDestinationIds.has(item.id)))
-const routes = computed(() => (props.network.routes || []).filter((item) => (
-  !builtinWarehouseIds.has(item.warehouse_id) && !builtinDestinationIds.has(item.destination_id)
-)))
-const vehicles = computed(() => (props.network.vehicles || []).filter((item) => !builtinWarehouseIds.has(item.warehouse_id)))
+const warehouses = computed(() => props.network.warehouses || [])
+const destinations = computed(() => props.network.destinations || [])
+const routes = computed(() => props.network.routes || [])
+const vehicles = computed(() => props.network.vehicles || [])
+const stockByWarehouse = computed(() => {
+  const result = {}
+  for (const item of props.inventory || []) {
+    const warehouseId = item.warehouse_id
+    if (!warehouseId) continue
+    if (!result[warehouseId]) result[warehouseId] = { total: 0, materialCount: 0, materials: [] }
+    const quantity = Number(item.quantity || 0)
+    result[warehouseId].total += quantity
+    result[warehouseId].materialCount += 1
+    result[warehouseId].materials.push({
+      name: item.material_name || item.name || item.material_code || '未知物资',
+      quantity,
+      unit: item.unit || item.base_unit || '',
+    })
+  }
+  return result
+})
+const stockWarehouseCount = computed(() => Object.values(stockByWarehouse.value).filter((item) => item.materialCount > 0).length)
 const eventPoint = computed(() => props.eventLocation ? pointOf(props.eventLocation) : null)
 const closedSet = computed(() => new Set(props.closedRoutes))
 const activeRoutes = computed(() => {
@@ -105,11 +120,16 @@ function draw() {
   for (const warehouse of warehouses.value) {
     const point = pointOf(warehouse)
     if (!point) continue
+    const stock = stockByWarehouse.value[warehouse.id] || { total: 0, materialCount: 0, materials: [] }
+    const stockRows = stock.materials.slice(0, 6).map((item) => (
+      `<br>${escapeHtml(item.name)}：${Number(item.quantity).toLocaleString('zh-CN')} ${escapeHtml(item.unit)}`
+    )).join('')
+    const extra = stock.materials.length > 6 ? `<br>另有 ${stock.materials.length - 6} 类库存物资` : ''
     L.marker(point, {
-      icon: makeIcon('warehouse', warehouse.name, warehouse.name),
+      icon: makeIcon('warehouse', warehouse.name, `${warehouse.name} · ${stock.materialCount} 类`),
       zIndexOffset: 400,
     }).addTo(layerGroup).bindPopup(
-      `<strong>${escapeHtml(warehouse.name)}</strong><br>${escapeHtml(warehouse.region)}<br>状态：${warehouse.status === 'open' ? '可调度' : '不可用'}`
+      `<strong>${escapeHtml(warehouse.name)}</strong><br>${escapeHtml(warehouse.region)}<br>状态：${warehouse.status === 'open' ? '可调度' : '不可用'}<br><strong>库存：${stock.materialCount} 类 / 合计 ${Number(stock.total).toLocaleString('zh-CN')}</strong>${stockRows}${extra}`
     )
     points.push(point)
   }
@@ -202,7 +222,7 @@ onMounted(async () => {
   resizeObserver.observe(mapEl.value)
 })
 
-watch(() => [props.network, props.plan, props.closedRoutes, props.running], draw, { deep: true })
+watch(() => [props.network, props.plan, props.closedRoutes, props.running, props.inventory], draw, { deep: true })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   map?.remove()
@@ -218,7 +238,7 @@ onBeforeUnmount(() => {
         <h2>应急资源地理态势</h2>
       </div>
       <div class="map-legend">
-        <span><i class="legend-dot legend-dot--wh" />仓库</span>
+        <span><i class="legend-dot legend-dot--wh" />库存仓库</span>
         <span><i class="legend-dot legend-dot--dst" />安置点</span>
         <span><i class="legend-line" />方案路线</span>
         <span><i class="legend-line legend-line--closed" />封闭道路</span>
@@ -234,11 +254,11 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="map-footer">
-      <div class="map-stat"><Warehouse :size="15" /><span>可用仓库</span><strong>{{ warehouses.length }}</strong></div>
+      <div class="map-stat"><Warehouse :size="15" /><span>库存仓库</span><strong>{{ stockWarehouseCount }}</strong></div>
       <div class="map-stat"><MapPin :size="15" /><span>安置点</span><strong>{{ destinations.length }}</strong></div>
       <div class="map-stat"><span class="route-swatch" /><span>封闭主通道</span><strong>{{ closedSet.size }}</strong></div>
       <div class="map-stat"><span class="vehicle-swatch" /><span>可用车辆</span><strong>{{ vehicles.length }}</strong></div>
-      <div class="map-footer-note">{{ provider === 'amap' ? (basemapMode === 'satellite' ? '高德卫星纯净底图' : '高德道路底图') : 'OpenStreetMap 底图' }} · 默认隐藏内置演示点位</div>
+      <div class="map-footer-note">{{ provider === 'amap' ? (basemapMode === 'satellite' ? '高德卫星纯净底图' : '高德道路底图') : 'OpenStreetMap 底图' }} · 点击仓库查看库存物资</div>
     </div>
   </section>
 </template>

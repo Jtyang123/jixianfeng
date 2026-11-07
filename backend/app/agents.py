@@ -269,6 +269,50 @@ def generate_plans(
                     }
                 )
             if remaining > 0.001:
+                for _, warehouse, route in candidates:
+                    key = (warehouse["id"], demand["material_id"])
+                    available = max(0.0, stock.get(key, 0) - used[key])
+                    if available <= 0.001:
+                        continue
+                    take = min(remaining, available)
+                    used[key] += take
+                    remaining -= take
+                    warehouse_dispatches[warehouse["id"]] += 1
+                    existing = next((
+                        item for item in assignments
+                        if item["warehouse_id"] == warehouse["id"]
+                        and item["destination_id"] == demand["destination_id"]
+                        and item["material_id"] == demand["material_id"]
+                        and item["route_id"] == route["id"]
+                    ), None)
+                    if existing:
+                        existing["quantity"] = round(existing["quantity"] + take, 2)
+                    else:
+                        assignments.append(
+                            {
+                                "warehouse_id": warehouse["id"],
+                                "warehouse_name": warehouse["name"],
+                                "destination_id": demand["destination_id"],
+                                "destination_name": demand["destination_name"],
+                                "material_id": demand["material_id"],
+                                "material_code": demand["material_code"],
+                                "material_name": demand["material_name"],
+                                "base_unit": demand["base_unit"],
+                                "quantity": round(take, 2),
+                                "priority": demand["priority"],
+                                "deadline_hours": demand["deadline_hours"],
+                                "route_id": route["id"],
+                                "route_name": route["road_name"],
+                                "route_eta_hours": route["eta_hours"],
+                                "route_cost": route["cost"],
+                                "is_primary_route": bool(route["is_primary"]),
+                                "unit_weight_kg": demand["unit_weight_kg"],
+                            }
+                        )
+                    if remaining <= 0.001:
+                        break
+
+            if remaining > 0.001:
                 unmet.append(
                     {
                         "material_id": demand["material_id"],

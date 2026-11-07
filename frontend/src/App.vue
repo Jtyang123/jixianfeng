@@ -177,8 +177,10 @@ onBeforeUnmount(() => window.removeEventListener('farmmatch:unauthorized', handl
         </div>
       </header>
       <div class="page-body">
-        <component :is="pageComponent" :dashboard="dashboard" :user="authUser"
-          @refresh-dashboard="refreshDashboard" @navigate="navigate" />
+        <KeepAlive>
+          <component :is="pageComponent" :dashboard="dashboard" :user="authUser"
+            @refresh-dashboard="refreshDashboard" @navigate="navigate" />
+        </KeepAlive>
       </div>
     </main>
     <PasswordDialog v-if="passwordDialogOpen" @close="passwordDialogOpen = false" @success="handlePasswordChanged" />
