@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Activity, GitBranch, Plus, RefreshCw, ServerCog, ShieldCheck, UserCog } from 'lucide-vue-next'
+import { Activity, GitBranch, Plus, RefreshCw, ServerCog, ShieldCheck, UserCog } from '@lucide/vue'
 import { api } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })

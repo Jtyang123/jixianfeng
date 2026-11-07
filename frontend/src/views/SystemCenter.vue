@@ -1,6 +1,6 @@
-﻿<script setup>
+<script setup>
 import { ref } from 'vue'
-import { BarChart3, GitBranch, Network, ShieldCheck } from 'lucide-vue-next'
+import { BarChart3, GitBranch, Network, ShieldCheck } from '@lucide/vue'
 import AgentStudio from './AgentStudio.vue'
 import Evaluation from './Evaluation.vue'
 import AccessControl from './AccessControl.vue'

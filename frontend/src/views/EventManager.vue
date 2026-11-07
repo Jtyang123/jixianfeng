@@ -1,6 +1,6 @@
-﻿<script setup>
+<script setup>
 import { onMounted, ref } from 'vue'
-import { AlertTriangle, CheckCircle2, Clock3, Download, FilePlus2, LocateFixed, MapPinned, Plus, Trash2, Upload } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, Clock3, Download, FilePlus2, LocateFixed, MapPinned, Plus, Trash2, Upload } from '@lucide/vue'
 import { api, formatTime } from '../api'
 
 const events = ref([])

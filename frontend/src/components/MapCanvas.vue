@@ -1,6 +1,6 @@
-﻿<script setup>
+<script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Crosshair, Layers3, MapPin, Warehouse } from 'lucide-vue-next'
+import { Crosshair, Layers3, MapPin, Warehouse } from '@lucide/vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 

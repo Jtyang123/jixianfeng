@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Activity, Plus, RefreshCw, ShieldCheck, UserCheck, UserX, Users } from 'lucide-vue-next'
+import { Activity, Plus, RefreshCw, ShieldCheck, UserCheck, UserX, Users } from '@lucide/vue'
 import { api, formatTime } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })

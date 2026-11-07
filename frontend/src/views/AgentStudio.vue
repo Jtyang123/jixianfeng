@@ -1,9 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue'
 import {
   Bot, BookOpen, BrainCircuit, CheckCircle2, Cpu, Database, GitBranch,
   Layers3, Network, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Wrench,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api } from '../api'
 
 defineProps({ user: { type: Object, default: null } })

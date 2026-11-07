@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { Boxes, Database, Truck } from 'lucide-vue-next'
+import { Boxes, Database, Truck } from '@lucide/vue'
 import MaterialLibrary from './MaterialLibrary.vue'
 import Inventory from './Inventory.vue'
 import ResourceData from './ResourceData.vue'

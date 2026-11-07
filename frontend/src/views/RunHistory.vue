@@ -1,6 +1,6 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, Clock3, FileText, History, RefreshCw, ShieldCheck } from 'lucide-vue-next'
+import { CheckCircle2, Clock3, FileText, History, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { api, formatTime } from '../api'
 
 const runs = ref([])

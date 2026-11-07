@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   CheckCircle2, Download, LocateFixed, MapPinned, Plus, Radio, Trash2, Truck,
   Upload, Warehouse as WarehouseIcon,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api, formatTime } from '../api'
 
 const emit = defineEmits(['refresh-dashboard'])

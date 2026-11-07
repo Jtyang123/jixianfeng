@@ -1,9 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed } from 'vue'
 import {
   BrainCircuit, Check, CircleDot, FileCheck2, LoaderCircle,
   RotateCcw, ScanSearch, ShieldCheck, TriangleAlert,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 
 const props = defineProps({
   events: { type: Array, default: () => [] },

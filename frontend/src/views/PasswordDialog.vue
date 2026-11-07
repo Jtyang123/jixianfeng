@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { KeyRound, X } from 'lucide-vue-next'
+import { KeyRound, X } from '@lucide/vue'
 import { api } from '../api'
 
 const emit = defineEmits(['close', 'success'])

@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { ArrowRight, LockKeyhole, RadioTower, ShieldCheck, UserRound } from 'lucide-vue-next'
+import { ArrowRight, LockKeyhole, RadioTower, ShieldCheck, UserRound } from '@lucide/vue'
 import { api } from '../api'
 
 const emit = defineEmits(['success'])

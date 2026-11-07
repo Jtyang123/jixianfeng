@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   AlertTriangle, CheckCircle2, Clock3, Database, Download, FileSpreadsheet,
   Layers3, Pencil, Plus, Trash2, Upload, Warehouse, X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api, formatNumber, formatTime } from '../api'
 
 const emit = defineEmits(['refresh-dashboard'])

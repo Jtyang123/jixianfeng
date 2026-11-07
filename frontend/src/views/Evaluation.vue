@@ -1,9 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue'
 import {
   Activity, AlertTriangle, BarChart3, CheckCircle2, Clock3, GitCompare,
   RefreshCw, ShieldCheck, Target, TestTube2,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api, formatNumber } from '../api'
 
 const benchmark = ref(null)

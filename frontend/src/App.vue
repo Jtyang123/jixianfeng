@@ -1,9 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, Bell, ChevronRight, Database, History, KeyRound, LayoutDashboard, LogOut,
   Menu, Network, ShieldCheck, UserPlus, UserRound, X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import Workbench from './views/Workbench.vue'
 import DataCenter from './views/DataCenter.vue'
 import EventManager from './views/EventManager.vue'

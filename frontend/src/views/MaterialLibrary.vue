@@ -1,9 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue'
 import {
   Boxes, CheckCircle2, Download, FileSpreadsheet, Plus, Search,
   Snowflake, Upload, X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api, formatNumber } from '../api'
 
 const emit = defineEmits(['refresh-dashboard'])

@@ -1,10 +1,10 @@
-﻿<script setup>
+<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, Clock3, FileDown,
   Gauge, MapPinned, PackageOpen, Play, Plus, RotateCcw, Route,
   ShieldCheck, SlidersHorizontal, Trash2, Truck, Wallet, X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import AgentRail from '../components/AgentRail.vue'
 import MapCanvas from '../components/MapCanvas.vue'
 import { api, formatNumber } from '../api'
