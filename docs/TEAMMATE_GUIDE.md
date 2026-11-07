@@ -15,7 +15,7 @@
 https://github.com/Jtyang123/jixianfeng
 ```
 
-当前稳定提交：`a79304d`
+当前稳定版本：以 GitHub `main` 分支最新提交为准
 
 GitHub 中包含：
 
