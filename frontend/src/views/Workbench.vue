@@ -444,7 +444,7 @@ onBeforeUnmount(() => eventSource?.close())
           <div><span>修正后评分</span><strong>{{ runResult.loop_metrics.final_score }}</strong></div>
           <div><span>评分提升</span><strong class="metric-positive">+{{ runResult.loop_metrics.score_gain }}</strong></div>
           <div><span>RAG 证据</span><strong>{{ runResult.retrieval.length }}</strong></div>
-          <div><span>推理模式</span><strong class="metric-mode">{{ runResult.llm_status.enabled ? 'LLM + RULES' : 'RULES · LLM READY' }}</strong></div>
+          <div><span>AgentArts 决策</span><strong class="metric-mode">{{ runResult.agent_decision?.applied ? '已采纳' : '规则回退' }}</strong></div>
         </div>
 
         <div class="closure-strip" :class="{ 'closure-strip--risk': runResult.delivery.status !== 'ready' }">
@@ -581,6 +581,15 @@ onBeforeUnmount(() => eventSource?.close())
               </div>
             </div>
             <div class="delivery-grid">
+              <div v-if="runResult.agent_decision" class="delivery-block">
+                <h4>AI 决策证据</h4>
+                <ul>
+                  <li>决策来源：{{ runResult.agent_decision.source === 'agentarts' ? '华为云 AgentArts' : '确定性规则回退' }}</li>
+                  <li>推荐方案：{{ runResult.agent_decision.recommended_plan_id || '未返回有效方案' }}</li>
+                  <li>推荐理由：{{ runResult.agent_decision.rationale }}</li>
+                  <li>安全边界：AI 只能推荐已通过独立核验的方案，不能覆盖道路、库存、运力和时效硬规则。</li>
+                </ul>
+              </div>
               <div class="delivery-block">
                 <h4>风险与现场提示</h4>
                 <ul><li v-for="alert in runResult.delivery.risk_alerts" :key="alert">{{ alert }}</li></ul>
