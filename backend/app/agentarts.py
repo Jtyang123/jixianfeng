@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import uuid
@@ -148,7 +148,47 @@ class AgentArtsBridge:
                         break
         return final_text or last_text, events_count
 
-    async def invoke(self, agent_id: str, payload: dict, session_id: str = "farmmatch") -> dict:
+    async def _invoke_with_client(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        body: dict,
+        agent_id: str,
+        session_id: str,
+    ) -> dict:
+        response = await client.post(url, json=body, headers=self._headers(session_id, agent_id))
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        stream_events = 0
+        if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
+            text, stream_events = self._parse_stream(response.text)
+            data = {"stream": True, "content_type": content_type}
+        else:
+            data = response.json()
+            text = ""
+            for key in ("response", "output", "result", "content"):
+                value = data.get(key) if isinstance(data, dict) else None
+                if value:
+                    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                    break
+        return {
+            "mode": "agentarts",
+            "runtime": "huaweicloud-agentarts",
+            "agent_id": agent_id,
+            "endpoint": url,
+            "response": data,
+            "text": text,
+            "stream_events": stream_events,
+            "session_id": session_id,
+        }
+
+    async def invoke(
+        self,
+        agent_id: str,
+        payload: dict,
+        session_id: str = "farmmatch",
+        client: httpx.AsyncClient | None = None,
+    ) -> dict:
         if not self.enabled:
             return {
                 "mode": "local-fallback",
@@ -165,6 +205,7 @@ class AgentArtsBridge:
                 "You are one role in FarmMatch emergency dispatch orchestration.",
                 "Never invent or change inventory, ETA, cost, vehicle or rule-engine values.",
                 "Return concise structured JSON; deterministic rules remain authoritative.",
+                "Do not repeat the full input; return only decisions, risks and evidence references.",
             ],
         }
         query = json.dumps(message, ensure_ascii=False)
@@ -176,35 +217,12 @@ class AgentArtsBridge:
             "session_id": session_id,
         }
         try:
-            async with httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) as client:
-                response = await client.post(url, json=body, headers=self._headers(session_id, agent_id))
-                response.raise_for_status()
-                content_type = response.headers.get("content-type", "")
-                stream_events = 0
-                if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
-                    text, stream_events = self._parse_stream(response.text)
-                    data = {"stream": True, "content_type": content_type}
-                else:
-                    data = response.json()
-                    text = ""
-                    for key in ("response", "output", "result", "content"):
-                        value = data.get(key) if isinstance(data, dict) else None
-                        if value:
-                            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-                            break
-                return {
-                    "mode": "agentarts",
-                    "runtime": "huaweicloud-agentarts",
-                    "agent_id": agent_id,
-                    "endpoint": url,
-                    "response": data,
-                    "text": text,
-                    "stream_events": stream_events,
-                    "session_id": session_id,
-                }
+            if client is not None:
+                return await self._invoke_with_client(client, url, body, agent_id, session_id)
+            async with httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) as owned_client:
+                return await self._invoke_with_client(owned_client, url, body, agent_id, session_id)
         except Exception as exc:
             raise AgentArtsError(f"AgentArts 调用失败 [{agent_id}]: {exc}") from exc
-
     async def ping(self) -> dict:
         if not self.enabled:
             return {"status": "not_configured", **self.status}

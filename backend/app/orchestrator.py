@@ -1,13 +1,15 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
 from datetime import datetime
 from uuid import uuid4
 
+import httpx
+
 from .agentarts import AgentArtsBridge
 from .agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
-from .config import AGENT_RUNTIME
+from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME
 from .database import Database
 from .knowledge import retrieve
 from .llm import LLMService
@@ -69,6 +71,7 @@ def emit(
 async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     llm_service = LLMService()
     agentarts = AgentArtsBridge()
+    http_client = httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) if agentarts.enabled else None
     registry = AgentRegistryService(db)
     for agent_id, endpoint in registry.active_endpoints().items():
         agentarts.override_endpoint(agent_id, endpoint)
@@ -85,18 +88,21 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             emit(db, run_id, "agentarts.called", agent_id, f"调用 AgentArts · {AGENT_NAMES.get(agent_id, agent_id)}", "已向华为云 AgentArts Runtime 提交结构化任务。", {
                 "endpoint": endpoint,
             })
-            task = asyncio.create_task(agentarts.invoke(agent_id, payload, session_id=run_id))
+            task = asyncio.create_task(
+                agentarts.invoke(agent_id, payload, session_id=run_id, client=http_client)
+            )
             waited = 0
-            while not task.done():
-                await asyncio.sleep(3)
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=3)
+                if done:
+                    break
                 waited += 3
-                if not task.done():
-                    emit(
-                        db, run_id, "agentarts.waiting", agent_id,
-                        f"等待华为云推理 · {waited}s",
-                        "AgentArts 正在处理当前角色任务，系统仍在运行。",
-                        {"waited_seconds": waited},
-                    )
+                emit(
+                    db, run_id, "agentarts.waiting", agent_id,
+                    f"等待华为云推理 · {waited}s",
+                    "AgentArts 正在处理当前角色任务，系统仍在运行。",
+                    {"waited_seconds": waited},
+                )
             response = await task
             parsed = _parse_json_text(response.get("text", ""))
             if parsed:
@@ -280,11 +286,35 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             await asyncio.sleep(0.25)
 
-        matching_remote = await call_agentarts("matching_agent", {
+        matching_payload = {
             "summary": "已完成多目标候选方案生成与约束修正。",
             "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
             "closed_routes": closed_routes,
-        })
+        }
+        verifier_payload = {
+            "verdict": final_verification["verdict"],
+            "score": final_verification["score"],
+            "blocker_summary": final_verification["blocker_summary"],
+            "required_fixes": final_verification["required_fixes"],
+        }
+
+        async def run_verifier_review() -> dict:
+            ai_reasoning["verifier_agent"] = await llm_service.reflect(
+                "verifier_agent",
+                {
+                    "verdict": final_verification["verdict"],
+                    "score": final_verification["score"],
+                    "blockers": final_verification["blocker_summary"],
+                    "required_fixes": final_verification["required_fixes"],
+                },
+                evidence,
+            )
+            return await call_agentarts("verifier_agent", verifier_payload)
+
+        matching_remote, verifier_remote = await asyncio.gather(
+            call_agentarts("matching_agent", matching_payload),
+            run_verifier_review(),
+        )
         remote_matching = matching_remote.get("parsed") if isinstance(matching_remote, dict) else None
         if remote_matching:
             rounds[-1]["agentarts_interpretation"] = remote_matching
@@ -295,22 +325,6 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         emit(db, run_id, "agentarts.decision", "matching_agent",
              "AgentArts 方案推荐已解析" if agent_decision["applied"] else "AgentArts 推荐回退",
              agent_decision["rationale"], agent_decision)
-        ai_reasoning["verifier_agent"] = await llm_service.reflect(
-            "verifier_agent",
-            {
-                "verdict": final_verification["verdict"],
-                "score": final_verification["score"],
-                "blockers": final_verification["blocker_summary"],
-                "required_fixes": final_verification["required_fixes"],
-            },
-            evidence,
-        )
-        verifier_remote = await call_agentarts("verifier_agent", {
-            "verdict": final_verification["verdict"],
-            "score": final_verification["score"],
-            "blocker_summary": final_verification["blocker_summary"],
-            "required_fixes": final_verification["required_fixes"],
-        })
         remote_verifier = verifier_remote.get("parsed") if isinstance(verifier_remote, dict) else None
         if remote_verifier:
             final_verification["agentarts_review"] = remote_verifier
@@ -387,3 +401,6 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     except Exception as exc:
         emit(db, run_id, "run.failed", "orchestrator", "推演执行失败", str(exc))
         db.update_run(run_id, "failed", {"error": str(exc), "run_id": run_id})
+    finally:
+        if http_client is not None:
+            await http_client.aclose()

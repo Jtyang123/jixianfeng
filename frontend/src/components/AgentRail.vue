@@ -22,9 +22,9 @@ const statusMap = computed(() => {
   for (const agent of agents) result[agent.id] = 'waiting'
   for (const event of props.events) {
     if (!result[event.agent_id]) continue
-    if (event.type === 'agent.started') result[event.agent_id] = 'running'
-    if (event.type === 'agent.completed') result[event.agent_id] = 'done'
-    if (event.type === 'verification.failed') result[event.agent_id] = 'rework'
+    if (['agent.started', 'agentarts.called', 'agentarts.waiting'].includes(event.type)) result[event.agent_id] = 'running'
+    if (['agent.completed', 'agentarts.completed', 'agentarts.decision'].includes(event.type)) result[event.agent_id] = 'done'
+    if (['verification.failed', 'agentarts.fallback'].includes(event.type)) result[event.agent_id] = 'rework'
     if (event.type === 'verification.passed') result[event.agent_id] = 'done'
     if (event.type === 'agent.failed') result[event.agent_id] = 'failed'
   }

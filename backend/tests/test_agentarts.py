@@ -1,4 +1,6 @@
-﻿from app.agentarts import AgentArtsBridge
+import asyncio
+
+from app.agentarts import AgentArtsBridge
 
 
 def test_agentarts_sse_parser():
@@ -34,3 +36,41 @@ def test_agentarts_uses_per_agent_api_key():
     demand_headers = bridge._headers("session", "demand_agent")
     assert matching_headers["Authorization"] == "Bearer matching-key"
     assert demand_headers["Authorization"] == "Bearer global-key"
+
+
+
+class _FakeResponse:
+    headers = {"content-type": "application/json"}
+    text = '{"response":"ok"}'
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"response": "ok"}
+
+
+class _FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    async def post(self, url, json, headers):
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse()
+
+
+def test_agentarts_reuses_injected_http_client():
+    bridge = AgentArtsBridge()
+    bridge.enabled = True
+    bridge.endpoints = {"demand_agent": "https://example.com/invocations"}
+    bridge.api_key = "test-key"
+    client = _FakeClient()
+
+    result = asyncio.run(bridge.invoke(
+        "demand_agent", {"query": "health check"}, session_id="shared-client-test", client=client,
+    ))
+
+    assert result["mode"] == "agentarts"
+    assert result["text"] == "ok"
+    assert len(client.calls) == 1
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer test-key"

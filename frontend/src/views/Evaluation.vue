@@ -83,7 +83,7 @@ onMounted(load)
         <template v-if="benchmark.runtime_evidence?.fully_cloud?.samples">
           <div class="cloud-runtime-summary">
             <article><span>历史运行样本</span><strong>{{ benchmark.runtime_evidence.fully_cloud.samples }}</strong><small>成功 {{ benchmark.runtime_evidence.fully_cloud.successful_runs }} 次</small></article>
-            <article><span>端到端平均耗时</span><strong>{{ formatNumber(benchmark.runtime_evidence.fully_cloud.average_end_to_end_ms, 1) }} ms</strong><small>含编排等待与模型调用</small></article>
+            <article><span>端到端平均耗时</span><strong>{{ formatNumber(benchmark.runtime_evidence.fully_cloud.average_end_to_end_ms, 1) }} ms</strong><small>最新一次 {{ formatNumber(benchmark.runtime_evidence.fully_cloud.latest_run_end_to_end_ms, 1) }} ms</small></article>
             <article><span>端到端 P95</span><strong>{{ formatNumber(benchmark.runtime_evidence.fully_cloud.p95_end_to_end_ms, 1) }} ms</strong><small>运行样本尾延迟</small></article>
             <article><span>AgentArts 调用成功率</span><strong>{{ (benchmark.runtime_evidence.fully_cloud.agent_call_success_rate * 100).toFixed(1) }}%</strong><small>回退 {{ benchmark.runtime_evidence.fully_cloud.agent_fallback_count }} 次</small></article>
           </div>

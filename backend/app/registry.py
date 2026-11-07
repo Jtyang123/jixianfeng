@@ -248,6 +248,7 @@ class AgentRegistryService:
             "samples":len(run_ids), "successful_runs":successful,
             "success_rate":round(successful/len(run_ids),4) if run_ids else 0,
             "average_end_to_end_ms":round(sum(durations)/len(durations),2) if durations else 0,
+            "latest_run_end_to_end_ms":round(durations[0],2) if durations else 0,
             "p95_end_to_end_ms":round(p95,2), "agent_call_count":calls,
             "agent_call_success_rate":round(successes/calls,4) if calls else 0,
             "agent_fallback_count":0, "run_ids":run_ids[:20],
