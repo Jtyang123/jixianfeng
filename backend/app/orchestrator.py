@@ -94,7 +94,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         if item["id"] not in CORE_AGENT_IDS and item.get("enabled") and item.get("endpoint_configured")
     ][:5]
     workflow_repo = WorkflowRepository(db)
-    extension_workflows = workflow_repo.list_workflows(stage="post_verification", enabled_only=True)
+    all_extension_workflows = workflow_repo.list_workflows(enabled_only=True)
+    extension_workflows = [item for item in all_extension_workflows if item["stage"] == "post_verification"]
+    extension_reviews = []
+    extension_workflow_runs = []
 
     async def call_agentarts(agent_id: str, payload: dict) -> dict:
         if not agentarts.enabled:
@@ -134,6 +137,52 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行。", fallback)
             return fallback
 
+    async def run_stage_workflows(stage_name: str, stage_context: dict) -> None:
+        selected = [item for item in all_extension_workflows if item["stage"] == stage_name]
+        if not selected:
+            return
+        agent_names = {item["id"]: item["name"] for item in registry.list_agents()}
+
+        async def invoke_stage_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
+            emit(db, run_id, "workflow.node.started", agent_id, f"工作流节点 {node['id']} 开始", f"调用 Agent：{agent_id}", {"stage": stage_name})
+            payload = {**stage_context, "node_id": node["id"], "node_outputs": workflow_state.get("node_outputs", {})}
+            return await call_agentarts(agent_id, payload)
+
+        for workflow_record in selected:
+            try:
+                engine = WorkflowEngine(
+                    db,
+                    invoke_agent=invoke_stage_agent,
+                    load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
+                    event_sink=lambda node_id, message: emit(
+                        db, run_id, "workflow.node", node_id, message, "",
+                        {"workflow_id": workflow_record["id"], "stage": stage_name},
+                    ),
+                    agent_metrics=runtime_metrics,
+                    max_workers=4,
+                )
+                result = await engine.execute(workflow_record["id"], workflow_record["definition"], stage_context)
+                extension_workflow_runs.append({
+                    "workflow_id": workflow_record["id"], "workflow_name": workflow_record["name"],
+                    "stage": stage_name, "run_id": result["run_id"], "status": result["status"],
+                    "metrics": result["metrics"], "outputs": result["outputs"],
+                })
+                for output in result["outputs"].values():
+                    if isinstance(output, dict) and output.get("agent_id"):
+                        agent_id = str(output["agent_id"])
+                        extension_reviews.append({
+                            "agent_id": agent_id, "agent_name": agent_names.get(agent_id, agent_id),
+                            "role": f"{stage_name}-extension", "mode": output.get("mode", ""),
+                            "parsed": output.get("parsed"), "text": output.get("text", ""),
+                        })
+            except Exception as exc:
+                extension_workflow_runs.append({
+                    "workflow_id": workflow_record["id"], "workflow_name": workflow_record["name"],
+                    "stage": stage_name, "status": "failed", "error": str(exc)[:500],
+                })
+                emit(db, run_id, "workflow.failed", "orchestrator", "扩展工作流执行失败", str(exc)[:240], {
+                    "workflow_id": workflow_record["id"], "stage": stage_name,
+                })
     try:
         db.set_run_status(run_id, "running")
         emit(db, run_id, "run.started", "orchestrator", "推演任务启动", "已加载事件、需求与最新资源快照。", {
@@ -200,6 +249,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "items": len(demand_plan["items"]),
             "confidence": demand_plan["confidence"],
         })
+        await run_stage_workflows("after_demand", {"scenario": scenario, "demand": demand_plan})
         await pace(0.3)
 
         emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体开始计算", "基于物资库、库存、车辆与路网生成三种目标方案。")
@@ -304,6 +354,12 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             await pace(0.25)
 
+        await run_stage_workflows("after_matching", {
+            "scenario": scenario,
+            "demand": demand_plan,
+            "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
+            "verification": final_verification,
+        })
         matching_payload = {
             "summary": "已完成多目标候选方案生成与约束修正。",
             "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
@@ -357,78 +413,19 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "保留本地确定性核验结论，云端意见仅作为辅助解释。",
                     {"local_verdict": final_verification["verdict"], "agentarts_verdict": remote_verdict},
                 )
-        extension_reviews = []
-        extension_workflow_runs = []
-        if extension_workflows:
-            workflow_context = {
-                "scenario": scenario,
-                "demand": demand_plan,
-                "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
-                "verification": {
-                    "verdict": final_verification["verdict"],
-                    "score": final_verification["score"],
-                    "blockers": final_verification["blocker_summary"],
-                    "warnings": final_verification.get("warnings", []),
-                },
-            }
-
-            async def invoke_workflow_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
-                emit(db, run_id, "workflow.node.started", agent_id, f"工作流节点 {node['id']} 开始", f"调用 Agent：{agent_id}")
-                payload = {
-                    **workflow_context,
-                    "node_id": node["id"],
-                    "node_outputs": workflow_state.get("node_outputs", {}),
-                }
-                return await call_agentarts(agent_id, payload)
-
-            for workflow_record in extension_workflows:
-                try:
-                    engine = WorkflowEngine(
-                        db,
-                        invoke_agent=invoke_workflow_agent,
-                        load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
-                        event_sink=lambda node_id, message: emit(
-                            db, run_id, "workflow.node", node_id, message, "",
-                            {"workflow_id": workflow_record["id"]},
-                        ),
-                        agent_metrics=runtime_metrics,
-                        max_workers=4,
-                    )
-                    workflow_result = await engine.execute(
-                        workflow_record["id"], workflow_record["definition"], workflow_context,
-                    )
-                    extension_workflow_runs.append({
-                        "workflow_id": workflow_record["id"],
-                        "workflow_name": workflow_record["name"],
-                        "run_id": workflow_result["run_id"],
-                        "status": workflow_result["status"],
-                        "metrics": workflow_result["metrics"],
-                        "outputs": workflow_result["outputs"],
-                    })
-                    agent_names = {item["id"]: item["name"] for item in registry.list_agents()}
-                    for output in workflow_result["outputs"].values():
-                        if not isinstance(output, dict) or not output.get("agent_id"):
-                            continue
-                        agent_id = str(output["agent_id"])
-                        extension_reviews.append({
-                            "agent_id": agent_id,
-                            "agent_name": agent_names.get(agent_id, agent_id),
-                            "role": "workflow-extension",
-                            "mode": output.get("mode", ""),
-                            "parsed": output.get("parsed"),
-                            "text": output.get("text", ""),
-                        })
-                except Exception as exc:
-                    extension_workflow_runs.append({
-                        "workflow_id": workflow_record["id"],
-                        "workflow_name": workflow_record["name"],
-                        "status": "failed",
-                        "error": str(exc)[:500],
-                    })
-                    emit(db, run_id, "workflow.failed", "orchestrator", "扩展工作流执行失败", str(exc)[:240], {
-                        "workflow_id": workflow_record["id"],
-                    })
-        elif extension_agents:
+        await run_stage_workflows("after_verification", {
+            "scenario": scenario,
+            "demand": demand_plan,
+            "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
+            "verification": final_verification,
+        })
+        await run_stage_workflows("post_verification", {
+            "scenario": scenario,
+            "demand": demand_plan,
+            "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
+            "verification": final_verification,
+        })
+        if not extension_workflows and extension_agents:
             async def run_extension(agent: dict) -> dict:
                 agent_id = agent["id"]
                 emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
@@ -453,7 +450,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "text": response.get("text", ""),
                 }
 
-            extension_reviews = await asyncio.gather(*(run_extension(agent) for agent in extension_agents))
+            extension_reviews.extend(await asyncio.gather(*(run_extension(agent) for agent in extension_agents)))
         emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
         await pace(0.4)
         delivery = build_delivery_package(

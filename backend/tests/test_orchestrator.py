@@ -87,6 +87,26 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
         "model": "test",
         "prompt_version": "v1",
     })
+    AgentRegistryService(db).register_agent({
+        "id": "demand_extension",
+        "name": "需求后扩展审查",
+        "role": "demand-review",
+        "description": "需求阶段动态节点",
+        "capabilities": ["demand-risk"],
+        "version": "v1",
+        "endpoint": "https://example.com/demand-extension/invocations",
+        "model": "test",
+        "prompt_version": "v1",
+    })
+    WorkflowRepository(db).save_workflow("after-demand-review", {
+        "name": "需求后扩展审查",
+        "stage": "after_demand",
+        "definition": {
+            "nodes": [
+                {"id": "A01X", "type": "agent", "agent_id": "demand_extension", "depends_on": [], "on_error": "continue"}
+            ]
+        },
+    })
     WorkflowRepository(db).save_workflow("post-review", {
         "name": "核验后扩展审查",
         "stage": "post_verification",
@@ -112,9 +132,10 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     run = db.get_run(run_id)
     assert run["status"] == "awaiting_approval"
     assert set(run["result"]["agentarts_trace"]) == {
-        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent", "risk_extension",
+        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent", "risk_extension", "demand_extension",
     }
     assert abs(fake.started_at["matching_agent"] - fake.started_at["verifier_agent"]) < 0.2
-    assert run["result"]["extension_reviews"][0]["agent_id"] == "risk_extension"
-    assert run["result"]["extension_workflow_runs"][0]["status"] == "success"
+    assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension", "demand_extension"}
+    assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
+    assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
     assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])

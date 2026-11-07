@@ -161,7 +161,7 @@ onMounted(load)
         <div class="workflow-editor-meta">
           <label><span>工作流 ID</span><input v-model="selectedId" :disabled="!isAdmin" /></label>
           <label><span>名称</span><input v-model="form.name" :disabled="!isAdmin" /></label>
-          <label><span>阶段</span><select v-model="form.stage" :disabled="!isAdmin"><option value="post_verification">核验后扩展审查</option><option value="standalone">独立工作流</option></select></label>
+          <label><span>阶段</span><select v-model="form.stage" :disabled="!isAdmin"><option value="after_demand">需求研判后</option><option value="after_matching">资源匹配后</option><option value="after_verification">独立核验后</option><option value="post_verification">核验后扩展审查</option><option value="standalone">独立工作流</option></select></label>
           <label class="check-label"><input v-model="form.enabled" type="checkbox" :disabled="!isAdmin" />启用工作流</label>
           <label class="full-span"><span>说明</span><input v-model="form.description" :disabled="!isAdmin" /></label>
         </div>

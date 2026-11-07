@@ -202,7 +202,7 @@ class WorkflowValidateRequest(BaseModel):
 class WorkflowUpsertRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     description: str = Field(default="", max_length=500)
-    stage: Literal["post_verification", "standalone"] = "post_verification"
+    stage: Literal["after_demand", "after_matching", "after_verification", "post_verification", "standalone"] = "post_verification"
     definition: dict
     enabled: bool = True
 
