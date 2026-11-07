@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  AlertTriangle, Bell, ChevronRight, Database, History, KeyRound, LayoutDashboard, LogOut,
+  AlertTriangle, ChevronRight, Database, History, KeyRound, LayoutDashboard, LogOut,
   Menu, Network, ShieldCheck, UserPlus, UserRound, X,
 } from '@lucide/vue'
 import Workbench from './views/Workbench.vue'
@@ -171,8 +171,6 @@ onBeforeUnmount(() => window.removeEventListener('farmmatch:unauthorized', handl
         </div>
         <div class="topbar-actions">
           <span class="date-chip">{{ dateLabel }}</span>
-          <span class="simulation-chip"><span />{{ systemStatus.readiness?.mode === 'operational' ? '运营数据' : '演练数据' }}</span>
-          <button class="icon-button" title="通知"><Bell :size="19" /></button>
           <div class="auth-user-chip"><UserRound :size="15" /><span><strong>{{ authUser?.display_name }}</strong><small>{{ authUser?.role_label }}</small></span></div>
           <button v-if="authUser?.role === 'admin'" class="auth-manage-button" @click="openAccountManagement"><UserPlus :size="15" />账号管理</button>
           <button class="icon-button" title="修改密码" @click="passwordDialogOpen = true"><KeyRound :size="16" /></button>
