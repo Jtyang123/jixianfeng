@@ -71,6 +71,26 @@ def test_api_run_flow(tmp_path: Path):
     assert benchmark.json()["runtime_evidence"]["fully_cloud"]["samples"] == 0
     assert benchmark.json()["runtime_evidence"]["agents"] == {}
 
+    diagnostics = client.post("/api/evaluation/diagnostics")
+    assert diagnostics.status_code == 200
+    diagnostic_data = diagnostics.json()
+    assert diagnostic_data["status"] == "passed"
+    assert [item["concurrency"] for item in diagnostic_data["concurrency"]] == [1, 5, 10, 20]
+    assert all(item["success_rate"] == 1.0 for item in diagnostic_data["concurrency"])
+    assert all(item["isolation_consistent"] for item in diagnostic_data["concurrency"])
+    assert {item["id"] for item in diagnostic_data["fault_injection"]} == {
+        "agentarts_timeout", "osrm_unavailable", "invalid_model_json",
+        "inventory_shortage", "vehicle_shortage", "road_closure",
+    }
+    assert all(item["passed"] for item in diagnostic_data["fault_injection"])
+    assert diagnostic_data["error_analysis"]["rows"]
+    assert diagnostic_data["error_analysis"]["multi_final_unsafe_acceptance_ci95"]["low"] == 0.0
+
+    latest = client.get("/api/evaluation/diagnostics")
+    assert latest.status_code == 200
+    assert latest.json()["id"] == diagnostic_data["run_id"]
+    assert latest.json()["status"] == "completed"
+
     approve = client.post(f"/api/runs/{run_id}/approve", json={"note": "测试审批"})
     assert approve.status_code == 200
     assert approve.json()["approved"] is True

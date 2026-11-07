@@ -165,6 +165,8 @@ export const api = {
   checkAgentArts: () => request('/api/agentarts/check'),
   manifest: () => request('/api/platform/manifest'),
   benchmark: () => request('/api/evaluation/benchmark'),
+  latestDiagnostics: () => request('/api/evaluation/diagnostics'),
+  runDiagnostics: () => request('/api/evaluation/diagnostics', { method: 'POST' }),
   materials: (search = '', category = '') => {
     const params = new URLSearchParams()
     if (search) params.set('search', search)

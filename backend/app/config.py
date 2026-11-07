@@ -19,7 +19,14 @@ def _load_dotenv(path: Path) -> None:
 
 
 _load_dotenv(PROJECT_DIR / ".env")
-DB_PATH = Path(os.getenv("FARMMATCH_DB", str(BASE_DIR / "farmmatch.db"))).resolve()
+def resolve_project_path(value: str | Path) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = PROJECT_DIR / path
+    return path.resolve()
+
+
+DB_PATH = resolve_project_path(os.getenv("FARMMATCH_DB", str(BASE_DIR / "farmmatch.db")))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 FARMMATCH_MODE = os.getenv("FARMMATCH_MODE", "demo").strip().lower()
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").strip().lower() == "true"
@@ -32,9 +39,6 @@ AUTH_LOCKOUT_MINUTES = int(os.getenv("AUTH_LOCKOUT_MINUTES", "15"))
 AUTH_BOOTSTRAP_USERNAME = os.getenv("AUTH_BOOTSTRAP_USERNAME", "admin").strip()
 AUTH_BOOTSTRAP_PASSWORD = os.getenv("AUTH_BOOTSTRAP_PASSWORD", "")
 SEED_DEMO = os.getenv("FARMMATCH_SEED_DEMO", "true").strip().lower() == "true"
-if not DB_PATH.is_absolute():
-    DB_PATH = (PROJECT_DIR / DB_PATH).resolve()
-
 AGENT_RUNTIME = os.getenv("AGENT_RUNTIME", "local").strip().lower()
 DEMO_PACING_FACTOR = max(0.0, min(1.0, float(os.getenv("DEMO_PACING_FACTOR", "0.2"))))
 AGENTARTS_ENABLED = os.getenv("AGENTARTS_ENABLED", "false").strip().lower() == "true"

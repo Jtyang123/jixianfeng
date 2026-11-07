@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import {
-  Activity, AlertTriangle, BarChart3, CheckCircle2, Clock3, GitCompare,
-  RefreshCw, ShieldCheck, Target, TestTube2,
+  Activity, AlertTriangle, BarChart3, CheckCircle2, Clock3, Gauge, GitCompare,
+  Play, RefreshCw, ShieldCheck, Target, TestTube2, XCircle,
 } from '@lucide/vue'
 import { api, formatNumber } from '../api'
 
@@ -10,6 +10,9 @@ const benchmark = ref(null)
 const manifest = ref(null)
 const loading = ref(true)
 const error = ref('')
+const diagnostics = ref(null)
+const diagnosticsLoading = ref(false)
+const diagnosticsError = ref('')
 
 const maxScore = computed(() => Math.max(...(benchmark.value?.comparison?.map((item) => item.score) || [100])))
 const featureChecks = computed(() => [
@@ -27,11 +30,29 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [bench, platform] = await Promise.all([api.benchmark(), api.manifest()])
+    const [bench, platform, latest] = await Promise.all([
+      api.benchmark(), api.manifest(), api.latestDiagnostics(),
+    ])
     benchmark.value = bench
     manifest.value = platform
+    if (latest?.result?.run_id) diagnostics.value = latest.result
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
+
+async function runDiagnostics() {
+  diagnosticsLoading.value = true
+  diagnosticsError.value = ''
+  try {
+    const result = await api.runDiagnostics()
+    if (result.status === 'failed') throw new Error(result.error || '诊断评估失败')
+    diagnostics.value = result
+  } catch (exc) {
+    diagnosticsError.value = exc.message
+  } finally {
+    diagnosticsLoading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -96,6 +117,55 @@ onMounted(load)
         <div v-else class="empty-table"><Activity :size="28" /><strong>暂无历史运行样本</strong><span>完成一次完整调度后，这里会显示真实运行与 AgentArts 观测数据。</span></div>
       </section>
 
+      <section class="content-card diagnostics-card">
+        <div class="workflow-head">
+          <div><div class="eyebrow">STRESS & FAULT INJECTION</div><h2>并发压力、故障注入与误差分析</h2><p>完整两轮闭环分别在 1/5/10/20 并发下执行，并验证外部依赖故障时的安全降级。</p></div>
+          <button class="secondary-action" :disabled="diagnosticsLoading" @click="runDiagnostics"><Play :size="16" />{{ diagnosticsLoading ? '正在执行…' : '运行诊断' }}</button>
+        </div>
+        <div v-if="diagnosticsError" class="inline-error">{{ diagnosticsError }}</div>
+        <div v-if="diagnosticsLoading" class="loading-panel"><div class="loading-orbit" /><strong>正在执行并发与故障注入</strong></div>
+        <template v-else-if="diagnostics">
+          <div class="diagnostic-summary">
+            <article :class="diagnostics.status === 'passed' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>总体结论</span><strong>{{ diagnostics.status === 'passed' ? '全部通过' : '存在异常' }}</strong><small>诊断编号 {{ diagnostics.run_id }}</small></article>
+            <article><span>诊断总耗时</span><strong>{{ formatNumber(diagnostics.duration_ms, 1) }} ms</strong><small>{{ diagnostics.inventory_snapshot }}</small></article>
+            <article><span>最高并发吞吐</span><strong>{{ Math.max(...diagnostics.concurrency.map((item) => item.throughput_runs_per_second)).toFixed(1) }}</strong><small>次/秒 · 最多 20 路并行</small></article>
+            <article><span>故障用例</span><strong>{{ diagnostics.fault_injection.filter((item) => item.passed).length }}/{{ diagnostics.fault_injection.length }}</strong><small>超时、路网、JSON、库存、运力、道路</small></article>
+          </div>
+
+          <div class="table-wrap diagnostic-table">
+            <table class="data-table"><thead><tr><th>并发</th><th>样本</th><th>成功率</th><th>墙钟耗时</th><th>平均延迟</th><th>P95</th><th>吞吐</th><th>结果隔离</th></tr></thead><tbody>
+              <tr v-for="item in diagnostics.concurrency" :key="item.concurrency"><td><strong>{{ item.concurrency }} 路</strong></td><td>{{ item.samples }}</td><td>{{ (item.success_rate * 100).toFixed(1) }}%</td><td>{{ item.wall_ms }} ms</td><td>{{ item.average_latency_ms }} ms</td><td>{{ item.p95_latency_ms }} ms</td><td>{{ item.throughput_runs_per_second }} 次/秒</td><td><span class="inventory-status" :class="item.status === 'pass' ? 'inventory-status--available' : 'inventory-status--expired'">{{ item.isolation_consistent ? '一致' : '异常' }}</span></td></tr>
+            </tbody></table>
+          </div>
+
+          <div class="diagnostic-grid">
+            <div>
+              <h3>故障注入结果</h3>
+              <div class="fault-list">
+                <article v-for="item in diagnostics.fault_injection" :key="item.id" :class="{ 'fault-failed': !item.passed }">
+                  <CheckCircle2 v-if="item.passed" :size="17" /><XCircle v-else :size="17" />
+                  <div><strong>{{ item.name }}</strong><span>{{ item.observed }}</span><small>预期：{{ item.expected }}</small></div>
+                  <em>{{ item.recovery_ms }} ms</em>
+                </article>
+              </div>
+            </div>
+            <div>
+              <h3>误差分析</h3>
+              <div class="error-profile">
+                <article><span>错误事件下降</span><strong>{{ (diagnostics.error_analysis.error_reduction_rate * 100).toFixed(1) }}%</strong><small>{{ diagnostics.error_analysis.multi_initial_error_events }} → {{ diagnostics.error_analysis.multi_final_error_events }}</small></article>
+                <article><span>不安全验收率</span><strong>{{ (diagnostics.error_analysis.baseline_unsafe_acceptance_rate * 100).toFixed(1) }}% → {{ (diagnostics.error_analysis.multi_final_unsafe_acceptance_rate * 100).toFixed(1) }}%</strong><small>95% 区间 {{ (diagnostics.error_analysis.multi_final_unsafe_acceptance_ci95.high * 100).toFixed(1) }}% 以下</small></article>
+              </div>
+              <div class="table-wrap diagnostic-table error-table">
+                <table class="data-table"><thead><tr><th>误差类别</th><th>基线</th><th>首轮</th><th>闭环后</th></tr></thead><tbody>
+                  <tr v-for="row in diagnostics.error_analysis.rows" :key="row.category"><td>{{ row.category }}</td><td>{{ row.baseline_events }}</td><td>{{ row.initial_events }}</td><td>{{ row.final_events }}</td></tr>
+                </tbody></table>
+              </div>
+            </div>
+          </div>
+          <div class="benchmark-note"><Gauge :size="16" /><span>{{ diagnostics.conclusion }} {{ diagnostics.error_analysis.method }}</span></div>
+        </template>
+        <div v-else class="empty-table"><Gauge :size="28" /><strong>尚未运行诊断</strong><span>点击“运行诊断”生成可持久化的并发、故障与误差证据。</span></div>
+      </section>
       <section class="content-card quantitative-card">
         <div class="workflow-head"><div><div class="eyebrow">QUANTITATIVE COMPARISON</div><h2>单 Agent 基线 vs 多 Agent 验证闭环</h2><p>{{ benchmark.quantitative.repetitions }} 次重复运行，同一库存快照与事件约束。</p></div><GitCompare :size="20" /></div>
         <div class="quantitative-summary">

@@ -16,7 +16,7 @@ from .agentarts import AgentArtsBridge
 from .auth import AuthService
 from .config import AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, BASE_DIR
 from .database import Database
-from .evaluation import run_benchmark
+from .evaluation import run_benchmark, run_diagnostics
 from .event_import import normalize_event, parse_event_package
 from .geocoder import GeocoderError, geocode_address
 from .knowledge import catalog as knowledge_catalog
@@ -320,6 +320,17 @@ def manifest() -> dict:
     data["llm"] = LLMService().status
     data["agentarts"] = AgentArtsBridge().status
     return data
+
+
+@router.post("/evaluation/diagnostics")
+def evaluation_diagnostics() -> dict:
+    return run_diagnostics(db)
+
+
+@router.get("/evaluation/diagnostics")
+def latest_evaluation_diagnostics() -> dict:
+    rows = db.list_evaluation_runs(limit=1)
+    return rows[0] if rows else {"status": "empty", "message": "暂无诊断评估记录"}
 
 
 @router.get("/evaluation/benchmark")

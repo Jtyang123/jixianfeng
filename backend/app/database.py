@@ -440,6 +440,19 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(workflow_run_id, id);
+
+                CREATE TABLE IF NOT EXISTS evaluation_runs (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    scenario_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_created ON evaluation_runs(created_at DESC);
                 """
             )
             self._ensure_geo_columns(conn)
@@ -903,6 +916,52 @@ class Database:
             item["default_demand"] = json.loads(item["default_demand"])
             return item
 
+    def create_evaluation_run(self, run_id: str, kind: str, scenario_id: str = "") -> dict:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO evaluation_runs
+                   (id, kind, scenario_id, status, created_at) VALUES (?, ?, ?, 'running', ?)""",
+                (run_id, kind, scenario_id, now_iso()),
+            )
+            row = conn.execute("SELECT * FROM evaluation_runs WHERE id = ?", (run_id,)).fetchone()
+            return dict(row)
+
+    def finish_evaluation_run(self, run_id: str, status: str, result: dict) -> dict:
+        summary = {
+            "status": result.get("status"),
+            "duration_ms": result.get("duration_ms", 0),
+            "concurrency_levels": len(result.get("concurrency", [])),
+            "fault_cases": len(result.get("fault_injection", [])),
+            "all_passed": result.get("all_passed", False),
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE evaluation_runs
+                   SET status = ?, summary_json = ?, result_json = ?, completed_at = ?
+                   WHERE id = ?""",
+                (status, _json(summary), _json(result), now_iso(), run_id),
+            )
+            row = conn.execute("SELECT * FROM evaluation_runs WHERE id = ?", (run_id,)).fetchone()
+            return self._evaluation_row(row)
+
+    def get_evaluation_run(self, run_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM evaluation_runs WHERE id = ?", (run_id,)).fetchone()
+            return self._evaluation_row(row) if row else None
+
+    def list_evaluation_runs(self, limit: int = 20) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM evaluation_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [self._evaluation_row(row) for row in rows]
+
+    @staticmethod
+    def _evaluation_row(row) -> dict:
+        item = dict(row)
+        item["summary"] = json.loads(item.pop("summary_json") or "{}")
+        item["result"] = json.loads(item.pop("result_json") or "{}")
+        return item
     def create_run(self, run_id: str, scenario_id: str, request_payload: dict) -> dict:
         with self.connect() as conn:
             conn.execute(
