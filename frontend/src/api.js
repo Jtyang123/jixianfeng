@@ -135,7 +135,16 @@ export const api = {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
   deleteUser: (id) => request(`/api/auth/users/${id}`, { method: 'DELETE' }),
-  auditLogs: (limit = 200) => request(`/api/auth/audit-logs?limit=${limit}`),
+  knowledgeDocuments: () => request('/api/knowledge/documents'),
+  knowledgeChunks: (id) => request(`/api/knowledge/documents/${id}/chunks`),
+  searchKnowledge: (query, top = 4) => request(`/api/knowledge/search?q=${encodeURIComponent(query)}&top_k=${top}`),
+  uploadKnowledge: (file, category) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('category', category || '其他')
+    return request('/api/knowledge/documents', { method: 'POST', body: formData })
+  },
+  deleteKnowledge: (id) => request(`/api/knowledge/documents/${id}`, { method: 'DELETE' }),  auditLogs: (limit = 200) => request(`/api/auth/audit-logs?limit=${limit}`),
   workflows: () => request('/api/workflows'),
   workflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`),
   workflowRun: (id) => request(`/api/workflow-runs/${encodeURIComponent(id)}`),

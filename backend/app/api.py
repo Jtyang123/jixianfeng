@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -20,6 +20,7 @@ from .evaluation import run_benchmark
 from .event_import import normalize_event, parse_event_package
 from .geocoder import GeocoderError, geocode_address
 from .knowledge import catalog as knowledge_catalog
+from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, chunk_text, extract_text
 from .llm import LLMService
 from .models import (
     AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
@@ -460,6 +461,53 @@ def update_task(task_id: int, payload: TaskStatusUpdate) -> dict:
 def dashboard() -> dict:
     return db.dashboard()
 
+
+@router.get("/knowledge/documents")
+def knowledge_documents() -> list[dict]:
+    return KnowledgeRepository(db).list_documents()
+
+
+@router.post("/knowledge/documents")
+async def upload_knowledge_document(
+    request: Request,
+    file: UploadFile = File(...),
+    category: str = Form("其他"),
+) -> dict:
+    current = _require_admin(request)
+    payload = await file.read()
+    if len(payload) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="知识文档不能超过 20 MB")
+    try:
+        text = extract_text(file.filename or "knowledge.txt", payload)
+        chunks = chunk_text(text)
+        document = KnowledgeRepository(db).insert_document(
+            Path(file.filename or "知识文档").stem, category, "upload", chunks,
+        )
+    except KnowledgeBaseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_service.audit("knowledge_uploaded", "POST", "/api/knowledge/documents", 200,
+                       current, resource_type="knowledge_document", resource_id=str(document["id"]))
+    return document
+
+
+@router.get("/knowledge/documents/{document_id}/chunks")
+def knowledge_chunks(document_id: int) -> list[dict]:
+    return KnowledgeRepository(db).list_chunks(document_id)
+
+
+@router.delete("/knowledge/documents/{document_id}")
+def delete_knowledge_document(document_id: int, request: Request) -> dict:
+    current = _require_admin(request)
+    if not KnowledgeRepository(db).delete_document(document_id):
+        raise HTTPException(status_code=404, detail="知识文档不存在")
+    auth_service.audit("knowledge_deleted", "DELETE", f"/api/knowledge/documents/{document_id}", 200,
+                       current, resource_type="knowledge_document", resource_id=str(document_id))
+    return {"deleted": True}
+
+
+@router.get("/knowledge/search")
+def search_knowledge(q: str, top_k: int = 4) -> list[dict]:
+    return KnowledgeRepository(db).search(q, top_k=max(1, min(top_k, 20)))
 
 @router.get("/materials")
 def materials(search: str = "", category: str = "") -> list[dict]:

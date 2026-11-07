@@ -400,3 +400,21 @@ def test_workflow_definition_api(tmp_path: Path):
     }})
     assert cycle.status_code == 400
     assert "循环依赖" in cycle.json()["detail"]
+
+def test_knowledge_upload_chunk_search_and_delete(tmp_path: Path):
+    test_db = Database(tmp_path / "knowledge-api.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+    content = ("冷链运输规则\n\n疫苗和急救药品必须使用温控车辆，运输过程中需要记录温度。\n\n暴雨期间主通道封闭时，应优先选择备用通道并增加出车提前量。").encode("utf-8")
+    uploaded = client.post("/api/knowledge/documents", files={"file": ("应急运输规则.txt", content, "text/plain")}, data={"category": "运输规则"})
+    assert uploaded.status_code == 200, uploaded.text
+    document = uploaded.json()
+    assert document["chunk_count"] >= 1
+    chunks = client.get(f"/api/knowledge/documents/{document['id']}/chunks")
+    assert chunks.status_code == 200 and chunks.json()
+    search = client.get("/api/knowledge/search?q=暴雨备用通道")
+    assert search.status_code == 200 and search.json()
+    assert search.json()[0]["source"] == "应急运输规则"
+    assert client.delete(f"/api/knowledge/documents/{document['id']}").status_code == 200

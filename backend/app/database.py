@@ -379,7 +379,27 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, status);
-                CREATE TABLE IF NOT EXISTS workflow_definitions (
+                CREATE TABLE IF NOT EXISTS knowledge_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT '其他',
+                    source TEXT NOT NULL DEFAULT 'upload',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS knowledge_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
+                    seq INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    keywords TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, seq);                CREATE TABLE IF NOT EXISTS workflow_definitions (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     version INTEGER NOT NULL DEFAULT 1,

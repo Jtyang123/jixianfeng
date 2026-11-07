@@ -12,6 +12,7 @@ from .agents import build_delivery_package, build_demand_plan, generate_plans, n
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
+from .knowledge_base import KnowledgeRepository
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
 from .scheduler import build_dynamic_schedule
@@ -160,6 +161,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             " ".join(item["name"] for item in selected_materials),
         ])
         evidence = retrieve(query, top_k=4)
+        uploaded_evidence = KnowledgeRepository(db).search(query, top_k=3)
+        evidence = sorted(evidence + uploaded_evidence, key=lambda item: float(item.get("score", 0)), reverse=True)[:7]
         schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics)
 
         emit(db, run_id, "data.snapshot.loaded", "orchestrator", "数据快照已冻结", f"{snapshot['label']}，共 {snapshot['row_count']} 条库存记录。", {
