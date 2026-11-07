@@ -1,6 +1,6 @@
 ﻿from pathlib import Path
 
-from app.agents import build_delivery_package, build_demand_plan, generate_plans, verify_plans
+from app.agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
 from app.database import Database
 
 
@@ -48,3 +48,58 @@ def test_two_round_verification_loop(tmp_path: Path):
     assert delivery["status"] == "ready"
     assert delivery["recommended_plan"]["verification_score"] >= 80
     assert delivery["timeline"]
+
+def test_agentarts_decision_is_bounded_to_valid_plans():
+    plans = [
+        {"plan_id": "PLAN-2-SPEED", "strategy": "speed"},
+        {"plan_id": "PLAN-2-COST", "strategy": "cost"},
+        {"plan_id": "PLAN-2-BALANCED", "strategy": "balanced"},
+    ]
+    decision = normalize_agentarts_decision({
+        "recommended_plan_id": "PLAN-2-COST",
+        "summary": "成本方案满足覆盖要求且总成本最低。",
+    }, plans)
+    assert decision["applied"] is True
+    assert decision["recommended_plan_id"] == "PLAN-2-COST"
+    assert decision["recommended_strategy"] == "cost"
+
+    invalid = normalize_agentarts_decision({"recommended_plan_id": "PLAN-NOT-ALLOWED"}, plans)
+    assert invalid["applied"] is False
+
+
+def test_agentarts_recommendation_affects_delivery_selection():
+    def report(plan_id, strategy, cost, eta):
+        return {
+            "plan_id": plan_id,
+            "strategy": strategy,
+            "name": strategy,
+            "tag": strategy,
+            "metrics": {"total_cost": cost, "max_eta_hours": eta, "coverage": 1.0, "vehicle_trips": 1},
+            "verification": {"score": 100, "warnings": []},
+            "approved": True,
+            "groups": [],
+            "assignments": [],
+        }
+
+    reports = [
+        report("PLAN-2-SPEED", "speed", 1000, 1.0),
+        report("PLAN-2-COST", "cost", 1100, 1.1),
+        report("PLAN-2-BALANCED", "balanced", 1050, 1.05),
+    ]
+    decision = {
+        "applied": True,
+        "recommended_plan_id": "PLAN-2-COST",
+        "recommended_strategy": "cost",
+        "rationale": "AgentArts 选择成本方案。",
+        "source": "agentarts",
+    }
+    delivery = build_delivery_package(
+        {"reports": reports},
+        {"name": "test scenario"},
+        {"label": "snapshot", "uploaded_at": "2026-11-07"},
+        {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+        agent_decision=decision,
+    )
+    assert delivery["recommended_plan"]["plan_id"] == "PLAN-2-COST"
+    assert delivery["agent_decision"]["applied"] is True
+

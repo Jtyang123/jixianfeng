@@ -36,6 +36,15 @@ SSE 解析结果：
 - 需求研判结果已写入 `DemandPlan.agentarts_interpretation`
 - 本地确定性数量、库存和路线计算未被模型覆盖
 
+## AgentArts 决策闭环验证
+
+- 运行编号：`RUN-20261107-125518-B469`
+- 四个 Agent 调用模式均为 `agentarts`
+- A02 推荐方案：`PLAN-2-SPEED`
+- 最终交付推荐方案：`PLAN-2-SPEED`
+- `agent_decision.applied=true`
+- 说明：AgentArts 只能从已通过确定性硬规则核验的方案中选择，不能绕过安全约束
+
 ## 四智能体端到端验证
 
 - 运行编号：`RUN-20261104-203420-4498`

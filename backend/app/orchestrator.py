@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from .agentarts import AgentArtsBridge
-from .agents import build_delivery_package, build_demand_plan, generate_plans, verify_plans
+from .agents import build_delivery_package, build_demand_plan, generate_plans, normalize_agentarts_decision, verify_plans
 from .config import AGENT_RUNTIME
 from .database import Database
 from .knowledge import retrieve
@@ -74,6 +74,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         agentarts.override_endpoint(agent_id, endpoint)
     runtime_metrics = registry.runtime_metrics()
     ai_reasoning: dict = {}
+    agent_decision: dict = {"applied": False, "rationale": "AgentArts 未配置，使用确定性排序。"}
     agentarts_trace: dict = {}
 
     async def call_agentarts(agent_id: str, payload: dict) -> dict:
@@ -290,6 +291,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             reasoning = ai_reasoning.setdefault("matching_agent", {})
             if isinstance(reasoning, dict):
                 reasoning["agentarts_interpretation"] = remote_matching
+        agent_decision = normalize_agentarts_decision(remote_matching, final_plans)
+        emit(db, run_id, "agentarts.decision", "matching_agent",
+             "AgentArts 方案推荐已解析" if agent_decision["applied"] else "AgentArts 推荐回退",
+             agent_decision["rationale"], agent_decision)
         ai_reasoning["verifier_agent"] = await llm_service.reflect(
             "verifier_agent",
             {
@@ -323,7 +328,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
         await asyncio.sleep(0.4)
         delivery = build_delivery_package(
-            final_verification, scenario, snapshot, request.get("weights", {})
+            final_verification, scenario, snapshot, request.get("weights", {}), agent_decision=agent_decision
         )
         ai_reasoning["delivery_agent"] = await llm_service.reflect("delivery_agent", delivery, evidence)
         delivery_remote = await call_agentarts("delivery_agent", {"delivery": delivery, "evidence": evidence})
@@ -357,6 +362,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "retrieval": evidence,
             "ai_reasoning": ai_reasoning,
             "agentarts_trace": agentarts_trace,
+            "agent_decision": agent_decision,
             "agentarts_status": agentarts.status,
             "llm_status": llm_service.status,
             "loop_metrics": {

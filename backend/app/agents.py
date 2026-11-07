@@ -461,7 +461,66 @@ def verify_plans(
         "evidence_refs": ["事件道路封闭清单", "库存快照", "运力与路线规则", "需求截止时间"],
     }
 
-def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | None, weights: dict) -> dict:
+def normalize_agentarts_decision(parsed: dict | None, plans: list[dict]) -> dict:
+    allowed = {str(plan.get("plan_id")): str(plan.get("strategy", "")) for plan in plans}
+    if not isinstance(parsed, dict):
+        return {
+            "applied": False,
+            "recommended_plan_id": None,
+            "recommended_strategy": None,
+            "rationale": "AgentArts 未返回可解析的推荐结果，使用确定性目标排序。",
+            "source": "deterministic-fallback",
+        }
+
+    candidates = [parsed.get("recommended_plan_id"), parsed.get("selected_plan_id"), parsed.get("plan_id")]
+    recommendation = parsed.get("recommendation")
+    if isinstance(recommendation, dict):
+        candidates.extend([recommendation.get("plan_id"), recommendation.get("recommended_plan_id")])
+    for value in candidates:
+        if str(value) in allowed:
+            return {
+                "applied": True,
+                "recommended_plan_id": str(value),
+                "recommended_strategy": allowed[str(value)],
+                "rationale": str(parsed.get("summary") or parsed.get("rationale") or "AgentArts 返回有效候选方案推荐。")[:500],
+                "source": "agentarts",
+            }
+
+    remote_plans = parsed.get("plans")
+    if isinstance(remote_plans, list):
+        for item in remote_plans:
+            if isinstance(item, dict):
+                value = str(item.get("plan_id") or item.get("recommended_plan_id") or "")
+                if value in allowed:
+                    return {
+                        "applied": True,
+                        "recommended_plan_id": value,
+                        "recommended_strategy": allowed[value],
+                        "rationale": str(item.get("rationale") or parsed.get("summary") or "AgentArts 排序推荐。")[:500],
+                        "source": "agentarts",
+                    }
+
+    strategy_hint = str(parsed.get("recommended_strategy") or parsed.get("strategy") or "").lower()
+    for plan_id, strategy in allowed.items():
+        if strategy_hint and strategy.lower() == strategy_hint:
+            return {
+                "applied": True,
+                "recommended_plan_id": plan_id,
+                "recommended_strategy": strategy,
+                "rationale": str(parsed.get("summary") or parsed.get("rationale") or "AgentArts 策略推荐。")[:500],
+                "source": "agentarts-strategy",
+            }
+
+    return {
+        "applied": False,
+        "recommended_plan_id": None,
+        "recommended_strategy": None,
+        "rationale": "AgentArts 推荐不在允许方案集合中，已回退到确定性目标排序。",
+        "source": "agentarts-invalid-fallback",
+    }
+
+
+def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | None, weights: dict, agent_decision: dict | None = None) -> dict:
     approved = [report for report in verification["reports"] if report["approved"]]
     if not approved:
         return {
@@ -472,6 +531,7 @@ def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | 
             "alternatives": [],
             "risk_alerts": verification["required_fixes"],
             "actions": ["人工确认道路与库存数据", "调整需求或补充资源后重新推演"],
+            "agent_decision": {**(agent_decision or {}), "applied": False},
             "disclaimer": "本结果仅为应急演练数据，不构成真实调度命令。",
         }
 
@@ -482,7 +542,18 @@ def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | 
         cost = max(0, 100 - _num(metrics["total_cost"]) / 180)
         return speed * weights.get("speed", 0.38) + cost * weights.get("cost", 0.27) + risk_score * weights.get("risk", 0.35)
 
-    approved.sort(key=objective_score, reverse=True)
+    decision = dict(agent_decision or {})
+    selected_plan_id = decision.get("recommended_plan_id") if decision.get("applied") else None
+    approved_ids = {item["plan_id"] for item in approved}
+    decision["applied"] = bool(selected_plan_id and selected_plan_id in approved_ids)
+
+    def ranking_score(plan: dict) -> float:
+        score = objective_score(plan)
+        if decision["applied"] and plan.get("plan_id") == selected_plan_id:
+            score += 6.0
+        return score
+
+    approved.sort(key=ranking_score, reverse=True)
     recommended = approved[0]
     start = datetime.now()
     timeline = []
@@ -537,5 +608,6 @@ def build_delivery_package(verification: dict, scenario: dict, snapshot: dict | 
             "snapshot_time": snapshot["uploaded_at"] if snapshot else "",
             "data_mode": "SIMULATED / 演练数据",
         },
+        "agent_decision": decision,
         "disclaimer": "本方案基于演练数据生成，仅用于预案编制、教学和辅助决策，不替代现场应急指挥。",
     }
