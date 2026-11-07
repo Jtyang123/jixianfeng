@@ -1,9 +1,12 @@
 const FIELD_LABELS = {
   title: '事件标题',
+  event_type: '事件类型',
+  severity: '事件等级',
   location: '影响区域',
   affected_population: '影响人口',
-  name: '仓库名称',
-  region: '仓库地址',
+  closed_routes: '封闭路线',
+  name: '名称',
+  region: '区域或地址',
   capacity: '仓库容量',
   lat: '纬度',
   lng: '经度',
@@ -15,30 +18,95 @@ const FIELD_LABELS = {
   address: '安置点地址',
   plate_no: '车牌号',
   vehicle_type: '车型',
-  capacity_kg: '载重',
+  capacity_kg: '车辆载重',
+  code: '编码',
+  base_unit: '基本单位',
+  priority: '优先级',
+  deadline_hours: '处理时限',
+  username: '用户名',
+  display_name: '显示名称',
+  password: '密码',
+  current_password: '当前密码',
+  new_password: '新密码',
+  role: '角色',
+  event: '事件信息',
+  demand_items: '物资需求',
+  weights: '调度权重',
+  status: '状态',
+  assignee: '负责人',
+  note: '备注',
+  task: '任务内容',
+  session_id: '会话编号',
+}
+
+const STATUS_MESSAGES = {
+  400: '提交内容不符合要求',
+  401: '登录已失效或请求未授权',
+  403: '没有权限执行该操作',
+  404: '请求的资源不存在',
+  405: '不支持当前请求方法',
+  409: '请求与当前数据状态冲突',
+  422: '提交内容格式不正确',
+  429: '操作过于频繁，请稍后再试',
+  500: '服务器内部错误，请稍后重试',
+  502: '外部服务暂时不可用，请稍后重试',
+  503: '服务暂时不可用，请稍后重试',
+}
+
+function translateErrorMessage(message) {
+  let text = String(message || '').replace(/^Value error,\s*/i, '').trim()
+  const translations = [
+    [/Input should be greater than or equal to ([\d.-]+)/i, '不能小于 $1'],
+    [/Input should be greater than ([\d.-]+)/i, '必须大于 $1'],
+    [/Input should be less than or equal to ([\d.-]+)/i, '不能大于 $1'],
+    [/Input should be less than ([\d.-]+)/i, '必须小于 $1'],
+    [/String should have at least (\d+) characters/i, '至少需要 $1 个字符'],
+    [/String should have at most (\d+) characters/i, '不能超过 $1 个字符'],
+    [/(?:List|Array) should have at least (\d+) items/i, '至少需要 $1 项'],
+    [/(?:List|Array) should have at most (\d+) items/i, '不能超过 $1 项'],
+    [/Field required/i, '为必填项'],
+    [/Input should be a valid integer/i, '必须是整数'],
+    [/Input should be a valid number/i, '必须是有效数字'],
+    [/Input should be a valid boolean/i, '必须是有效的是或否'],
+    [/JSON decode error/i, '请求内容不是合法 JSON'],
+    [/Input should be a valid list/i, '必须是列表'],
+    [/Input should be a valid dictionary or object/i, '必须是对象'],
+  ]
+  for (const [pattern, replacement] of translations) {
+    if (pattern.test(text)) return text.replace(pattern, replacement)
+  }
+  if (/[A-Za-z]/.test(text) && !/[\u4e00-\u9fff]/.test(text)) return '填写内容不符合要求'
+  return text || '填写内容不符合要求'
 }
 
 function describeErrorDetail(detail, status) {
-  if (typeof detail === 'string' && detail) return detail
+  if (typeof detail === 'string' && detail) return translateErrorMessage(detail)
   if (Array.isArray(detail)) {
     return detail.map((item) => {
-      const field = (item.loc || []).filter((part) => !['body', 'query', 'path'].includes(part)).join('.')
-      const label = FIELD_LABELS[field] || field
-      let message = item.msg || '填写内容不符合要求'
-      if (message.includes('at least 2 characters')) message = '至少需要填写 2 个字符'
-      if (message.includes('at most 160 characters')) message = '不能超过 160 个字符'
-      if (message.includes('greater than or equal to 0')) message = '不能小于 0'
-      return `${label ? `${label}：` : ''}${message}`
+      const field = (item.loc || []).filter((part) => !['body', 'query', 'path'].includes(part) && !String(part).match(/^\d+$/)).pop()
+      const label = FIELD_LABELS[field] || '参数'
+      const message = translateErrorMessage(item.msg || '填写内容不符合要求')
+      return `${label}：${message}`
     }).join('；')
   }
-  if (detail && typeof detail === 'object') return detail.message || '提交内容不符合要求'
-  return `请求失败 (${status})`
+  if (detail && typeof detail === 'object') {
+    if (Array.isArray(detail.errors)) {
+      return detail.errors.map((item) => `${item.field ? `${item.field}：` : ''}${translateErrorMessage(item.message)}`).join('；')
+    }
+    return translateErrorMessage(detail.message || '提交内容不符合要求')
+  }
+  return STATUS_MESSAGES[status] || `请求失败（${status}）`
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(path, options)
+  let response
+  try {
+    response = await fetch(path, options)
+  } catch (_) {
+    throw new Error('无法连接服务器，请检查服务是否启动或网络连接是否正常')
+  }
   if (!response.ok) {
-    let detail = `请求失败 (${response.status})`
+    let detail = STATUS_MESSAGES[response.status] || `请求失败（${response.status}）`
     try {
       const payload = await response.json()
       detail = describeErrorDetail(payload.detail || payload.message, response.status)
@@ -50,7 +118,6 @@ async function request(path, options = {}) {
   }
   return response.json()
 }
-
 export const api = {
   me: () => request('/api/auth/me'),
   login: (payload) => request('/api/auth/login', {

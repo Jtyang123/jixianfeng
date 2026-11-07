@@ -318,3 +318,24 @@ def test_run_request_allows_unknown_affected_population():
         demand_items=[DemandItemInput(material_id=1, quantity=100)],
     )
     assert request.event.affected_population == 0
+def test_validation_and_http_errors_are_chinese(tmp_path: Path):
+    test_db = Database(tmp_path / "chinese-errors.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+
+    invalid = client.post("/api/runs", json={
+        "scenario_id": "rainstorm-ii",
+        "event": {"affected_population": -1},
+        "demand_items": [{"material_id": 1, "quantity": 10}],
+    })
+    assert invalid.status_code == 422
+    detail = invalid.json()["detail"]
+    assert "影响人口" in detail
+    assert "不能小于 0" in detail
+    assert "greater than" not in detail
+
+    missing = client.get("/api/not-a-real-endpoint")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "请求的资源不存在"

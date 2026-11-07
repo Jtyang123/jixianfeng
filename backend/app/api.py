@@ -286,7 +286,7 @@ def benchmark() -> dict:
 def require_integration_key(x_integration_key: str | None = Header(default=None, alias="X-Integration-Key")) -> None:
     expected = os.getenv("INTEGRATION_API_KEY", "").strip()
     if expected and x_integration_key != expected:
-        raise HTTPException(status_code=401, detail="Invalid integration key")
+        raise HTTPException(status_code=401, detail="接入密钥无效")
     if AUTH_REQUIRED and not expected:
         raise HTTPException(status_code=503, detail="已启用登录鉴权，但未配置 INTEGRATION_API_KEY")
 
