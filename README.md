@@ -17,6 +17,8 @@
 - 评估中心：基线对比、截断指标、重复计算一致性、需求覆盖和评分维度映射
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
 - Agent 注册表：动态注册、能力发现、版本发布、在线切换和激活端点直接调用测试
+- 代码化工作流设计：JSON 定义 DAG、并行、条件、优先队列、节点重试和子工作流嵌套
+- 可上传知识库：TXT/Markdown/CSV/JSON/DOCX/XLSX/PDF 上传、自动分块与 RAG 检索
 - AgentArts 决策闭环：匹配智能体的推荐从已核验方案中影响最终排序
 - 量化评估：单 Agent 基线与多 Agent 闭环各重复 20 次，统计安全率和 P95 耗时；另单列四个 Agent 全部走 AgentArts 的真实运行证据
 - AgentArts 调用加速：HTTP 连接复用、任务完成即返回、资源匹配与独立核验云端复核并行；最新完整云端运行 28.8 秒
@@ -163,6 +165,13 @@ AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /i
 - `GET /api/platform/manifest`
 - `GET /api/agents`
 - `GET /api/agents/discover`
+- `GET /api/workflows`
+- `POST /api/workflows/validate`
+- `PUT /api/workflows/{workflow_id}`
+- `GET /api/workflow-runs/{run_id}`
+- `GET /api/knowledge/documents`
+- `POST /api/knowledge/documents`
+- `GET /api/knowledge/search`
 - `POST /api/agents`
 - `POST /api/agents/{agent_id}/versions`
 - `POST /api/agents/{agent_id}/versions/{version}/activate`
@@ -210,7 +219,7 @@ cd backend
 pytest -q
 ```
 
-测试覆盖两轮核验闭环、四智能体编排、AgentArts 适配、动态 Agent 注册、注册 Agent 直接调用权限与失败边界、仅全云端运行的指标过滤、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：31 passed，1 条第三方弃用警告。另已使用当前提交导出的干净源码完成一键安装、前端构建、独立端口启动、完整调度和审批出单验收。
+测试覆盖两轮核验闭环、四智能体编排、AgentArts 适配、动态 Agent 注册、注册 Agent 直接调用权限与失败边界、仅全云端运行的指标过滤、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：32 passed，1 条第三方弃用警告。另已使用当前提交导出的干净源码完成一键安装、前端构建、独立端口启动、完整调度和审批出单验收。
 
 ## 边界说明
 
