@@ -73,6 +73,7 @@ export const api = {
   registerAgent: (payload) => request('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   addAgentVersion: (id, payload) => request(`/api/agents/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   activateAgentVersion: (id, version) => request(`/api/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/activate`, { method: 'POST' }),
+  invokeAgent: (id, payload) => request(`/api/agents/${encodeURIComponent(id)}/invoke`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   dashboard: () => request('/api/dashboard'),
   systemStatus: () => request('/api/system/status'),
   checkAgentArts: () => request('/api/agentarts/check'),

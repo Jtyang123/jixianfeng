@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import html
@@ -22,7 +22,7 @@ from .geocoder import GeocoderError, geocode_address
 from .knowledge import catalog as knowledge_catalog
 from .llm import LLMService
 from .models import (
-    AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
+    AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
     MaterialImportResult, OperationalEventCreate, PasswordChange, RouteGenerateRequest, RunRequest,
     TaskStatusUpdate, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
@@ -192,6 +192,25 @@ def activate_agent_version(agent_id: str, version: str, request: Request) -> dic
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/agents/{agent_id}/invoke")
+async def invoke_registered_agent(agent_id: str, payload: AgentInvokeRequest, request: Request) -> dict:
+    _require_admin(request)
+    endpoints = registry_service.active_endpoints()
+    endpoint = endpoints.get(agent_id, "")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="该 Agent 没有已激活的调用端点")
+    bridge = AgentArtsBridge()
+    bridge.override_endpoint(agent_id, endpoint)
+    session_id = payload.session_id or f"registry-test-{uuid4().hex[:10]}"
+    try:
+        response = await bridge.invoke(agent_id, payload.task, session_id=session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Agent 调用失败：{str(exc)[:240]}") from exc
+    auth_service.audit("agent_invoked", "POST", f"/api/agents/{agent_id}/invoke", 200,
+                       request.state.user, resource_type="agent", resource_id=agent_id)
+    return {"agent_id": agent_id, "endpoint": endpoint, "session_id": session_id, "response": response}
+
+
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "FarmMatch Emergency Dispatch", "time": datetime.now().isoformat()}
@@ -237,7 +256,16 @@ def manifest() -> dict:
 
 @router.get("/evaluation/benchmark")
 def benchmark() -> dict:
-    return run_benchmark(db)
+    data = run_benchmark(db)
+    runtime_registry = AgentRegistryService(db)
+    all_runs = runtime_registry.run_performance_metrics()
+    cloud_runs = runtime_registry.fully_cloud_run_metrics()
+    data["runtime_evidence"] = {
+        "agents": runtime_registry.runtime_metrics(run_ids=cloud_runs["run_ids"]),
+        "runs": all_runs,
+        "fully_cloud": cloud_runs,
+    }
+    return data
 
 
 def require_integration_key(x_integration_key: str | None = Header(default=None, alias="X-Integration-Key")) -> None:

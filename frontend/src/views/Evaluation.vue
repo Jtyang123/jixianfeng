@@ -78,6 +78,24 @@ onMounted(load)
         </section>
       </div>
 
+      <section class="content-card cloud-runtime-card">
+        <div class="workflow-head"><div><div class="eyebrow">REAL CLOUD RUNTIME EVIDENCE</div><h2>真实运行与 AgentArts 观测</h2><p>来自已持久化运行记录和 AgentArts 调用事件，不是本地性能模拟。</p></div><Activity :size="20" /></div>
+        <template v-if="benchmark.runtime_evidence?.fully_cloud?.samples">
+          <div class="cloud-runtime-summary">
+            <article><span>历史运行样本</span><strong>{{ benchmark.runtime_evidence.fully_cloud.samples }}</strong><small>成功 {{ benchmark.runtime_evidence.fully_cloud.successful_runs }} 次</small></article>
+            <article><span>端到端平均耗时</span><strong>{{ formatNumber(benchmark.runtime_evidence.fully_cloud.average_end_to_end_ms, 1) }} ms</strong><small>含编排等待与模型调用</small></article>
+            <article><span>端到端 P95</span><strong>{{ formatNumber(benchmark.runtime_evidence.fully_cloud.p95_end_to_end_ms, 1) }} ms</strong><small>运行样本尾延迟</small></article>
+            <article><span>AgentArts 调用成功率</span><strong>{{ (benchmark.runtime_evidence.fully_cloud.agent_call_success_rate * 100).toFixed(1) }}%</strong><small>回退 {{ benchmark.runtime_evidence.fully_cloud.agent_fallback_count }} 次</small></article>
+          </div>
+          <div class="table-wrap cloud-runtime-table">
+            <table class="data-table"><thead><tr><th>Agent</th><th>调用样本</th><th>平均延迟</th><th>成功率</th><th>排队</th><th>负载分</th></tr></thead><tbody>
+              <tr v-for="(metric, agentId) in benchmark.runtime_evidence.agents" :key="agentId"><td><strong>{{ agentId }}</strong></td><td>{{ metric.sample_count }}</td><td>{{ metric.average_latency_ms }} ms</td><td>{{ (metric.success_rate * 100).toFixed(1) }}%</td><td>{{ metric.pending_calls }}</td><td><span class="inventory-status" :class="metric.load_score >= 80 ? 'inventory-status--expired' : 'inventory-status--available'">{{ metric.load_score }}</span></td></tr>
+            </tbody></table>
+          </div>
+        </template>
+        <div v-else class="empty-table"><Activity :size="28" /><strong>暂无历史运行样本</strong><span>完成一次完整调度后，这里会显示真实运行与 AgentArts 观测数据。</span></div>
+      </section>
+
       <section class="content-card quantitative-card">
         <div class="workflow-head"><div><div class="eyebrow">QUANTITATIVE COMPARISON</div><h2>单 Agent 基线 vs 多 Agent 验证闭环</h2><p>{{ benchmark.quantitative.repetitions }} 次重复运行，同一库存快照与事件约束。</p></div><GitCompare :size="20" /></div>
         <div class="quantitative-summary">

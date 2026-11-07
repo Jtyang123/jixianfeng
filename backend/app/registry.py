@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+import json
+import math
 from typing import Any
 
 from .database import Database, now_iso
@@ -160,13 +162,111 @@ class AgentRegistryService:
             conn.execute("UPDATE agent_registry SET updated_at=? WHERE id=?", (now_iso(), agent_id))
         return next(item for item in self.list_agents() if item["id"] == agent_id)
 
-    def runtime_metrics(self) -> dict[str, dict]:
+    def run_performance_metrics(self, limit: int = 100) -> dict:
         with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT id, status, created_at, completed_at, result_json
+                   FROM runs WHERE completed_at IS NOT NULL
+                   ORDER BY completed_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        durations: list[float] = []
+        successful = 0
+        agentarts_runs = 0
+        agent_calls = 0
+        agent_success = 0
+        agent_fallbacks = 0
+        for raw in rows:
+            row = dict(raw)
+            try:
+                start = datetime.fromisoformat(row["created_at"])
+                end = datetime.fromisoformat(row["completed_at"])
+                durations.append(max(0, (end - start).total_seconds() * 1000))
+            except Exception:
+                pass
+            if row["status"] in {"awaiting_approval", "approved"}:
+                successful += 1
+            try:
+                result = json.loads(row.get("result_json") or "{}")
+                trace = result.get("agentarts_trace") or {}
+                if trace:
+                    agentarts_runs += 1
+                for item in trace.values():
+                    mode = str((item or {}).get("mode", ""))
+                    if mode:
+                        agent_calls += 1
+                        if mode == "agentarts":
+                            agent_success += 1
+                        elif "fallback" in mode:
+                            agent_fallbacks += 1
+            except Exception:
+                continue
+        ordered = sorted(durations)
+        p95 = ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)] if ordered else 0
+        return {
+            "samples": len(rows),
+            "successful_runs": successful,
+            "success_rate": round(successful / len(rows), 4) if rows else 0,
+            "average_end_to_end_ms": round(sum(durations) / len(durations), 2) if durations else 0,
+            "p95_end_to_end_ms": round(p95, 2),
+            "agentarts_run_count": agentarts_runs,
+            "agent_call_count": agent_calls,
+            "agent_call_success_rate": round(agent_success / agent_calls, 4) if agent_calls else 0,
+            "agent_fallback_count": agent_fallbacks,
+            "latest_run_id": rows[0]["id"] if rows else None,
+        }
+
+    def fully_cloud_run_metrics(self, limit: int = 100) -> dict:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT id, status, created_at, completed_at, result_json
+                   FROM runs WHERE completed_at IS NOT NULL
+                   ORDER BY completed_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        durations=[]; successful=0; calls=0; successes=0; run_ids=[]
+        for raw in rows:
+            row=dict(raw)
+            try:
+                result=json.loads(row.get("result_json") or "{}")
+                trace=result.get("agentarts_trace") or {}
+                expected_agents={"demand_agent","matching_agent","verifier_agent","delivery_agent"}
+                if set(trace) != expected_agents:
+                    continue
+                modes=[str((item or {}).get("mode", "")) for item in trace.values()]
+                if any(mode != "agentarts" for mode in modes):
+                    continue
+                run_ids.append(row["id"])
+                calls += len(modes); successes += len(modes)
+                if row["status"] in {"awaiting_approval", "approved"}: successful += 1
+                start=datetime.fromisoformat(row["created_at"]); end=datetime.fromisoformat(row["completed_at"])
+                durations.append(max(0,(end-start).total_seconds()*1000))
+            except Exception:
+                continue
+        ordered=sorted(durations); p95=ordered[max(0,math.ceil(len(ordered)*0.95)-1)] if ordered else 0
+        return {
+            "samples":len(run_ids), "successful_runs":successful,
+            "success_rate":round(successful/len(run_ids),4) if run_ids else 0,
+            "average_end_to_end_ms":round(sum(durations)/len(durations),2) if durations else 0,
+            "p95_end_to_end_ms":round(p95,2), "agent_call_count":calls,
+            "agent_call_success_rate":round(successes/calls,4) if calls else 0,
+            "agent_fallback_count":0, "run_ids":run_ids[:20],
+            "latest_run_id":run_ids[0] if run_ids else None,
+        }
+
+    def runtime_metrics(self, run_ids: list[str] | None = None) -> dict[str, dict]:
+        if run_ids is not None and not run_ids:
+            return {}
+        with self.db.connect() as conn:
+            params = tuple(run_ids or ())
+            run_filter = f" AND run_id IN ({','.join('?' for _ in params)})" if params else ""
             rows = conn.execute(
                 """SELECT run_id, agent_id, type, created_at
                    FROM agent_events
-                   WHERE type IN ('agentarts.called','agentarts.completed','agentarts.fallback','agentarts.conflict')
-                   ORDER BY id DESC LIMIT 2000"""
+                   WHERE type IN ('agentarts.called','agentarts.completed','agentarts.fallback','agentarts.conflict')"""
+                + run_filter
+                + " ORDER BY id DESC LIMIT 2000",
+                params,
             ).fetchall()
         timed: dict[tuple[str, str], datetime] = {}
         durations: dict[str, list[float]] = defaultdict(list)

@@ -1,4 +1,4 @@
-﻿# 急先锋 · 应急资源调度推演平台
+# 急先锋 · 应急资源调度推演平台
 
 面向园区、企业、学校、医院和应急演练单位的初赛提交版。用户可以维护物资库、上传库存快照、配置灾情需求，由四个智能体生成多套可比较的调度方案，并通过独立核验完成退回重算。
 
@@ -16,9 +16,9 @@
 - Agent 编排中心：五核心模块、四 Agent 契约、工具注册、DAG 与条件回环可视化
 - 评估中心：基线对比、截断指标、重复计算一致性、需求覆盖和评分维度映射
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
-- Agent 注册表：动态注册、能力发现、版本发布与在线切换
+- Agent 注册表：动态注册、能力发现、版本发布、在线切换和激活端点直接调用测试
 - AgentArts 决策闭环：匹配智能体的推荐从已核验方案中影响最终排序
-- 量化评估：单 Agent 基线与多 Agent 闭环各重复 20 次，统计安全率和 P95 耗时
+- 量化评估：单 Agent 基线与多 Agent 闭环各重复 20 次，统计安全率和 P95 耗时；另单列四个 Agent 全部走 AgentArts 的真实运行证据
 - 安全与审计：登录、四类角色、失败锁定和操作审计
 - 交付结果：方案对比、调拨明细、评分、风险提示、执行清单和打印报告
 - 演练兜底：本地确定性编排不依赖外网，AgentArts 适配器可单独接入
@@ -159,6 +159,12 @@ AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /i
 - `GET /api/tasks`
 - `PATCH /api/tasks/{task_id}`
 - `GET /api/platform/manifest`
+- `GET /api/agents`
+- `GET /api/agents/discover`
+- `POST /api/agents`
+- `POST /api/agents/{agent_id}/versions`
+- `POST /api/agents/{agent_id}/versions/{version}/activate`
+- `POST /api/agents/{agent_id}/invoke`
 - `GET /api/evaluation/benchmark`
 - `GET /api/materials`
 - `POST /api/materials`
@@ -202,7 +208,7 @@ cd backend
 pytest -q
 ```
 
-测试覆盖两轮核验闭环、四智能体编排、AgentArts 适配、动态 Agent 注册、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：15 passed。
+测试覆盖两轮核验闭环、四智能体编排、AgentArts 适配、动态 Agent 注册、注册 Agent 直接调用权限与失败边界、仅全云端运行的指标过滤、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：22 passed，1 条第三方弃用警告。
 
 ## 边界说明
 

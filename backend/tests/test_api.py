@@ -1,4 +1,4 @@
-﻿import time
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -67,6 +67,8 @@ def test_api_run_flow(tmp_path: Path):
     benchmark = client.get("/api/evaluation/benchmark")
     assert benchmark.status_code == 200
     assert benchmark.json()["metrics"]["reproducible"] is True
+    assert benchmark.json()["runtime_evidence"]["fully_cloud"]["samples"] == 0
+    assert benchmark.json()["runtime_evidence"]["agents"] == {}
 
     approve = client.post(f"/api/runs/{run_id}/approve", json={"note": "测试审批"})
     assert approve.status_code == 200

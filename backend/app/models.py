@@ -196,6 +196,11 @@ class AgentRegisterRequest(BaseModel):
     activate: bool = True
 
 
+class AgentInvokeRequest(BaseModel):
+    task: dict = Field(default_factory=dict)
+    session_id: str | None = Field(default=None, max_length=100)
+
+
 class AgentVersionCreate(BaseModel):
     version: str = Field(min_length=1, max_length=40)
     endpoint: str = Field(default="", max_length=500)

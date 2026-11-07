@@ -1,6 +1,6 @@
-﻿# 华为云 AgentArts 联调记录
+# 华为云 AgentArts 联调记录
 
-> 四角色调用、配置诊断和安全合并代码已完成。四个角色均已配置真实端点，覆盖率为 `4/4`；三个待创建工作流的步骤见 `docs/AGENTARTS_4_AGENT_SETUP.md`。
+> 四角色调用、配置诊断和安全合并代码已完成。四个角色均已配置真实端点，覆盖率为 `4/4`；创建、发布与验证步骤见 `docs/AGENTARTS_4_AGENT_SETUP.md`。
 
 ## 当前状态
 
@@ -45,6 +45,31 @@ SSE 解析结果：
 - `agent_decision.applied=true`
 - 说明：AgentArts 只能从已通过确定性硬规则核验的方案中选择，不能绕过安全约束
 
+## 注册 Agent 直接调用验证
+
+- 接口：`POST /api/agents/{agent_id}/invoke`
+- 权限：仅系统管理员
+- 验证 Agent：`demand_agent`
+- 会话：`REGISTRY-INVOKE-002`
+- 返回模式：`agentarts`
+- SSE 事件数：7
+- 安全边界：未激活端点返回 400，云端异常返回 502，非管理员返回 403
+- 审计：成功调用写入 `agent_invoked` 审计记录
+
+## 完整云端运行指标
+
+评估接口只把以下运行计入 `runtime_evidence.fully_cloud`：四个 Agent 的最终 `agentarts_trace` 全部为 `agentarts`。任何本地回退、未完成或混合模式运行都不会混入该项。
+
+截至 2026-11-07 的已持久化样本：
+
+- 完整云端运行：4 次
+- 成功运行：4 次
+- 端到端平均耗时：72,750 ms
+- 端到端 P95：96,000 ms
+- AgentArts 调用成功率：100%
+- 本地回退：0 次
+
+该样本量用于证明真实调用链路可运行，不作为大规模生产性能基准；更大规模结论需要持续累计运行数据。
 ## 四智能体端到端验证
 
 - 运行编号：`RUN-20261104-203420-4498`
@@ -74,13 +99,7 @@ SSE 解析结果：
 - `verifier_agent`：已真实调用 AgentArts
 - `delivery_agent`：已真实调用 AgentArts
 
-后续可复制相同工作流结构，分别创建：
-
-- `farmmatch-matching-v1`
-- `farmmatch-verifier-v1`
-- `farmmatch-delivery-v1`
-
-然后在 `AGENTARTS_AGENT_ENDPOINTS_JSON` 中增加对应端点。
+四个角色工作流已分别部署，并通过 `AGENTARTS_AGENT_ENDPOINTS_JSON` 与 `AGENTARTS_AGENT_KEYS_JSON` 管理端点和各自入站 Key。重新部署时应复用相同输入输出契约，并在管理页执行一次直接调用测试后再切换版本。
 
 ## 安全说明
 

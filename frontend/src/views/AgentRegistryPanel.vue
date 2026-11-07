@@ -9,6 +9,9 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
 const message = ref('')
+const invoking = ref(false)
+const invokeForm = ref({ agent_id: '', task: '{\n  "query": "health check"\n}' })
+const invokeResult = ref(null)
 const isAdmin = computed(() => props.user?.role === 'admin')
 const registerForm = ref({ id: '', name: '', role: '', description: '', capabilities: '', version: 'v1', endpoint: '', model: '', prompt_version: 'v1', activate: true })
 const versionForm = ref({ agent_id: '', version: '', endpoint: '', model: '', prompt_version: '', activate: true })
@@ -19,6 +22,7 @@ async function load() {
   try {
     agents.value = await api.agents()
     if (!versionForm.value.agent_id && agents.value.length) versionForm.value.agent_id = agents.value[0].id
+    if (!invokeForm.value.agent_id && agents.value.length) invokeForm.value.agent_id = agents.value[0].id
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
 
@@ -49,6 +53,20 @@ async function addVersion() {
     versionForm.value = { agent_id: versionForm.value.agent_id, version: '', endpoint: '', model: '', prompt_version: '', activate: true }
     await load()
   } catch (exc) { error.value = exc.message } finally { saving.value = false }
+}
+
+async function invokeAgent() {
+  invoking.value = true
+  error.value = ''
+  invokeResult.value = null
+  try {
+    const task = JSON.parse(invokeForm.value.task)
+    invokeResult.value = await api.invokeAgent(invokeForm.value.agent_id, { task })
+  } catch (exc) {
+    error.value = exc instanceof SyntaxError ? '测试任务必须是合法 JSON' : exc.message
+  } finally {
+    invoking.value = false
+  }
 }
 
 async function activate(agent, version) {
@@ -123,6 +141,16 @@ onMounted(load)
           <label class="check-label"><input v-model="versionForm.activate" type="checkbox" />创建后立即激活</label>
           <div class="registry-form-actions full-span"><span><GitBranch :size="14" />版本切换会立即影响后续运行</span><button class="primary-action" :disabled="saving || !versionForm.agent_id"><Plus :size="14" />新增版本</button></div>
         </form>
+      </section>
+
+      <section class="content-card registry-form-card">
+        <div class="workflow-head"><div><div class="eyebrow">AGENT INVOCATION TEST</div><h2>直接测试已注册 Agent</h2><p>使用激活版本的 /invocations 端点执行一个小任务，验证注册结果确实可调用。</p></div><ServerCog :size="20" /></div>
+        <form class="registry-form-grid" @submit.prevent="invokeAgent">
+          <label><span>Agent *</span><select v-model="invokeForm.agent_id"><option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}（{{ agent.id }}）</option></select></label>
+          <label class="full-span"><span>任务 JSON *</span><textarea v-model="invokeForm.task" rows="4" placeholder='{"query":"health check"}' /></label>
+          <div class="registry-form-actions full-span"><span>调用结果仅用于注册验证，不会修改业务数据</span><button class="primary-action" :disabled="invoking || !invokeForm.agent_id"><Activity :size="14" />{{ invoking ? '调用中...' : '执行测试' }}</button></div>
+        </form>
+        <div v-if="invokeResult" class="agent-invoke-result"><strong>调用成功</strong><pre>{{ JSON.stringify(invokeResult, null, 2) }}</pre></div>
       </section>
     </template>
   </div>
