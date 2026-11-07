@@ -309,6 +309,7 @@ onBeforeUnmount(() => eventSource?.close())
               <ChevronDown :size="16" />
             </div>
             <p v-if="!operationalEvents.length" class="event-empty-hint">尚无真实事件，请先到“数据中心 → 真实事件”录入。</p>
+            <p v-else-if="selectedOperationalEvent && !selectedOperationalEvent.affected_population" class="event-empty-hint">该事件未填写影响人口，系统将按已录入的物资需求计算。</p>
           </template>
 
           <div class="scenario-brief" v-if="selectedScenario">
@@ -319,7 +320,7 @@ onBeforeUnmount(() => eventSource?.close())
             <p>{{ selectedScenario.description }}</p>
             <div class="scenario-meta">
               <span><MapPinned :size="14" />{{ selectedScenario.location }}</span>
-              <span><PackageOpen :size="14" />{{ formatNumber(selectedScenario.affected_population) }} 人</span>
+              <span><PackageOpen :size="14" />{{ selectedScenario.affected_population ? `${formatNumber(selectedScenario.affected_population)} 人` : '人口待补录' }}</span>
               <span><Route :size="14" />{{ selectedScenario.closed_routes.length }} 条封闭主通道</span>
             </div>
           </div>

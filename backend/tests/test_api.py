@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app import api as api_module
 from app.database import Database
 from app.main import app
+from app.models import DemandItemInput, EventConfig, RunRequest
 from app.operations import OperationsRepository
 
 
@@ -311,4 +312,9 @@ def test_route_generation_and_deletion(tmp_path: Path, monkeypatch):
     assert client.delete(f"/api/routes/{route['id']}").status_code == 200
     routes = client.get("/api/network").json()["routes"]
     assert all(item["id"] != route["id"] for item in routes)
-
+def test_run_request_allows_unknown_affected_population():
+    request = RunRequest(
+        event=EventConfig(affected_population=0),
+        demand_items=[DemandItemInput(material_id=1, quantity=100)],
+    )
+    assert request.event.affected_population == 0

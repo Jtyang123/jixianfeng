@@ -161,7 +161,7 @@ onMounted(load)
           <article v-for="event in events" :key="event.id" class="event-record">
             <div class="event-record-head"><span class="severity-badge">{{ event.severity }}</span><strong>{{ event.title }}</strong><button type="button" class="record-delete" :disabled="deletingId === event.id" @click="removeEvent(event)"><Trash2 :size="12" />{{ deletingId === event.id ? '删除中' : '删除' }}</button><span class="run-status run-status--awaiting_approval">{{ event.status }}</span></div>
             <p>{{ event.description || '无补充描述' }}</p>
-            <div><span><MapPinned :size="13" />{{ event.location }}</span><span>{{ event.affected_population }} 人</span><span>{{ event.demand_items?.length || 0 }} 条需求</span><span>{{ formatTime(event.created_at) }}</span></div>
+            <div><span><MapPinned :size="13" />{{ event.location }}</span><span>{{ event.affected_population ? `${event.affected_population} 人` : '人口未填写' }}</span><span>{{ event.demand_items?.length || 0 }} 条需求</span><span>{{ formatTime(event.created_at) }}</span></div>
             <small>{{ event.id }} · 来源：{{ event.source }}</small>
           </article>
         </div>

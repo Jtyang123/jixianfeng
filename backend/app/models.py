@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Literal
 
@@ -44,7 +44,7 @@ class EventConfig(BaseModel):
     type: str = "暴雨洪涝"
     severity: str = "II级"
     location: str = "武汉市·模拟沿江区"
-    affected_population: int = Field(default=12000, ge=1)
+    affected_population: int = Field(default=12000, ge=0)
     closed_route_ids: list[str] = Field(default_factory=list)
     note: str = ""
 
