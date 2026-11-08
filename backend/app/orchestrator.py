@@ -17,6 +17,7 @@ from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
 from .memory import MemoryRepository
 from .registry import AgentRegistryService, apply_agent_load
+from .reservations import InventoryReservationService
 from .retry_queue import RetryQueueRepository
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
 from .tools import ToolError, ToolService
@@ -408,6 +409,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "runtime": AGENT_RUNTIME,
             "scenario_id": request["scenario_id"],
         })
+        InventoryReservationService(db).cleanup_expired()
         await pace(0.28)
 
         scenario = db.get_scenario(request["scenario_id"])

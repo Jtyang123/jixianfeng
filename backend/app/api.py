@@ -16,7 +16,7 @@ from .agentarts import AgentArtsBridge
 from .auth import AuthService
 from .config import (
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, BASE_DIR,
-    RETRY_MAX_ATTEMPTS, RETRY_WORKER_ENABLED, RUN_WORKER_CONCURRENCY,
+    RESERVATION_SWEEP_ENABLED, RETRY_MAX_ATTEMPTS, RETRY_WORKER_ENABLED, RUN_WORKER_CONCURRENCY,
 )
 from .database import Database
 from .evaluation import run_benchmark, run_diagnostics
@@ -36,7 +36,7 @@ from .models import (
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
-from .reservations import InventoryReservationError, InventoryReservationService
+from .reservations import InventoryReservationError, InventoryReservationService, ReservationMaintenanceWorker
 from .retry_queue import RetryQueueRepository, RetryWorker
 from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
@@ -54,6 +54,7 @@ registry_service = AgentRegistryService(db)
 TEMPLATE_DIR = BASE_DIR / "templates"
 run_worker_pool: RunWorkerPool | None = None
 retry_worker: RetryWorker | None = None
+reservation_worker: ReservationMaintenanceWorker | None = None
 
 
 def _db_provider() -> Database:
@@ -87,7 +88,7 @@ def _retry_runtime():
 
 
 async def start_runtime() -> None:
-    global run_worker_pool, retry_worker, registry_service
+    global run_worker_pool, retry_worker, reservation_worker, registry_service
     if run_worker_pool is not None:
         return
     registry_service = AgentRegistryService(db)
@@ -100,16 +101,22 @@ async def start_runtime() -> None:
     if RETRY_WORKER_ENABLED:
         retry_worker = RetryWorker(_db_provider, _retry_runtime)
         await retry_worker.start()
+    if RESERVATION_SWEEP_ENABLED:
+        reservation_worker = ReservationMaintenanceWorker(_db_provider)
+        await reservation_worker.start()
 
 
 async def stop_runtime() -> None:
-    global run_worker_pool, retry_worker
+    global run_worker_pool, retry_worker, reservation_worker
     if run_worker_pool is not None:
         await run_worker_pool.stop()
         run_worker_pool = None
     if retry_worker is not None:
         await retry_worker.stop()
         retry_worker = None
+    if reservation_worker is not None:
+        await reservation_worker.stop()
+        reservation_worker = None
 
 
 class ApprovalRequest(BaseModel):
@@ -692,6 +699,7 @@ def update_task(task_id: int, payload: TaskStatusUpdate) -> dict:
 
 @router.get("/dashboard")
 def dashboard() -> dict:
+    InventoryReservationService(db).cleanup_expired()
     return db.dashboard()
 
 
@@ -810,6 +818,7 @@ async def import_materials(file: UploadFile = File(...)) -> MaterialImportResult
 
 @router.get("/inventory")
 def inventory() -> dict:
+    InventoryReservationService(db).cleanup_expired()
     snapshot = db.latest_snapshot()
     return {
         "snapshot": snapshot,
@@ -1417,6 +1426,23 @@ def approve_run(run_id: str, payload: ApprovalRequest, request: Request) -> dict
         "approved_by_name": approved_by_name, "inventory_reservation": reservation,
         "tasks": tasks,
     }
+
+
+@router.post("/runs/{run_id}/reject")
+def reject_run(run_id: str, payload: ApprovalRequest, request: Request) -> dict:
+    current = getattr(request.state, "user", None) or {}
+    run = db.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if run["status"] not in {"awaiting_approval", "approved", "reservation_expired"}:
+        raise HTTPException(status_code=409, detail="当前运行状态不允许审批拒绝")
+    result = InventoryReservationService(db).reject_run(run_id, current, payload.note)
+    db.add_event(
+        run_id, "human.rejected", "orchestrator", "编排控制器",
+        "人工审批拒绝", payload.note or "审批人拒绝该方案，相关库存预留已释放。",
+        {"rejected_by": current.get("id"), "rejected_by_name": current.get("display_name") or current.get("username", ""), "released": result["released"]},
+    )
+    return {"run_id": run_id, **result}
 
 
 @router.post("/runs/{run_id}/release-reservation")

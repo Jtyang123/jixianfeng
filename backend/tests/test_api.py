@@ -130,6 +130,13 @@ def test_api_run_flow(tmp_path: Path):
     assert approve.json()["approved_by_name"]
     assert approve.json()["inventory_reservation"]["count"] > 0
     assert len(approve.json()["tasks"]) > 0
+    rejected = client.post(f"/api/runs/{run_id}/reject", json={"note": "执行条件变化，拒绝方案"})
+    assert rejected.status_code == 200
+    assert rejected.json()["rejected"] is True
+    assert rejected.json()["released"]["count"] > 0
+    rejected_run = client.get(f"/api/runs/{run_id}").json()
+    assert rejected_run["status"] == "rejected"
+    assert rejected_run["result"]["approval"]["status"] == "rejected"
     client.__exit__(None, None, None)
 
 
@@ -488,7 +495,8 @@ def test_knowledge_upload_chunk_search_and_delete(tmp_path: Path):
     semantic = client.get("/api/knowledge/search?q=封路后车辆怎么绕行")
     assert semantic.status_code == 200 and semantic.json()
     assert semantic.json()[0]["source"] == "应急运输规则"
-    assert semantic.json()[0]["retrieval"]["mode"] == "embedding+bm25+deterministic-rerank"
+    assert semantic.json()[0]["retrieval"]["mode"] == "offline-lexical-hash+bm25+deterministic-rerank"
+    assert semantic.json()[0]["retrieval"]["semantic_retrieval"] is False
     assert semantic.json()[0]["citation"]["locator"]
     assert semantic.json()[0]["retrieval"]["vector_similarity"] > 0
     assert client.delete(f"/api/knowledge/documents/{document['id']}").status_code == 200

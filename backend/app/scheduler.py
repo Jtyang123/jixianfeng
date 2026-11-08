@@ -273,6 +273,7 @@ def platform_manifest() -> dict[str, Any]:
         "platform": "急先锋 · 应急资源调度推演平台",
         "version": "1.0.0",
         "runtime": AGENT_RUNTIME,
+        "llm_decision_boundary": "LLM 在确定性安全边界内负责需求优先级、权重、修复策略和方案推荐；方案计算、硬规则核验与评分由确定性内核执行。",
         "agents": AGENTS,
         "tools": TOOLS,
         "workflow": WORKFLOW,

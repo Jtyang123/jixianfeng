@@ -179,7 +179,7 @@ onMounted(load)
           </div>
 
           <div v-if="diagnostics.soak" class="diagnostic-summary soak-summary">
-            <article :class="diagnostics.soak.status === 'pass' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>长稳结论</span><strong>{{ diagnostics.soak.status === 'pass' ? '持续稳定' : '存在异常' }}</strong><small>{{ diagnostics.soak.scope }}</small></article>
+            <article :class="diagnostics.soak.status === 'pass' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>持续压测结论</span><strong>{{ diagnostics.soak.status === 'pass' ? '持续稳定' : '存在异常' }}</strong><small>{{ diagnostics.soak.scope }}</small></article>
             <article><span>持续时间 / 样本</span><strong>{{ (diagnostics.soak.duration_ms / 1000).toFixed(1) }} s</strong><small>目标 {{ diagnostics.soak.target_duration_seconds }} 秒 · {{ diagnostics.soak.samples }} 个完整闭环样本</small></article>
             <article><span>成功率 / 吞吐</span><strong>{{ (diagnostics.soak.success_rate * 100).toFixed(1) }}%</strong><small>{{ diagnostics.soak.throughput_runs_per_second }} 次/秒 · P95 {{ diagnostics.soak.p95_latency_ms }} ms</small></article>
             <article><span>结果隔离</span><strong>{{ diagnostics.soak.isolation_consistent ? '一致' : '异常' }}</strong><small>{{ diagnostics.soak.batches }} 个批次 · {{ diagnostics.soak.concurrency }} 路持续提交</small></article>

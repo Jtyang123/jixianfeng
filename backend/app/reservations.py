@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+from .config import RESERVATION_SWEEP_INTERVAL_SECONDS, RESERVATION_TTL_HOURS
 from .database import Database, now_iso
 
 
@@ -25,12 +27,13 @@ class InventoryReservationService:
             "items": rows,
         }
 
-    def _release_expired(self, conn) -> int:
+    def _release_expired(self, conn) -> list[dict]:
         now = datetime.now().astimezone()
         rows = conn.execute(
             "SELECT * FROM inventory_reservations WHERE status='active'"
         ).fetchall()
-        released = 0
+        released: list[dict] = []
+        affected_runs: set[str] = set()
         for raw in rows:
             row = dict(raw)
             try:
@@ -47,10 +50,35 @@ class InventoryReservationService:
                 "UPDATE inventory_reservations SET status='expired', released_at=? WHERE id=?",
                 (now_iso(), row["id"]),
             )
-            released += 1
+            released.append(row)
+            affected_runs.add(row["run_id"])
+        for run_id in affected_runs:
+            run_row = conn.execute("SELECT result_json, status FROM runs WHERE id=?", (run_id,)).fetchone()
+            result = json.loads(run_row["result_json"] or "{}") if run_row else {}
+            approval = result.get("approval") if isinstance(result.get("approval"), dict) else {}
+            approval.update({"status": "expired", "expired_at": now_iso()})
+            result["approval"] = approval
+            next_status = "reservation_expired" if run_row and run_row["status"] == "approved" else (run_row["status"] if run_row else "reservation_expired")
+            conn.execute(
+                "UPDATE runs SET approved=0, approved_at=NULL, reserved_at=NULL, status=?, result_json=? WHERE id=?",
+                (next_status, json.dumps(result, ensure_ascii=False), run_id),
+            )
         return released
 
+    def cleanup_expired(self) -> dict:
+        with self.db.connect() as conn:
+            released = self._release_expired(conn)
+        runs = sorted({item["run_id"] for item in released})
+        for run_id in runs:
+            self.db.add_event(
+                run_id, "inventory.reservation_expired", "orchestrator", "库存预留",
+                "库存预留已过期释放", f"释放 {sum(1 for item in released if item['run_id'] == run_id)} 条库存预留。",
+                {"released_count": sum(1 for item in released if item['run_id'] == run_id)},
+            )
+        return {"released_count": len(released), "runs": runs, "items": released}
+
     def active_for_run(self, run_id: str) -> list[dict]:
+        self.cleanup_expired()
         with self.db.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM inventory_reservations WHERE run_id=? AND status='active' ORDER BY id",
@@ -58,7 +86,7 @@ class InventoryReservationService:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def reserve(self, run_id: str, plan: dict, user: dict, note: str = "", ttl_hours: int = 24) -> dict:
+    def reserve(self, run_id: str, plan: dict, user: dict, note: str = "", ttl_hours: int = RESERVATION_TTL_HOURS) -> dict:
         existing = self.active_for_run(run_id)
         if existing:
             return self._summary(existing)
@@ -151,6 +179,27 @@ class InventoryReservationService:
             )
         return self._summary(reservations)
 
+    def reject_run(self, run_id: str, user: dict, note: str = "") -> dict:
+        released = self.release(run_id)
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT result_json FROM runs WHERE id=?", (run_id,)).fetchone()
+            result = json.loads(row["result_json"] or "{}") if row else {}
+            result["approval"] = {
+                "status": "rejected",
+                "rejected_by": user.get("id"),
+                "rejected_by_name": user.get("display_name") or user.get("username", ""),
+                "rejected_at": now_iso(),
+                "note": note,
+                "inventory_reservation": released,
+            }
+            conn.execute(
+                """UPDATE runs SET approved=0, approved_at=NULL, approved_by=?, approved_by_name=?,
+                   approval_note=?, reserved_at=NULL, status='rejected', result_json=? WHERE id=?""",
+                (user.get("id"), user.get("display_name") or user.get("username", ""), note,
+                 json.dumps(result, ensure_ascii=False), run_id),
+            )
+        return {"rejected": True, "released": released}
+
     def release(self, run_id: str) -> dict:
         with self.db.connect() as conn:
             rows = conn.execute(
@@ -178,3 +227,33 @@ class InventoryReservationService:
                     (json.dumps(result, ensure_ascii=False), run_id),
                 )
         return self._summary([dict(row) for row in rows])
+
+class ReservationMaintenanceWorker:
+    def __init__(self, db_provider) -> None:
+        self.db_provider = db_provider
+        self.task: asyncio.Task | None = None
+        self.stop_event = asyncio.Event()
+
+    async def start(self) -> None:
+        if self.task:
+            return
+        self.stop_event = asyncio.Event()
+        self.task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        self.stop_event.set()
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+            self.task = None
+
+    async def _loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                InventoryReservationService(self.db_provider()).cleanup_expired()
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=RESERVATION_SWEEP_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass

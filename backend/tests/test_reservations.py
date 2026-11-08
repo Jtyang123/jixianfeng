@@ -51,3 +51,26 @@ def test_reservation_prevents_double_commit_and_release_restores_inventory(tmp_p
     assert released["count"] == 1
     second = service.reserve("RUN-RESERVE-2", plan, {"id": 8, "username": "admin"}, "重试审批")
     assert second["count"] == 1
+
+
+def test_expired_reservation_is_released_and_run_marked(tmp_path: Path):
+    db = Database(tmp_path / "reservation-expiry.db", database_url="")
+    db.initialize()
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    row = next(item for item in inventory if item["quantity"] > 10 and item["locked_quantity"] == 0)
+    plan = _plan(row)
+    db.create_run("RUN-RESERVE-EXPIRED", "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+    db.update_run("RUN-RESERVE-EXPIRED", "awaiting_approval", {"delivery": {"recommended_plan": {"plan_id": plan["plan_id"]}}, "rounds": [{"plans": [plan]}]})
+    service = InventoryReservationService(db)
+    service.reserve("RUN-RESERVE-EXPIRED", plan, {"id": 9, "username": "admin"}, "同意", ttl_hours=1)
+    with db.connect() as conn:
+        conn.execute("UPDATE inventory_reservations SET expires_at='2000-01-01T00:00:00+08:00' WHERE run_id=?", ("RUN-RESERVE-EXPIRED",))
+    cleaned = service.cleanup_expired()
+    assert cleaned["released_count"] == 1
+    stored = db.get_run("RUN-RESERVE-EXPIRED")
+    assert stored["status"] == "reservation_expired"
+    assert stored["approved"] == 0
+    assert stored["result"]["approval"]["status"] == "expired"
+    with db.connect() as conn:
+        locked = conn.execute("SELECT locked_quantity FROM inventory WHERE id=?", (row["id"],)).fetchone()["locked_quantity"]
+    assert locked == 0

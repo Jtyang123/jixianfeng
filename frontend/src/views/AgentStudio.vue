@@ -121,7 +121,7 @@ onMounted(load)
       <div>
         <div class="eyebrow">AGENT HARNESS / PLATFORM CONTROL</div>
         <h2>Agent 编排中心</h2>
-        <p>围绕赛题一五个核心模块构建：定义、编排、调度、执行验证、反馈优化。</p>
+        <p>围绕赛题一五个核心模块构建。答辩口径：LLM 在确定性安全边界内负责需求优先级、权重、修复策略与方案推荐；方案计算、硬规则核验和评分由确定性内核执行。</p>
         <div class="studio-badges" v-if="manifest">
           <span><span class="live-dot" />{{ manifest.runtime }} runtime</span>
           <span><Database :size="13" />{{ manifest.knowledge.source_count }} 条 RAG 规则</span>

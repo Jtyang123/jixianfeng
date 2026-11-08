@@ -228,6 +228,8 @@ class EmbeddingService:
             "model": self.model if self.remote else "domain-hash-v1",
             "dimensions": self.dimensions,
             "remote_configured": self.remote,
+            "semantic_retrieval": self.remote,
+            "default_mode": "remote-semantic" if self.remote else "offline-lexical-hash",
         }
 
     def embed(self, text: str) -> tuple[list[float], dict]:
@@ -407,7 +409,12 @@ class KnowledgeRepository:
                     ),
                 },
                 "retrieval": {
-                    "mode": "embedding+bm25+deterministic-rerank",
+                    "mode": (
+                        "semantic-embedding+bm25+deterministic-rerank"
+                        if query_meta["mode"] == "remote"
+                        else "offline-lexical-hash+bm25+deterministic-rerank"
+                    ),
+                    "semantic_retrieval": query_meta["mode"] == "remote",
                     "embedding_backend": query_meta["provider"],
                     "embedding_model": query_meta["model"],
                     "vector_similarity": round(cosine, 4),

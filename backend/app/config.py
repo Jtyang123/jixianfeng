@@ -98,6 +98,9 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "")
 EMBEDDING_DIMENSIONS = max(64, min(4096, int(os.getenv("EMBEDDING_DIMENSIONS", "256"))))
 EMBEDDING_TIMEOUT = max(1.0, float(os.getenv("EMBEDDING_TIMEOUT", "20")))
 
+RESERVATION_TTL_HOURS = max(1, int(os.getenv("RESERVATION_TTL_HOURS", "24")))
+RESERVATION_SWEEP_INTERVAL_SECONDS = max(5.0, float(os.getenv("RESERVATION_SWEEP_INTERVAL_SECONDS", "60")))
+RESERVATION_SWEEP_ENABLED = os.getenv("RESERVATION_SWEEP_ENABLED", "true").strip().lower() == "true"
 RETRY_WORKER_ENABLED = os.getenv("RETRY_WORKER_ENABLED", "true").strip().lower() == "true"
 RETRY_MAX_ATTEMPTS = max(1, min(10, int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))))
 RETRY_POLL_INTERVAL_SECONDS = max(1.0, float(os.getenv("RETRY_POLL_INTERVAL_SECONDS", "5")))
