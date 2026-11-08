@@ -58,6 +58,24 @@ TOOLS = [
     {"id": "export_pdf", "name": "报告导出", "protocol": "Server API", "mode": "write-export", "description": "将已审批方案导出为可打印报告。"},
 ]
 
+CORE_WORKFLOW_DEFINITION = {
+    "nodes": [
+        {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": [], "priority": 96},
+        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": ["A01"], "priority": 88},
+        {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99},
+    ],
+    "description": "默认主干：需求研判 → 资源匹配 → 独立核验。可在工作流设计器中替换或插入节点。",
+}
+
+CORE_WORKFLOW = {
+    "id": "core-default",
+    "name": "默认主干工作流",
+    "stage": "core",
+    "version": 1,
+    "enabled": True,
+    "definition": CORE_WORKFLOW_DEFINITION,
+}
+
 WORKFLOW = {
     "entry": "event_confirmed",
     "nodes": [

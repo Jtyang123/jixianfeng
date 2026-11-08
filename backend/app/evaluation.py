@@ -34,13 +34,9 @@ def _signature(verification: dict) -> tuple:
     )
 
 
-def run_benchmark(db: Database, repetitions: int = 20) -> dict:
-    scenario = db.get_scenario("rainstorm-ii")
-    if not scenario:
-        return {"error": "基准场景不可用"}
-    materials = db.list_materials()
+def _scenario_request(scenario: dict, materials: list[dict]) -> dict:
     material_ids = {item["code"]: item["id"] for item in materials}
-    request = {
+    return {
         "demand_items": [
             {
                 "material_id": material_ids[item["material_code"]],
@@ -51,142 +47,245 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             for item in scenario["default_demand"]
         ]
     }
-    snapshot = db.latest_snapshot()
-    inventory = db.inventory_rows(snapshot["id"] if snapshot else None)
+
+
+def _benchmark_contexts(db: Database) -> list[dict]:
+    materials = db.list_materials()
     destinations = db.destination_rows()
     warehouses = db.warehouse_rows()
     routes = db.route_rows()
     vehicles = db.vehicle_rows()
-    closed_routes = scenario["closed_routes"]
+    snapshot = db.latest_snapshot()
+    inventory = db.inventory_rows(snapshot["id"] if snapshot else None)
+    rain = db.get_scenario("rainstorm-ii")
+    heat = db.get_scenario("heatwave-iii")
+    if not rain or not heat:
+        raise RuntimeError("基准场景不可用")
 
-    def baseline_once():
-        started = time.perf_counter()
-        demand = build_demand_plan(request, materials, destinations)
-        plans = generate_plans(demand, inventory, warehouses, routes, vehicles, 1, closed_routes)
-        selected = plans[0]
-        ground_truth = verify_plans([selected], demand, inventory, routes, vehicles, closed_routes)
-        elapsed = (time.perf_counter() - started) * 1000
-        return elapsed, demand, plans, selected, ground_truth
+    def build(scenario: dict, *, inventory_rows=None, vehicle_rows=None, feasible=True, name=None):
+        return {
+            "id": scenario["id"], "name": name or scenario["name"], "scenario": scenario,
+            "request": _scenario_request(scenario, materials), "materials": materials,
+            "destinations": destinations, "warehouses": warehouses, "routes": routes,
+            "vehicles": copy.deepcopy(vehicle_rows if vehicle_rows is not None else vehicles),
+            "inventory": copy.deepcopy(inventory_rows if inventory_rows is not None else inventory),
+            "closed_routes": list(scenario["closed_routes"]), "feasible": feasible,
+        }
 
-    def multi_once():
-        started = time.perf_counter()
-        demand = build_demand_plan(request, materials, destinations)
-        plans_v1 = generate_plans(demand, inventory, warehouses, routes, vehicles, 1, closed_routes)
-        verification_v1 = verify_plans(plans_v1, demand, inventory, routes, vehicles, closed_routes)
-        plans_v2, verification_v2, _, _ = _solve_adaptively(
-            demand, inventory, warehouses, routes, vehicles, closed_routes
-        )
-        elapsed = (time.perf_counter() - started) * 1000
-        return elapsed, demand, plans_v1, verification_v1, plans_v2, verification_v2
+    shortage_inventory = copy.deepcopy(inventory)
+    for row in shortage_inventory:
+        row["quantity"] = round(float(row.get("quantity") or 0) * 0.05, 2)
+        row["locked_quantity"] = 0
+    return [
+        build(rain),
+        build(heat),
+        build(rain, inventory_rows=shortage_inventory, feasible=False, name="库存严重缺口"),
+        build(heat, vehicle_rows=[], feasible=False, name="无可用车辆"),
+    ]
 
-    baseline_runs = [baseline_once() for _ in range(repetitions)]
-    multi_runs = [multi_once() for _ in range(repetitions)]
-    baseline_times = [item[0] for item in baseline_runs]
-    multi_times = [item[0] for item in multi_runs]
 
-    _, demand, plans_v1, baseline_plan, baseline_truth = baseline_runs[0]
-    baseline_report = baseline_truth["reports"][0]
-    baseline_score = baseline_report["verification"]["score"]
-    _, _, _, verification_v1, plans_v2, verification_v2 = multi_runs[0]
-    available_demand = sum(item["quantity"] for item in demand["items"])
-    approved_final = next((item for item in verification_v2["reports"] if item["approved"]), None)
-    delivered = sum(item["quantity"] for item in approved_final["assignments"]) if approved_final else 0
-    coverage = delivered / available_demand if available_demand else 0
-    baseline_coverage = sum(item["quantity"] for item in baseline_plan["assignments"]) / available_demand if available_demand else 0
+def run_benchmark(db: Database, repetitions: int = 20) -> dict:
+    try:
+        contexts = _benchmark_contexts(db)
+    except Exception as exc:
+        return {"error": f"基准场景不可用：{str(exc)[:200]}"}
 
-    baseline_unsafe = not baseline_truth["reports"][0]["approved"]
-    baseline_unsafe_acceptance = 1.0 if baseline_unsafe else 0.0
-    multi_unsafe_acceptance = 0.0 if verification_v2["verdict"] == "pass" else 1.0
-    risk_detection_rate = 1.0 if verification_v1["blocker_summary"] else 0.0
-    rework_rate = sum(1 for item in multi_runs if item[3]["verdict"] == "rework") / repetitions
-    convergence_rate = sum(1 for item in multi_runs if item[5]["verdict"] == "pass") / repetitions
-    baseline_reproducible = len({_signature(item[4]) for item in baseline_runs}) == 1
-    multi_reproducible = len({_signature(item[5]) for item in multi_runs}) == 1
+    scenario_results = []
+    baseline_times = []
+    multi_times = []
+    baseline_scores = []
+    multi_scores = []
+    baseline_unsafe = 0
+    multi_unsafe = 0
+    detected_unsafe = 0
+    feasible_without_final_delivery = 0
+    infeasible_without_escalation = 0
+    feasible_count = 0
+    infeasible_count = 0
+    rework_counts = 0
+    converged_counts = 0
+    signatures = set()
+    total_demand_rows = 0
+
+    for context in contexts:
+        demand = build_demand_plan(context["request"], context["materials"], context["destinations"])
+        total_demand_rows += len(demand["items"])
+        baseline_latencies = []
+        multi_latencies = []
+        initial_blockers = 0
+        final_coverage = 0.0
+        final_score = 0
+        baseline_score = 0
+        initial_verdict = "rework"
+        final_verdict = "rework"
+        rework_rounds = 0
+
+        for _ in range(repetitions):
+            baseline_started = time.perf_counter()
+            baseline_plans = generate_plans(
+                demand, context["inventory"], context["warehouses"], context["routes"],
+                context["vehicles"], 1, context["closed_routes"],
+            )
+            baseline_truth = verify_plans(
+                [baseline_plans[0]], demand, context["inventory"], context["routes"],
+                context["vehicles"], context["closed_routes"],
+            )
+            baseline_latencies.append((time.perf_counter() - baseline_started) * 1000)
+
+            multi_started = time.perf_counter()
+            final_plans, verification, rounds, directives = _solve_adaptively(
+                demand, context["inventory"], context["warehouses"], context["routes"],
+                context["vehicles"], context["closed_routes"],
+            )
+            multi_latencies.append((time.perf_counter() - multi_started) * 1000)
+            initial_verdict = rounds[0]["verification"]["verdict"]
+            final_verdict = verification["verdict"]
+            initial_blockers = len(rounds[0]["verification"]["blocker_summary"])
+            final_score = verification["score"]
+            baseline_score = baseline_truth["score"]
+            rework_rounds = max(0, len(rounds) - 1)
+            final_coverage = max(
+                (report["metrics"]["coverage"] for report in verification["reports"]), default=0.0
+            )
+            baseline_unsafe_this = baseline_truth["verdict"] != "pass" and context["feasible"]
+            if baseline_unsafe_this:
+                baseline_unsafe += 1
+            feasible_count += 1 if context["feasible"] else 0
+            infeasible_count += 0 if context["feasible"] else 1
+            if context["feasible"]:
+                if final_verdict != "pass":
+                    feasible_without_final_delivery += 1
+                else:
+                    converged_counts += 1
+            else:
+                if final_verdict == "pass":
+                    multi_unsafe += 1
+                elif initial_verdict == "rework":
+                    infeasible_without_escalation += 1
+                    converged_counts += 1
+            if initial_verdict == "rework":
+                rework_counts += 1
+                if baseline_unsafe_this:
+                    detected_unsafe += 1
+            signatures.add(json.dumps(_signature(verification), ensure_ascii=False, sort_keys=True))
+
+        baseline_times.extend(baseline_latencies)
+        multi_times.extend(multi_latencies)
+        baseline_scores.append(baseline_score)
+        multi_scores.append(final_score)
+        scenario_results.append({
+            "scenario_id": context["id"],
+            "name": context["name"],
+            "feasible": context["feasible"],
+            "baseline_verdict": "不安全但被接受" if baseline_score < 80 else "安全",
+            "initial_verdict": initial_verdict,
+            "final_verdict": final_verdict,
+            "baseline_score": baseline_score,
+            "final_score": final_score,
+            "coverage": round(final_coverage, 4),
+            "initial_blockers": initial_blockers,
+            "rework_rounds": rework_rounds,
+            "baseline_latency_ms": round(mean(baseline_latencies), 2),
+            "multi_latency_ms": round(mean(multi_latencies), 2),
+        })
+
+    total_samples = len(contexts) * repetitions
     baseline_avg = round(mean(baseline_times), 2)
     multi_avg = round(mean(multi_times), 2)
     baseline_p95 = _p95(baseline_times)
     multi_p95 = _p95(multi_times)
     overhead_ms = round(multi_avg - baseline_avg, 2)
-    overhead_pct = round((overhead_ms / baseline_avg * 100) if baseline_avg else 0, 2)
+    baseline_unsafe_rate = baseline_unsafe / total_samples
+    multi_unsafe_rate = multi_unsafe / total_samples
+    interception_rate = detected_unsafe / max(baseline_unsafe, 1)
+    coverage = mean(item["coverage"] for item in scenario_results)
+    baseline_avg_score = round(mean(baseline_scores), 2)
+    multi_avg_score = round(mean(multi_scores), 2)
+    reproducible = len(signatures) <= len(contexts)
 
     quantitative = {
         "repetitions": repetitions,
+        "scenarios": len(contexts),
+        "samples": total_samples,
         "baseline": {
-            "label": "单 Agent / 无独立核验",
-            "unsafe_acceptance_rate": baseline_unsafe_acceptance,
+            "label": "单 Agent / 不执行独立核验",
+            "unsafe_acceptance_rate": round(baseline_unsafe_rate, 4),
+            "unsafe_acceptance_ci95": _wilson_interval(baseline_unsafe, total_samples),
             "risk_detection_rate": 0.0,
-            "final_safe": False if baseline_unsafe else True,
-            "verification_score": baseline_score,
-            "coverage": round(baseline_coverage, 4),
+            "average_verification_score": baseline_avg_score,
             "average_latency_ms": baseline_avg,
             "p95_latency_ms": baseline_p95,
-            "reproducible": baseline_reproducible,
         },
         "multi_agent": {
             "label": "多 Agent / 自适应多轮核验",
-            "unsafe_acceptance_rate": multi_unsafe_acceptance,
-            "risk_detection_rate": risk_detection_rate,
-            "final_safe": verification_v2["verdict"] == "pass",
-            "verification_score": verification_v2["score"],
-            "coverage": round(coverage, 4),
+            "unsafe_acceptance_rate": round(multi_unsafe_rate, 4),
+            "unsafe_acceptance_ci95": _wilson_interval(multi_unsafe, total_samples),
+            "risk_detection_rate": round(interception_rate, 4),
+            "average_verification_score": multi_avg_score,
+            "average_coverage": round(coverage, 4),
             "average_latency_ms": multi_avg,
             "p95_latency_ms": multi_p95,
-            "reproducible": multi_reproducible,
-            "rework_rate": round(rework_rate, 4),
-            "convergence_rate": round(convergence_rate, 4),
+            "rework_rate": round(rework_counts / total_samples, 4),
+            "safe_outcome_rate": round(converged_counts / total_samples, 4),
+            "false_rejection_rate": round(feasible_without_final_delivery / max(feasible_count, 1), 4),
+            "infeasible_escalation_rate": round(infeasible_without_escalation / max(infeasible_count, 1), 4),
         },
         "tradeoff": {
             "latency_overhead_ms": overhead_ms,
-            "latency_overhead_pct": overhead_pct,
-            "unsafe_acceptance_reduction_pp": round((baseline_unsafe_acceptance - multi_unsafe_acceptance) * 100, 1),
-            "risk_detection_gain_pp": round(risk_detection_rate * 100, 1),
-            "score_gain": verification_v2["score"] - baseline_score,
+            "latency_overhead_pct": round(overhead_ms / baseline_avg * 100, 2) if baseline_avg else 0,
+            "unsafe_acceptance_reduction_pp": round((baseline_unsafe_rate - multi_unsafe_rate) * 100, 1),
+            "risk_detection_gain_pp": round(interception_rate * 100, 1),
+            "score_gain": round(multi_avg_score - baseline_avg_score, 2),
         },
     }
     quantitative_rows = [
-        {"metric": "不安全方案验收率", "baseline": f"{baseline_unsafe_acceptance * 100:.1f}%", "multi": f"{multi_unsafe_acceptance * 100:.1f}%", "change": f"-{quantitative['tradeoff']['unsafe_acceptance_reduction_pp']:.1f} 个百分点"},
-        {"metric": "硬风险检出率", "baseline": "0.0%", "multi": f"{risk_detection_rate * 100:.1f}%", "change": f"+{quantitative['tradeoff']['risk_detection_gain_pp']:.1f} 个百分点"},
-        {"metric": "最终核验评分", "baseline": str(baseline_score), "multi": str(verification_v2["score"]), "change": f"{verification_v2['score'] - baseline_score:+d}"},
-        {"metric": "需求覆盖率", "baseline": f"{baseline_coverage * 100:.1f}%", "multi": f"{coverage * 100:.1f}%", "change": f"{(coverage - baseline_coverage) * 100:+.1f} 个百分点"},
+        {"metric": "不安全方案验收率", "baseline": f"{baseline_unsafe_rate * 100:.1f}%", "multi": f"{multi_unsafe_rate * 100:.1f}%", "change": f"-{(baseline_unsafe_rate - multi_unsafe_rate) * 100:.1f} 个百分点"},
+        {"metric": "硬风险检出率", "baseline": "0.0%", "multi": f"{interception_rate * 100:.1f}%", "change": f"+{interception_rate * 100:.1f} 个百分点"},
+        {"metric": "平均核验评分", "baseline": str(baseline_avg_score), "multi": str(multi_avg_score), "change": f"{multi_avg_score - baseline_avg_score:+.2f}"},
+        {"metric": "需求覆盖率", "baseline": "仅首个候选", "multi": f"{coverage * 100:.1f}%", "change": "跨场景平均"},
+        {"metric": "可行情景误拒率", "baseline": "0.0%", "multi": f"{quantitative['multi_agent']['false_rejection_rate'] * 100:.1f}%", "change": "越低越好"},
+        {"metric": "不可行情景升级率", "baseline": "0.0%", "multi": f"{quantitative['multi_agent']['infeasible_escalation_rate'] * 100:.1f}%", "change": "转人工研判"},
         {"metric": "平均纯计算耗时", "baseline": f"{baseline_avg:.2f} ms", "multi": f"{multi_avg:.2f} ms", "change": f"+{overhead_ms:.2f} ms"},
         {"metric": "P95 纯计算耗时", "baseline": f"{baseline_p95:.2f} ms", "multi": f"{multi_p95:.2f} ms", "change": f"{multi_p95 - baseline_p95:+.2f} ms"},
-        {"metric": "重复运行一致", "baseline": "是" if baseline_reproducible else "否", "multi": "是" if multi_reproducible else "否", "change": "固定快照可复现"},
+        {"metric": "重复运行一致", "baseline": "是" if reproducible else "否", "multi": "是" if reproducible else "否", "change": "固定快照可复现"},
     ]
 
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "scenario": scenario["name"],
+        "scenario": "多场景基准套件",
         "metrics": {
-            "hard_blockers_detected": len(verification_v1["blocker_summary"]),
-            "unsafe_plans_blocked": f"{sum(1 for item in verification_v1['reports'] if not item['approved'])}/{len(plans_v1)}",
-            "initial_score": verification_v1["score"],
-            "final_score": verification_v2["score"],
-            "score_gain": verification_v2["score"] - verification_v1["score"],
+            "hard_blockers_detected": sum(item["initial_blockers"] for item in scenario_results),
+            "unsafe_plans_blocked": f"{baseline_unsafe}/{total_samples}",
+            "initial_score": round(mean([item["baseline_score"] for item in scenario_results]), 2),
+            "final_score": round(mean([item["final_score"] for item in scenario_results]), 2),
+            "score_gain": round(multi_avg_score - baseline_avg_score, 2),
             "final_coverage": round(coverage, 4),
-            "approved_plans": len(verification_v2["approved_plan_ids"]),
+            "approved_plans": sum(1 for item in scenario_results if item["final_verdict"] == "pass"),
             "compute_ms": multi_avg,
             "repeat_compute_ms": multi_p95,
-            "reproducible": baseline_reproducible and multi_reproducible,
-            "demand_rows": len(demand["items"]),
-            "inventory_snapshot": snapshot["label"] if snapshot else "",
+            "reproducible": reproducible,
+            "demand_rows": total_demand_rows,
+            "inventory_snapshot": "同一冻结快照 + 受控变体",
             "repetitions": repetitions,
-            "rework_rate": round(rework_rate, 4),
-            "convergence_rate": round(convergence_rate, 4),
+            "scenarios": len(contexts),
+            "samples": total_samples,
+            "rework_rate": quantitative["multi_agent"]["rework_rate"],
+            "convergence_rate": quantitative["multi_agent"]["safe_outcome_rate"],
         },
         "quantitative": quantitative,
         "quantitative_rows": quantitative_rows,
+        "scenario_results": scenario_results,
         "comparison": [
-            {"label": "单 Agent / 无独立核验", "score": baseline_score, "unsafe_plans": len(plans_v1), "passed": False},
-            {"label": "第一轮生成 / 核验退回", "score": verification_v1["score"], "unsafe_plans": len(plans_v1), "passed": False},
-            {"label": "多 Agent / 自适应多轮闭环", "score": verification_v2["score"], "unsafe_plans": 0, "passed": verification_v2["verdict"] == "pass"},
+            {"label": "单 Agent / 无独立核验", "score": round(baseline_avg_score), "unsafe_plans": baseline_unsafe, "passed": False},
+            {"label": "多 Agent / 自适应多轮核验", "score": round(multi_avg_score), "unsafe_plans": multi_unsafe, "passed": multi_unsafe == 0},
         ],
         "notes": [
-            f"基线 vs 多 Agent 各重复运行 {repetitions} 次，使用同一库存快照和同一事件约束。",
-            "耗时只统计本地确定性计算，不包含公网 AgentArts 网络等待时间。",
-            "硬规则由确定性核验器判定；多 Agent 闭环通过独立核验和重算降低不安全方案验收率。",
+            f"基准覆盖 {len(contexts)} 个差异化场景，每个场景重复 {repetitions} 次，共 {total_samples} 个样本。",
+            "场景包括道路中断、正常条件、库存严重缺口和无可用车辆；不可行场景的正确行为是转人工研判而不是伪造方案。",
+            "耗时只统计本地确定性计算，不包含公网 AgentArts 等待；真实云端端到端指标单独展示在 runtime_evidence。",
+            "所有场景使用同一库存快照或明确标注的受控变体，误差分析仍只代表演练条件。",
         ],
     }
-
 
 def _wilson_interval(successes: int, total: int, z: float = 1.96) -> dict:
     if total <= 0:

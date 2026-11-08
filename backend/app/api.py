@@ -22,6 +22,7 @@ from .geocoder import GeocoderError, geocode_address
 from .knowledge import catalog as knowledge_catalog
 from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, chunk_text, extract_text
 from .llm import LLMService
+from .local_agents import invoke_local_registered_agent
 from .models import (
     AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
@@ -249,13 +250,9 @@ async def run_workflow_definition(workflow_id: str, payload: WorkflowRunRequest,
             "node_id": node["id"],
             "node_outputs": workflow_state.get("node_outputs", {}),
         }
-        if not bridge.enabled:
-            return {
-                "agent_id": agent_id,
-                "mode": "local-fallback",
-                "reason": "AgentArts 未配置，试运行仅验证 DAG 调度与节点依赖。",
-                "node_id": node["id"],
-            }
+        if not bridge.enabled or agent_id not in bridge.endpoints:
+            agent = next((item for item in registry_service.list_agents() if item["id"] == agent_id), {"id": agent_id})
+            return invoke_local_registered_agent(agent, task)
         try:
             response = await bridge.invoke(agent_id, task, session_id=f"workflow-test-{workflow_id}")
             return {"agent_id": agent_id, **response}

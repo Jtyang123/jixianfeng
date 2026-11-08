@@ -143,3 +143,67 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
     assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])
+
+
+def test_core_workflow_can_replace_verifier_with_two_agent_vote(tmp_path: Path):
+    db = Database(tmp_path / "core-vote.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("rainstorm-ii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": scenario["closed_routes"],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"], "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    registry = AgentRegistryService(db)
+    for agent_id in ("verifier_a", "verifier_b"):
+        registry.register_agent({
+            "id": agent_id,
+            "name": f"独立核验 {agent_id[-1].upper()}",
+            "role": "verifier-review",
+            "description": "本地与云端均可执行的双核验节点",
+            "capabilities": ["inventory-verify", "route-verify", "vote"],
+            "version": "v1",
+            "endpoint": "",
+            "model": "local-rule-agent",
+            "prompt_version": "v1",
+        })
+    WorkflowRepository(db).save_workflow("core-vote", {
+        "name": "双核验 Agent 投票主干",
+        "stage": "core",
+        "enabled": True,
+        "definition": {
+            "nodes": [
+                {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": []},
+                {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": ["A01"]},
+                {"id": "VA", "type": "agent", "agent_id": "verifier_a", "depends_on": ["A02"]},
+                {"id": "VB", "type": "agent", "agent_id": "verifier_b", "depends_on": ["A02"]},
+                {"id": "VOTE", "type": "agent", "agent_id": "verification_vote", "depends_on": ["VA", "VB"]},
+            ]
+        },
+    })
+    run_id = "RUN-CORE-VOTE"
+    db.create_run(run_id, scenario["id"], request)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "awaiting_approval"
+    assert run["result"]["core_workflow"]["id"] == "core-vote"
+    assert len(run["result"]["core_workflow_runs"]) == 2
+    assert set(run["result"]["core_workflow_runs"][0]["completed"]) == {"A01", "A02", "VA", "VB", "VOTE"}
+    assert run["result"]["rounds"][0]["verification"]["vote_summary"]["total"] == 2
+    assert run["result"]["rounds"][0]["verification"]["verdict"] == "rework"
+    assert run["result"]["final_verification"]["vote_summary"] == {"pass": 2, "total": 2, "rule": "majority"}
+    assert run["result"]["final_verification"]["verdict"] == "pass"

@@ -13,9 +13,10 @@ from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
 from .knowledge_base import KnowledgeRepository
+from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
-from .scheduler import AsyncPriorityExecutor, build_dynamic_schedule
+from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
 from .workflow_engine import WorkflowEngine, WorkflowRepository
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
@@ -51,6 +52,57 @@ def _parse_json_text(text: str) -> dict | None:
 def new_run_id() -> str:
     return f"RUN-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:4].upper()}"
 
+
+def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict], llm_status: dict) -> list[dict]:
+    demand_trace = traces.get("demand_agent") or {}
+    matching_trace = traces.get("matching_agent") or {}
+    verifier_trace = traces.get("verifier_agent") or {}
+    delivery_trace = traces.get("delivery_agent") or {}
+    demand_parsed = demand_trace.get("parsed") if isinstance(demand_trace, dict) else None
+    verifier_parsed = verifier_trace.get("parsed") if isinstance(verifier_trace, dict) else None
+    delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
+    return [
+        {
+            "id": "D1", "decision": "需求理解与假设补全",
+            "ai_role": "补充摘要、假设和证据引用",
+            "applied": bool(demand_parsed),
+            "source": demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic",
+            "boundary": "物资数量、单位和安置点分配仍由确定性工具计算",
+            "fallback": "本地需求拆分与主数据校验",
+        },
+        {
+            "id": "D2", "decision": "已核验方案推荐",
+            "ai_role": "在通过硬规则的方案中选择推荐方案",
+            "applied": bool(agent_decision.get("applied")),
+            "source": agent_decision.get("source", "deterministic-fallback"),
+            "boundary": "只能从已通过独立核验的方案集合中选择",
+            "fallback": "按速度、成本和风险权重排序",
+        },
+        {
+            "id": "D3", "decision": "核验解释与风险归纳",
+            "ai_role": "解释核验问题并补充风险说明",
+            "applied": bool(verifier_parsed),
+            "source": verifier_trace.get("mode", "deterministic-rules") if isinstance(verifier_trace, dict) else "deterministic-rules",
+            "boundary": "硬规则结论不可被模型覆盖",
+            "fallback": "确定性规则引擎给出最终 verdict",
+        },
+        {
+            "id": "D4", "decision": "扩展 Agent 风险合成",
+            "ai_role": "补充领域风险和现场提示",
+            "applied": bool(extension_reviews),
+            "source": "registered-extension-agents" if extension_reviews else "none",
+            "boundary": "扩展意见只追加风险，不能删除或修改主方案数字",
+            "fallback": "跳过扩展审查，保留确定性风险清单",
+        },
+        {
+            "id": "D5", "decision": "交付摘要组织",
+            "ai_role": "将已核验事实组织成可读摘要",
+            "applied": bool(delivery_parsed),
+            "source": delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template",
+            "boundary": "仅使用已核验数字和事实",
+            "fallback": "本地交付模板与证据链",
+        },
+    ]
 
 def emit(
     db: Database,
@@ -96,6 +148,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     workflow_repo = WorkflowRepository(db)
     all_extension_workflows = workflow_repo.list_workflows(enabled_only=True)
     extension_workflows = [item for item in all_extension_workflows if item["stage"] == "post_verification"]
+    core_workflow = next((item for item in all_extension_workflows if item["stage"] == "core"), CORE_WORKFLOW)
     extension_reviews = []
     extension_workflow_runs = []
     agent_executor: AsyncPriorityExecutor | None = None
@@ -141,6 +194,29 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行。", fallback)
             return fallback
 
+    async def invoke_extension_agent(agent_id: str, payload: dict) -> dict:
+        agents = {item["id"]: item for item in registry.list_agents()}
+        endpoint_map = getattr(agentarts, "endpoints", None)
+        if endpoint_map is not None and agent_id not in endpoint_map:
+            local = invoke_local_registered_agent(agents.get(agent_id, {"id": agent_id}), payload)
+            agentarts_trace[agent_id] = local
+            emit(
+                db, run_id, "agent.local_fallback", agent_id,
+                "已执行离线注册 Agent", "该 Agent 未配置独立端点，已按角色与能力执行确定性审查。",
+                {"mode": "local-rule-agent"},
+            )
+            return local
+        response = await call_agentarts(agent_id, payload)
+        if response.get("mode") == "agentarts":
+            return response
+        local = invoke_local_registered_agent(agents.get(agent_id, {"id": agent_id}), payload)
+        agentarts_trace[agent_id] = local
+        emit(
+            db, run_id, "agent.local_fallback", agent_id,
+            "已执行离线注册 Agent", "未使用云端端点，已按 Agent 角色与能力执行确定性审查。",
+            {"mode": "local-rule-agent"},
+        )
+        return local
     async def run_stage_workflows(stage_name: str, stage_context: dict) -> None:
         selected = [item for item in all_extension_workflows if item["stage"] == stage_name]
         if not selected:
@@ -150,7 +226,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         async def invoke_stage_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
             emit(db, run_id, "workflow.node.started", agent_id, f"工作流节点 {node['id']} 开始", f"调用 Agent：{agent_id}", {"stage": stage_name})
             payload = {**stage_context, "node_id": node["id"], "node_outputs": workflow_state.get("node_outputs", {})}
-            return await call_agentarts(agent_id, payload)
+            return await invoke_extension_agent(agent_id, payload)
 
         for workflow_record in selected:
             try:
@@ -239,154 +315,194 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         await pace(0.25)
 
-        emit(db, run_id, "agent.started", "demand_agent", "需求研判智能体开始工作", "按安置人口拆分物资需求并校验主数据。")
-        await pace(0.45)
-        demand_plan = build_demand_plan(request, materials, destinations)
-        demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
-        ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
-        demand_remote = await call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence})
-        remote_demand = demand_remote.get("parsed") if isinstance(demand_remote, dict) else None
-        if remote_demand:
-            demand_plan["agentarts_interpretation"] = remote_demand
-            if remote_demand.get("summary"):
-                demand_plan["summary"] = remote_demand["summary"]
-            if remote_demand.get("assumptions"):
-                demand_plan["assumptions"] = list(dict.fromkeys(demand_plan["assumptions"] + [str(item) for item in remote_demand["assumptions"]]))
-            if remote_demand.get("evidence_refs"):
-                demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [str(item) for item in remote_demand["evidence_refs"]]))
-        emit(db, run_id, "tool.called", "demand_agent", "调用需求标准化工具", f"生成 {len(demand_plan['items'])} 条安置点需求。")
-        emit(db, run_id, "agent.completed", "demand_agent", "需求标准化完成", demand_plan["summary"], {
-            "items": len(demand_plan["items"]),
-            "confidence": demand_plan["confidence"],
-        })
-        await run_stage_workflows("after_demand", {"scenario": scenario, "demand": demand_plan})
-        await pace(0.3)
-
-        emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体开始计算", "基于物资库、库存、车辆与路网生成三种目标方案。")
-        await pace(0.45)
-        round1_plans = generate_plans(
-            demand_plan, inventory, warehouses, routes, vehicles,
-            attempt=1, closed_routes=closed_routes,
-        )
-        emit(db, run_id, "tool.called", "matching_agent", "调用多目标方案生成器", f"已生成 {len(round1_plans)} 套候选方案。")
-        ai_reasoning["matching_agent"] = await llm_service.reflect(
-            "matching_agent",
-            {
-                "summary": "已生成三套多目标候选方案。",
-                "plans": [{"name": plan["name"], "metrics": plan["metrics"]} for plan in round1_plans],
-                "scheduler": schedule,
-            },
-            evidence,
-        )
-        emit(db, run_id, "plan.generated", "matching_agent", "第一轮候选方案生成", "极速直送、成本集约、韧性均衡方案已提交核验。", {
-            "plans": [
-                {"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]}
-                for plan in round1_plans
-            ]
-        })
-        emit(db, run_id, "agent.completed", "matching_agent", "第一轮匹配完成", f"生成 {len(round1_plans)} 套候选方案。")
-        await pace(0.32)
-
-        emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体开始审查", "核验道路、库存、运力与时效约束。")
-        await pace(0.5)
-        round1_verification = verify_plans(
-            round1_plans, demand_plan, inventory, routes, vehicles, closed_routes
-        )
-        emit(db, run_id, "agent.completed", "verifier_agent", "第一轮核验完成", f"核验结论：{round1_verification['verdict']}。")
-        emit(db, run_id, "verification.failed", "verifier_agent", "第一轮方案未通过", f"最高评分 {round1_verification['score']}，发现 {len(round1_verification['blocker_summary'])} 类阻断项。", {
-            "score": round1_verification["score"],
-            "verdict": round1_verification["verdict"],
-            "blockers": round1_verification["blocker_summary"],
-            "required_fixes": round1_verification["required_fixes"][:5],
-        })
-        await pace(0.35)
-
-        rounds = [{
-            "attempt": 1,
-            "plans": round1_plans,
-            "verification": round1_verification,
-            "mode": "initial",
-        }]
-        final_plans = round1_plans
-        final_verification = round1_verification
-
+        pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False}
+        core_runs: list[dict] = []
+        rounds: list[dict] = []
         rework_directives: list[dict] = []
         max_solution_attempts = 3
-        if final_verification["verdict"] == "pass":
-            emit(db, run_id, "agent.completed", "verifier_agent", "首轮核验完成", "首轮方案通过核验。")
-            emit(db, run_id, "verification.passed", "verifier_agent", "方案首轮通过核验", f"最高评分 {round1_verification['score']}。", {
-                "score": round1_verification["score"],
-                "approved_plan_ids": round1_verification["approved_plan_ids"],
-            })
-            await pace(0.25)
 
-        while final_verification["verdict"] == "rework" and len(rounds) < max_solution_attempts:
-            next_attempt = len(rounds) + 1
-            directive = build_rework_directive(final_verification, next_attempt)
-            if not directive["can_retry"]:
-                emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", directive["reason"], {
+        async def invoke_core_agent(agent_id: str, workflow_state: dict, node: dict) -> dict:
+            attempt = int(workflow_state.get("attempt", 1))
+            directive = workflow_state.get("rework_directive")
+            if agent_id == "demand_agent":
+                if pipeline_state["demand"] is None:
+                    emit(db, run_id, "agent.started", "demand_agent", "需求研判智能体开始工作", "按安置人口拆分物资需求并校验主数据。")
+                    await pace(0.45)
+                    demand_plan = build_demand_plan(request, materials, destinations)
+                    demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
+                    ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
+                    demand_remote = await call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence})
+                    remote_demand = demand_remote.get("parsed") if isinstance(demand_remote, dict) else None
+                    if remote_demand:
+                        demand_plan["agentarts_interpretation"] = remote_demand
+                        if remote_demand.get("summary"):
+                            demand_plan["summary"] = remote_demand["summary"]
+                        if remote_demand.get("assumptions"):
+                            demand_plan["assumptions"] = list(dict.fromkeys(demand_plan["assumptions"] + [str(item) for item in remote_demand["assumptions"]]))
+                        if remote_demand.get("evidence_refs"):
+                            demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [str(item) for item in remote_demand["evidence_refs"]]))
+                    emit(db, run_id, "tool.called", "demand_agent", "调用需求标准化工具", f"生成 {len(demand_plan['items'])} 条安置点需求。")
+                    emit(db, run_id, "agent.completed", "demand_agent", "需求标准化完成", demand_plan["summary"], {
+                        "items": len(demand_plan["items"]),
+                        "confidence": demand_plan["confidence"],
+                    })
+                    pipeline_state["demand"] = demand_plan
+                if not pipeline_state["demand_workflows_done"]:
+                    await run_stage_workflows("after_demand", {"scenario": scenario, "demand": pipeline_state["demand"]})
+                    pipeline_state["demand_workflows_done"] = True
+                return {"agent_id": "demand_agent", "demand": pipeline_state["demand"], "mode": "core-phase"}
+
+            if agent_id == "matching_agent":
+                emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体开始计算", f"第 {attempt} 轮基于物资库、库存、车辆与路网生成候选方案。")
+                await pace(0.45)
+                plans = generate_plans(
+                    pipeline_state["demand"], inventory, warehouses, routes, vehicles,
+                    attempt=attempt, closed_routes=closed_routes, rework_directive=directive,
+                )
+                pipeline_state["plans"] = plans
+                emit(db, run_id, "tool.called", "matching_agent", "调用多目标方案生成器", f"已生成 {len(plans)} 套候选方案。")
+                ai_reasoning["matching_agent"] = await llm_service.reflect(
+                    "matching_agent",
+                    {
+                        "summary": f"第 {attempt} 轮已生成多目标候选方案。",
+                        "plans": [{"name": plan["name"], "metrics": plan["metrics"]} for plan in plans],
+                        "rework_directive": directive,
+                        "scheduler": schedule,
+                    },
+                    evidence,
+                )
+                emit(db, run_id, "plan.generated", "matching_agent", f"第 {attempt} 轮候选方案生成", "方案已提交独立核验。", {
+                    "attempt": attempt,
+                    "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in plans],
+                })
+                emit(db, run_id, "agent.completed", "matching_agent", f"第 {attempt} 轮匹配完成", f"生成 {len(plans)} 套候选方案。")
+                await pace(0.32)
+                return {"agent_id": "matching_agent", "plans": plans, "attempt": attempt, "mode": "core-phase"}
+
+            if agent_id == "verifier_agent":
+                if not pipeline_state["plans"]:
+                    raise ValueError("核验节点执行前没有候选方案")
+                emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体开始审查", f"第 {attempt} 轮核验道路、库存、运力与时效约束。")
+                await pace(0.5)
+                verification = verify_plans(
+                    pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes
+                )
+                pipeline_state["verification"] = verification
+                emit(db, run_id, "agent.completed", "verifier_agent", f"第 {attempt} 轮核验完成", f"核验结论：{verification['verdict']}。")
+                if verification["verdict"] == "pass":
+                    emit(db, run_id, "verification.passed", "verifier_agent", f"第 {attempt} 轮方案通过核验", f"最高评分 {verification['score']}。", {
+                        "attempt": attempt,
+                        "score": verification["score"],
+                        "approved_plan_ids": verification["approved_plan_ids"],
+                    })
+                else:
+                    emit(db, run_id, "verification.failed", "verifier_agent", f"第 {attempt} 轮方案未通过", f"最高评分 {verification['score']}，发现 {len(verification['blocker_summary'])} 类阻断项。", {
+                        "attempt": attempt,
+                        "score": verification["score"],
+                        "blockers": verification["blocker_summary"],
+                        "required_fixes": verification["required_fixes"][:5],
+                    })
+                await pace(0.35)
+                return {"agent_id": "verifier_agent", "verification": verification, "attempt": attempt, "mode": "core-phase"}
+
+            if agent_id == "verification_vote":
+                base = pipeline_state.get("verification")
+                if not base:
+                    base = verify_plans(pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                votes = []
+                for output in workflow_state.get("node_outputs", {}).values():
+                    if not isinstance(output, dict):
+                        continue
+                    parsed = output.get("parsed") if isinstance(output.get("parsed"), dict) else {}
+                    verdict = output.get("verdict") or parsed.get("verdict")
+                    if verdict:
+                        votes.append({"agent_id": output.get("agent_id", ""), "verdict": str(verdict), "score": parsed.get("score")})
+                pass_votes = sum(1 for item in votes if item["verdict"] == "pass")
+                if votes and pass_votes <= len(votes) / 2:
+                    base["verdict"] = "rework"
+                    base["approved_plan_ids"] = []
+                    base["blocker_summary"] = sorted(set(base.get("blocker_summary", [])) | {"VOTE-REJECTED"})
+                    base["required_fixes"] = list(base.get("required_fixes", [])) + ["核验 Agent 投票未通过"]
+                base["votes"] = votes
+                base["vote_summary"] = {"pass": pass_votes, "total": len(votes), "rule": "majority"}
+                pipeline_state["verification"] = base
+                emit(db, run_id, "verification.vote", "verification_vote", "多核验 Agent 投票完成", f"通过 {pass_votes}/{len(votes)}，最终结论 {base['verdict']}。", base["vote_summary"])
+                return {"agent_id": "verification_vote", "verification": base, "mode": "internal-vote"}
+
+            agents = {item["id"]: item for item in registry.list_agents()}
+            candidate_verification = pipeline_state.get("verification")
+            if not candidate_verification and pipeline_state.get("plans"):
+                candidate_verification = verify_plans(
+                    pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes
+                )
+            response = await invoke_extension_agent(agent_id, {
+                "scenario": scenario,
+                "demand": pipeline_state.get("demand"),
+                "plans": pipeline_state.get("plans") or [],
+                "verification": candidate_verification or {},
+                "node_outputs": workflow_state.get("node_outputs", {}),
+            })
+            return {**response, "agent_id": agent_id}
+
+        for attempt in range(1, max_solution_attempts + 1):
+            pipeline_state["plans"] = None
+            pipeline_state["verification"] = None
+            directive = rework_directives[-1] if rework_directives else None
+            engine = WorkflowEngine(
+                db,
+                invoke_agent=invoke_core_agent,
+                load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
+                event_sink=lambda node_id, message: emit(
+                    db, run_id, "workflow.core_node", node_id, message, "",
+                    {"workflow_id": core_workflow["id"], "stage": "core", "attempt": attempt},
+                ),
+                agent_metrics=runtime_metrics,
+                max_workers=4,
+            )
+            core_result = await engine.execute(
+                core_workflow["id"], core_workflow["definition"],
+                {"scenario": scenario, "attempt": attempt, "rework_directive": directive},
+            )
+            core_runs.append({
+                "attempt": attempt, "run_id": core_result["run_id"], "status": core_result["status"],
+                "completed": core_result["completed"], "metrics": core_result["metrics"],
+            })
+            plans = pipeline_state.get("plans")
+            verification = pipeline_state.get("verification")
+            if plans is None:
+                raise ValueError("主干工作流没有生成候选方案")
+            if verification is None:
+                verification = verify_plans(plans, pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                emit(db, run_id, "verification.safety_fallback", "orchestrator", "主干缺少核验输出", "已自动执行内置安全核验，禁止绕过硬规则。")
+                pipeline_state["verification"] = verification
+            rounds.append({
+                "attempt": attempt, "plans": plans, "verification": verification,
+                "mode": "core-dag" if attempt == 1 else "core-dag-adaptive",
+                "rework_directive": directive, "workflow_run_id": core_result["run_id"],
+            })
+            if verification["verdict"] == "pass":
+                break
+            next_attempt = attempt + 1
+            next_directive = build_rework_directive(verification, next_attempt)
+            if not next_directive["can_retry"] or next_attempt > max_solution_attempts:
+                emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", next_directive["reason"], {
                     "attempt": next_attempt,
-                    "issue_codes": directive["issue_codes"],
-                    "categories": directive["categories"],
+                    "issue_codes": next_directive["issue_codes"],
+                    "categories": next_directive["categories"],
                 })
                 break
-            rework_directives.append(directive)
-            emit(db, run_id, "rework.requested", "orchestrator", f"触发第 {next_attempt} 轮自适应重算", directive["reason"], {
+            rework_directives.append(next_directive)
+            emit(db, run_id, "rework.requested", "orchestrator", f"触发第 {next_attempt} 轮自适应重算", next_directive["reason"], {
                 "attempt": next_attempt,
-                "constraints": final_verification["required_fixes"][:5],
-                "directive": directive,
+                "constraints": verification["required_fixes"][:5],
+                "directive": next_directive,
             })
-            await pace(0.35)
-            emit(
-                db, run_id, "agent.started", "matching_agent", "资源匹配智能体应用修复策略",
-                "；".join(directive["tool_overrides"]) or "按结构化核验意见重新平衡约束。",
-                {"directive": directive},
-            )
-            await pace(0.45)
-            revised_plans = generate_plans(
-                demand_plan, inventory, warehouses, routes, vehicles,
-                attempt=next_attempt, closed_routes=closed_routes,
-                rework_directive=directive,
-            )
-            emit(db, run_id, "plan.revised", "matching_agent", f"第 {next_attempt} 版方案生成", "已按问题类别调整路线、库存分配、运力选择或时效惩罚。", {
-                "attempt": next_attempt,
-                "directive": directive,
-                "plans": [
-                    {"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]}
-                    for plan in revised_plans
-                ],
-            })
-            emit(db, run_id, "agent.completed", "matching_agent", "修正方案生成完成", f"生成 {len(revised_plans)} 套修正方案。")
-            await pace(0.3)
 
-            emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体复审", "对修正方案重新执行全量规则校验。")
-            await pace(0.45)
-            revised_verification = verify_plans(
-                revised_plans, demand_plan, inventory, routes, vehicles, closed_routes
-            )
-            rounds.append({
-                "attempt": next_attempt,
-                "plans": revised_plans,
-                "verification": revised_verification,
-                "mode": "adaptive-rework",
-                "rework_directive": directive,
-            })
-            final_plans = revised_plans
-            final_verification = revised_verification
-            emit(db, run_id, "agent.completed", "verifier_agent", f"第 {next_attempt} 轮核验完成", f"核验结论：{revised_verification['verdict']}。")
-            if revised_verification["verdict"] == "pass":
-                emit(db, run_id, "verification.passed", "verifier_agent", "修正方案通过核验", f"最高评分 {revised_verification['score']}，可进入方案交付。", {
-                    "attempt": next_attempt,
-                    "score": revised_verification["score"],
-                    "approved_plan_ids": revised_verification["approved_plan_ids"],
-                })
-            else:
-                emit(db, run_id, "verification.failed", "verifier_agent", f"第 {next_attempt} 轮复审仍未通过", "将依据新的问题代码选择下一轮修复策略，或转人工研判。", {
-                    "attempt": next_attempt,
-                    "score": revised_verification["score"],
-                    "blockers": revised_verification["blocker_summary"],
-                })
-            await pace(0.3)
+        demand_plan = pipeline_state["demand"]
+        round1_plans = rounds[0]["plans"]
+        round1_verification = rounds[0]["verification"]
+        final_plans = rounds[-1]["plans"]
+        final_verification = rounds[-1]["verification"]
         await run_stage_workflows("after_matching", {
             "scenario": scenario,
             "demand": demand_plan,
@@ -462,7 +578,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             async def run_extension(agent: dict) -> dict:
                 agent_id = agent["id"]
                 emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
-                response = await call_agentarts(agent_id, {
+                response = await invoke_extension_agent(agent_id, {
                     "scenario": scenario,
                     "demand": demand_plan,
                     "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
@@ -506,6 +622,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             reasoning = ai_reasoning.setdefault("delivery_agent", {})
             if isinstance(reasoning, dict):
                 reasoning["agentarts_interpretation"] = remote_delivery
+        ai_decision_matrix = build_ai_decision_matrix(
+            agent_decision, agentarts_trace, final_verification, extension_reviews, llm_service.status
+        )
         emit(db, run_id, "agent.completed", "delivery_agent", "交付包生成完成", delivery["summary"], {
             "status": delivery["status"],
             "recommended_plan": (delivery.get("recommended_plan") or {}).get("name"),
@@ -523,6 +642,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "weights": request.get("weights", {}),
             "snapshot": snapshot,
             "demand": demand_plan,
+            "core_workflow": core_workflow,
+            "core_workflow_runs": core_runs,
             "rounds": rounds,
             "final_plans": final_plans,
             "final_verification": final_verification,
@@ -533,6 +654,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "ai_reasoning": ai_reasoning,
             "agentarts_trace": agentarts_trace,
             "agent_decision": agent_decision,
+            "ai_decision_matrix": ai_decision_matrix,
             "extension_reviews": extension_reviews,
             "extension_workflow_runs": extension_workflow_runs,
             "agentarts_status": agentarts.status,

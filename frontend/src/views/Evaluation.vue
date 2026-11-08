@@ -59,7 +59,7 @@ onMounted(load)
 <template>
   <div class="evaluation-page">
     <section class="evaluation-hero">
-      <div><div class="eyebrow">VALIDATION & BENCHMARK</div><h2>结果验证与量化评估</h2><p>用同一库存快照和事件约束各重复运行 20 次，对比单 Agent 基线与多 Agent 核验闭环的安全性和性能。</p></div>
+      <div><div class="eyebrow">VALIDATION & BENCHMARK</div><h2>结果验证与量化评估</h2><p>覆盖道路中断、正常条件、库存缺口和无可用车辆等差异化场景，每个场景重复运行并对比单 Agent 基线与多 Agent 闭环。</p></div>
       <button class="secondary-action" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ spin: loading }" />重新评估</button>
     </section>
     <div v-if="error" class="inline-error">{{ error }}</div>
@@ -196,6 +196,15 @@ onMounted(load)
         <div class="benchmark-note"><Activity :size="16" /><span>耗时只统计本地确定性计算，不包含公网 AgentArts 网络等待；安全结论以确定性硬规则为准。</span></div>
       </section>
 
+      <section class="content-card quantitative-card">
+        <div class="workflow-head"><div><div class="eyebrow">MULTI-SCENARIO SUITE</div><h2>差异化场景结果</h2><p>不可行场景不被要求“强行出方案”，正确行为是核验拦截并转人工。</p></div><BarChart3 :size="20" /></div>
+        <div class="table-wrap quantitative-table-wrap">
+          <table class="data-table"><thead><tr><th>场景</th><th>是否可行</th><th>基线</th><th>首轮</th><th>最终</th><th>评分</th><th>覆盖</th><th>修正轮次</th></tr></thead><tbody>
+            <tr v-for="(item, index) in benchmark.scenario_results" :key="`${item.scenario_id}-${index}`"><td><strong>{{ item.name }}</strong></td><td>{{ item.feasible ? '可行' : '资源不足' }}</td><td>{{ item.baseline_verdict }}</td><td>{{ item.initial_verdict }}</td><td>{{ item.final_verdict }}</td><td>{{ item.baseline_score }} → {{ item.final_score }}</td><td>{{ (item.coverage * 100).toFixed(1) }}%</td><td>{{ item.rework_rounds }}</td></tr>
+          </tbody></table>
+        </div>
+        <div class="benchmark-note"><GitCompare :size="16" /><span>不安全验收率按全部样本统计；不可行场景通过“转人工研判”计为安全结果，不把失败交付包装成成功。</span></div>
+      </section>
       <section class="content-card feature-validation">
         <div class="workflow-head"><div><div class="eyebrow">CAPABILITY MATRIX</div><h2>赛题核心能力核验</h2></div><Activity :size="20" /></div>
         <div class="feature-check-grid">

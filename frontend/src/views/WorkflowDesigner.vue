@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { CheckCircle2, GitBranch, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
 
@@ -14,6 +14,11 @@ const error = ref('')
 const message = ref('')
 const validation = ref(null)
 const runResult = ref(null)
+const canvasRef = ref(null)
+const visualNodes = ref([])
+const visualError = ref('')
+const dragging = ref(null)
+const connecting = ref(null)
 const testContext = ref(JSON.stringify({
   scenario: { name: '工作流试运行场景' },
   demand: { items: [] },
@@ -74,6 +79,159 @@ function selectWorkflow(item) {
   error.value = ''
 }
 
+const visualEdges = computed(() => {
+  const byId = new Map(visualNodes.value.map((node) => [node.id, node]))
+  const edges = []
+  for (const node of visualNodes.value) {
+    for (const dependency of node.depends_on || []) {
+      const source = byId.get(dependency)
+      if (!source) continue
+      const x1 = source.x + 184
+      const y1 = source.y + 42
+      const x2 = node.x
+      const y2 = node.y + 42
+      const bend = Math.max(60, Math.abs(x2 - x1) * 0.45)
+      edges.push({
+        id: `${source.id}-${node.id}`,
+        path: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
+      })
+    }
+  }
+  return edges
+})
+
+const connectionPath = computed(() => {
+  if (!connecting.value) return ''
+  const source = connecting.value.source
+  const x1 = source.x + 184
+  const y1 = source.y + 42
+  const x2 = connecting.value.x
+  const y2 = connecting.value.y
+  const bend = Math.max(40, Math.abs(x2 - x1) * 0.4)
+  return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
+})
+
+function syncVisualNodes(text) {
+  try {
+    const definition = JSON.parse(text)
+    if (!Array.isArray(definition.nodes)) throw new Error('节点列表不存在')
+    visualNodes.value = definition.nodes.map((node, index) => ({
+      ...node,
+      depends_on: Array.isArray(node.depends_on) ? node.depends_on : [],
+      x: Number(node.ui?.x ?? 48 + (index % 4) * 230),
+      y: Number(node.ui?.y ?? 54 + Math.floor(index / 4) * 130),
+    }))
+    visualError.value = ''
+  } catch (exc) {
+    visualNodes.value = []
+    visualError.value = `画布无法解析 JSON：${exc.message}`
+  }
+}
+
+watch(() => form.value.json, syncVisualNodes, { immediate: true })
+
+function canvasPoint(event) {
+  const rect = canvasRef.value.getBoundingClientRect()
+  return {
+    x: Math.max(12, Math.min(940, event.clientX - rect.left + canvasRef.value.scrollLeft)),
+    y: Math.max(12, Math.min(480, event.clientY - rect.top + canvasRef.value.scrollTop)),
+  }
+}
+
+function writeNodePositions() {
+  try {
+    const definition = parseDefinition()
+    const positions = new Map(visualNodes.value.map((node) => [node.id, { x: Math.round(node.x), y: Math.round(node.y) }]))
+    definition.nodes = definition.nodes.map((node) => ({ ...node, ui: positions.get(node.id) || node.ui }))
+    form.value.json = JSON.stringify(definition, null, 2)
+  } catch (exc) {
+    visualError.value = exc.message
+  }
+}
+
+function startNodeDrag(node, event) {
+  if (!isAdmin.value || event.button !== 0) return
+  const point = canvasPoint(event)
+  dragging.value = { id: node.id, dx: point.x - node.x, dy: point.y - node.y }
+  document.addEventListener('pointermove', moveNode)
+  document.addEventListener('pointerup', stopNodeDrag, { once: true })
+}
+
+function moveNode(event) {
+  if (!dragging.value) return
+  const node = visualNodes.value.find((item) => item.id === dragging.value.id)
+  if (!node) return
+  const point = canvasPoint(event)
+  node.x = Math.max(12, Math.min(900, point.x - dragging.value.dx))
+  node.y = Math.max(12, Math.min(440, point.y - dragging.value.dy))
+}
+
+function stopNodeDrag() {
+  document.removeEventListener('pointermove', moveNode)
+  dragging.value = null
+  writeNodePositions()
+}
+
+function startConnection(node, event) {
+  if (!isAdmin.value || event.button !== 0) return
+  event.preventDefault()
+  const point = canvasPoint(event)
+  connecting.value = { source: node, x: point.x, y: point.y }
+  document.addEventListener('pointermove', moveConnection)
+  document.addEventListener('pointerup', cancelConnection, { once: true })
+}
+
+function moveConnection(event) {
+  if (!connecting.value) return
+  const point = canvasPoint(event)
+  connecting.value.x = point.x
+  connecting.value.y = point.y
+}
+
+function cancelConnection() {
+  document.removeEventListener('pointermove', moveConnection)
+  connecting.value = null
+}
+
+function finishConnection(target, event) {
+  event.preventDefault()
+  event.stopPropagation()
+  if (!connecting.value || connecting.value.source.id === target.id) {
+    cancelConnection()
+    return
+  }
+  try {
+    const definition = parseDefinition()
+    const targetNode = definition.nodes.find((node) => node.id === target.id)
+    if (targetNode) {
+      const dependencies = new Set(targetNode.depends_on || [])
+      dependencies.add(connecting.value.source.id)
+      targetNode.depends_on = [...dependencies]
+      form.value.json = JSON.stringify(definition, null, 2)
+      message.value = `已连接 ${connecting.value.source.id} → ${target.id}，请重新校验 DAG`
+    }
+  } catch (exc) {
+    visualError.value = exc.message
+  } finally {
+    cancelConnection()
+  }
+}
+
+function loadCoreTemplate() {
+  form.value.name = '默认主干工作流'
+  form.value.description = '需求研判 → 资源匹配 → 独立核验，可替换核验节点或插入扩展节点。'
+  form.value.stage = 'core'
+  form.value.json = JSON.stringify({
+    nodes: [
+      { id: 'A01', type: 'agent', agent_id: 'demand_agent', depends_on: [], priority: 96, ui: { x: 48, y: 90 } },
+      { id: 'A02', type: 'agent', agent_id: 'matching_agent', depends_on: ['A01'], priority: 88, ui: { x: 278, y: 90 } },
+      { id: 'A03', type: 'agent', agent_id: 'verifier_agent', depends_on: ['A02'], priority: 99, ui: { x: 508, y: 90 } },
+    ],
+  }, null, 2)
+  validation.value = null
+  runResult.value = null
+  message.value = '已载入主干模板，可拖动节点或从输出口拖线到另一节点输入口'
+}
 function parseDefinition() {
   try {
     return JSON.parse(form.value.json)
@@ -168,7 +326,7 @@ onMounted(load)
       </div>
       <div class="workflow-designer-actions">
         <button class="secondary-action" @click="load"><RefreshCw :size="14" />刷新</button>
-        <button v-if="isAdmin" class="primary-action" @click="newWorkflow"><Plus :size="14" />新建工作流</button>
+        <button v-if="isAdmin" class="secondary-action" @click="loadCoreTemplate"><GitBranch :size="14" />载入主干模板</button><button v-if="isAdmin" class="primary-action" @click="newWorkflow"><Plus :size="14" />新建工作流</button>
       </div>
     </section>
 
@@ -192,11 +350,28 @@ onMounted(load)
         <div class="workflow-editor-meta">
           <label><span>工作流 ID</span><input v-model="selectedId" :disabled="!isAdmin" /></label>
           <label><span>名称</span><input v-model="form.name" :disabled="!isAdmin" /></label>
-          <label><span>阶段</span><select v-model="form.stage" :disabled="!isAdmin"><option value="after_demand">需求研判后</option><option value="after_matching">资源匹配后</option><option value="after_verification">独立核验后</option><option value="post_verification">核验后扩展审查</option><option value="standalone">独立工作流</option></select></label>
+          <label><span>阶段</span><select v-model="form.stage" :disabled="!isAdmin"><option value="core">主干工作流（高级）</option><option value="after_demand">需求研判后</option><option value="after_matching">资源匹配后</option><option value="after_verification">独立核验后</option><option value="post_verification">核验后扩展审查</option><option value="standalone">独立工作流</option></select></label>
           <label class="check-label"><input v-model="form.enabled" type="checkbox" :disabled="!isAdmin" />启用工作流</label>
           <label class="full-span"><span>说明</span><input v-model="form.description" :disabled="!isAdmin" /></label>
         </div>
-        <label class="workflow-json-label"><span>工作流定义 JSON</span><textarea v-model="form.json" rows="22" spellcheck="false" :readonly="!isAdmin" /></label>
+        <div class="workflow-canvas-shell">
+          <div class="workflow-canvas-toolbar"><span>节点画布</span><small>拖动卡片调整位置；从右侧输出口拖到另一节点左侧输入口建立依赖</small></div>
+          <div ref="canvasRef" class="workflow-canvas">
+            <svg class="workflow-canvas-edges" viewBox="0 0 960 520" preserveAspectRatio="none">
+              <defs><marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker></defs>
+              <path v-for="edge in visualEdges" :key="edge.id" :d="edge.path" class="workflow-edge" marker-end="url(#workflow-arrow)" />
+              <path v-if="connectionPath" :d="connectionPath" class="workflow-edge workflow-edge--active" />
+            </svg>
+            <div v-for="node in visualNodes" :key="node.id" class="workflow-node-card" :class="{ 'workflow-node-card--dragging': dragging?.id === node.id }" :style="{ left: `${node.x}px`, top: `${node.y}px` }" @pointerdown.stop="startNodeDrag(node, $event)">
+              <span class="workflow-node-port workflow-node-port--input" title="输入依赖" @pointerup.stop="finishConnection(node, $event)" />
+              <div class="workflow-node-type">{{ node.type }}</div>
+              <strong>{{ node.id }}</strong>
+              <small>{{ node.agent_id || node.workflow_id || '条件节点' }}</small>
+              <span class="workflow-node-port workflow-node-port--output" title="拖拽建立依赖" @pointerdown.stop="startConnection(node, $event)" />
+            </div>
+          </div>
+          <div v-if="visualError" class="inline-error">{{ visualError }}</div>
+        </div>        <label class="workflow-json-label"><span>工作流定义 JSON</span><textarea v-model="form.json" rows="22" spellcheck="false" :readonly="!isAdmin" /></label>
         <label class="workflow-json-label"><span>试运行上下文 JSON</span><textarea v-model="testContext" rows="8" spellcheck="false" :readonly="!isAdmin" /></label>
         <div class="workflow-editor-actions">
           <button class="secondary-action" :disabled="validating" @click="validate"><ShieldCheck :size="14" />{{ validating ? '校验中...' : '校验 DAG' }}</button>

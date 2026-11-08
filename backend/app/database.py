@@ -396,6 +396,7 @@ class Database:
                     title TEXT NOT NULL,
                     content TEXT NOT NULL,
                     keywords TEXT NOT NULL DEFAULT '',
+                    embedding_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
 
@@ -462,6 +463,7 @@ class Database:
             self._ensure_vehicle_columns(conn)
             self._ensure_event_columns(conn)
             self._ensure_route_columns(conn)
+            self._ensure_knowledge_columns(conn)
 
     def reset_demo(self) -> None:
         with self.connect() as conn:
@@ -501,6 +503,15 @@ class Database:
         for dst_id, (lat, lng) in destination_coords.items():
             conn.execute("UPDATE destinations SET lat = ?, lng = ? WHERE id = ? AND (lat IS NULL OR lng IS NULL)", (lat, lng, dst_id))
 
+    def _ensure_knowledge_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("knowledge_chunks",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
+        if "embedding_json" not in columns:
+            conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding_json TEXT NOT NULL DEFAULT '[]'")
     def _ensure_event_columns(self, conn) -> None:
         if self.engine == "postgresql":
             columns = {row["column_name"] for row in conn.execute(
