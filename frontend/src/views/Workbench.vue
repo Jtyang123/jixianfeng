@@ -132,6 +132,22 @@ function materialOf(id) { return materialMap.value[id] || {} }
 function stockOf(id) {
   return inventoryData.value.summary?.find((item) => item.material_id === id)?.total_quantity || 0
 }
+function switchRunSource(source) {
+  if (source === 'demo') {
+    const scenarioId = selectedScenarioId.value || scenarios.value[0]?.id
+    if (scenarioId) applyScenario(scenarioId)
+    return
+  }
+  const eventId = selectedEventId.value || operationalEvents.value[0]?.id
+  if (eventId) {
+    applyOperationalEvent(eventId)
+    return
+  }
+  runSource.value = 'event'
+  demandItems.value = []
+  runResult.value = null
+  selectedPlanId.value = ''
+}
 function applyScenario(id) {
   runSource.value = 'demo'
   selectedScenarioId.value = id
@@ -380,8 +396,8 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="source-toggle">
-            <button :class="{ active: runSource === 'demo' }" @click="applyScenario(selectedScenarioId)">演练场景</button>
-            <button :class="{ active: runSource === 'event' }" @click="runSource = 'event'">真实事件</button>
+            <button :class="{ active: runSource === 'demo' }" @click="switchRunSource('demo')">演练场景</button>
+            <button :class="{ active: runSource === 'event' }" @click="switchRunSource('event')">真实事件</button>
           </div>
 
           <template v-if="runSource === 'demo'">
