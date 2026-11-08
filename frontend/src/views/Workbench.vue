@@ -108,6 +108,26 @@ const statusText = computed(() => {
   return '等待启动推演'
 })
 
+const materialShortages = computed(() => {
+  const totals = new Map()
+  for (const row of demandItems.value) {
+    totals.set(row.material_id, (totals.get(row.material_id) || 0) + Number(row.quantity || 0))
+  }
+  return [...totals.entries()]
+    .map(([materialId, required]) => {
+      const material = materialOf(materialId)
+      const available = stockOf(materialId)
+      return {
+        material_id: materialId,
+        name: material.name || `物资 ${materialId}`,
+        unit: material.base_unit || '',
+        required,
+        available,
+        shortage: Math.max(0, required - available),
+      }
+    })
+    .filter((item) => item.shortage > 0)
+})
 function materialOf(id) { return materialMap.value[id] || {} }
 function stockOf(id) {
   return inventoryData.value.summary?.find((item) => item.material_id === id)?.total_quantity || 0
@@ -186,11 +206,11 @@ async function refreshOperationalEvents(preferredEventId = '') {
     const rows = await api.events()
     const previousId = selectedEventId.value
     operationalEvents.value = rows
-    const preferred = preferredEventId || previousId
-    if (preferred && rows.some((item) => item.id === preferred)) {
-      if (runSource.value === 'event' || preferredEventId) applyOperationalEvent(preferred)
+    if (preferredEventId && rows.some((item) => item.id === preferredEventId)) {
+      applyOperationalEvent(preferredEventId)
       return
     }
+    if (previousId && rows.some((item) => item.id === previousId)) return
     if (runSource.value === 'event') {
       if (rows.length) applyOperationalEvent(rows[0].id)
       else {
@@ -204,6 +224,17 @@ async function refreshOperationalEvents(preferredEventId = '') {
 
 async function handleEventsChanged(event) {
   await refreshOperationalEvents(event?.detail?.eventId || '')
+}
+async function refreshResourceData() {
+  try {
+    const [materialRows, scenarioRows, networkRows, inventoryRows] = await Promise.all([
+      api.materials(), api.scenarios(), api.network(), api.inventory(),
+    ])
+    materials.value = materialRows
+    scenarios.value = scenarioRows
+    network.value = networkRows
+    inventoryData.value = inventoryRows
+  } catch (_) {}
 }
 async function loadData() {
   loading.value = true
@@ -322,8 +353,8 @@ onMounted(() => {
   window.addEventListener('farmmatch:events-changed', handleEventsChanged)
   loadData()
 })
-onActivated(() => {
-  if (loadedOnce) refreshOperationalEvents()
+onActivated(async () => {
+  if (loadedOnce) await Promise.all([refreshOperationalEvents(), refreshResourceData()])
 })
 onBeforeUnmount(() => {
   eventSource?.close()
@@ -417,6 +448,17 @@ onBeforeUnmount(() => {
               </option>
             </select>
             <button class="add-square-action" :disabled="!materialToAdd" @click="addDemand"><Plus :size="17" /></button>
+          </div>
+
+          <div v-if="materialShortages.length" class="shortage-panel shortage-panel--preflight">
+            <AlertTriangle :size="18" />
+            <div>
+              <strong>库存总量预检发现缺口</strong>
+              <p v-for="item in materialShortages" :key="item.material_id">
+                {{ item.name }}：需求 {{ formatNumber(item.required) }}，总可用 {{ formatNumber(item.available) }}，缺口 {{ formatNumber(item.shortage) }} {{ item.unit }}
+              </p>
+              <p>总可用量满足不代表一定能交付，系统仍会继续检查仓库分布、路线、时效和车辆运力。</p>
+            </div>
           </div>
 
           <details class="advanced-settings">
