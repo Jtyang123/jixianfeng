@@ -280,7 +280,8 @@ async function loadData() {
 
 function connectEvents(id) {
   if (eventSource) eventSource.close()
-  eventSource = new EventSource(`/api/runs/${id}/events`)
+  const after = events.value.reduce((max, item) => Math.max(max, Number(item.seq || 0)), 0)
+  eventSource = new EventSource(`/api/runs/${id}/events?after=${after}`)
   eventSource.onmessage = (message) => {
     const event = JSON.parse(message.data)
     if (!events.value.some((item) => item.seq === event.seq)) events.value.push(event)
@@ -656,7 +657,7 @@ onBeforeUnmount(() => {
               <div class="rag-evidence-head"><span>RAG 检索证据</span><em>{{ runResult.retrieval.length }} 条 · 已进入 Agent 上下文</em></div>
               <div v-for="doc in runResult.retrieval" :key="doc.id" class="rag-evidence-item">
                 <span class="mono">{{ doc.id }}</span>
-                <div><strong>{{ doc.title }}</strong><small>{{ doc.excerpt }}</small></div>
+                <div><strong>{{ doc.title }}</strong><small>{{ doc.excerpt }}</small><small v-if="doc.citation" class="evidence-locator">引用定位：{{ doc.citation.locator }} · {{ doc.retrieval?.embedding_backend || 'hash' }}</small></div>
                 <em>{{ doc.score }}</em>
               </div>
             </div>

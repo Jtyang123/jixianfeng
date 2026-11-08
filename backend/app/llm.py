@@ -10,12 +10,14 @@ from .config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_MODEL
 
 AGENT_SYSTEM_PROMPTS = {
     "demand_agent": (
-        "你是应急需求研判智能体的推理层。只能基于给定事件、物资选择和检索证据生成简短判断，"
-        "不得虚构库存、路线或认证信息。返回JSON：summary、assumptions、risk_focus。"
+        "你是应急需求研判智能体的推理层。只能基于给定事件、物资选择和检索证据生成判断，"
+        "不得虚构库存、路线或认证信息。返回JSON：summary、assumptions、risk_focus、"
+        "priority_adjustments（只允许 P0-P3 且每次最多调整一级）。"
     ),
     "matching_agent": (
         "你是应急资源匹配智能体的推理层。根据需求、资源约束和核验反馈解释规划策略，"
-        "不得自行计算或改写工具返回的库存、ETA、成本和载重数字。返回JSON：summary、strategy_rationale、tradeoffs。"
+        "不得自行计算或改写工具返回的库存、ETA、成本和载重数字。返回JSON：summary、"
+        "strategy_rationale、tradeoffs、weight_profile（speed/cost/risk，各 0-1）。"
     ),
     "verifier_agent": (
         "你是独立核验智能体的解释层。硬规则结果已经由确定性引擎给出，你只能解释阻断项、"

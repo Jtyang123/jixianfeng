@@ -16,6 +16,7 @@ def test_api_run_flow(tmp_path: Path):
     api_module.db = test_db
     api_module.ops = OperationsRepository(test_db)
     client = TestClient(app)
+    client.__enter__()
 
     assert client.get("/api/health").status_code == 200
     materials = client.get("/api/materials").json()
@@ -46,9 +47,13 @@ def test_api_run_flow(tmp_path: Path):
         ],
         "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
     }
-    response = client.post("/api/runs", json=payload)
+    response = client.post("/api/runs", json=payload, headers={"Idempotency-Key": "api-flow-idempotency"})
     assert response.status_code == 200
     run_id = response.json()["run_id"]
+    replay = client.post("/api/runs", json=payload, headers={"Idempotency-Key": "api-flow-idempotency"})
+    assert replay.status_code == 200
+    assert replay.json()["run_id"] == run_id
+    assert replay.json()["idempotent_replay"] is True
 
     run = None
     for _ in range(40):
@@ -70,8 +75,8 @@ def test_api_run_flow(tmp_path: Path):
     assert run["result"]["loop_metrics"]["converged"] is True
     assert run["result"]["loop_metrics"]["score_gain"] > 0
     ai_matrix = run["result"]["ai_decision_matrix"]
-    assert len(ai_matrix) == 6
-    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6"}
+    assert len(ai_matrix) == 7
+    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6", "D7"}
     assert all(item["boundary"] and item["fallback"] and item["local_equivalent"] for item in ai_matrix)
     assert next(item for item in ai_matrix if item["id"] == "D4")["boundary"] == "硬规则结论不可被模型覆盖"
     assert run["result"]["demand"]["confidence_factors"]
@@ -81,9 +86,10 @@ def test_api_run_flow(tmp_path: Path):
     benchmark = client.get("/api/evaluation/benchmark")
     assert benchmark.status_code == 200
     assert benchmark.json()["metrics"]["reproducible"] is True
-    assert benchmark.json()["quantitative"]["scenarios"] == 5
-    assert len(benchmark.json()["scenario_results"]) == 5
-    assert benchmark.json()["metrics"]["independent_layout_scenarios"] == 1
+    assert benchmark.json()["quantitative"]["scenarios"] == 6
+    assert len(benchmark.json()["scenario_results"]) == 6
+    assert benchmark.json()["metrics"]["independent_layout_scenarios"] == 2
+    assert benchmark.json()["metrics"]["independent_layout_count"] == 2
     assert {item["data_independence"] for item in benchmark.json()["scenario_results"]} == {
         "shared_layout", "controlled_variant", "independent_layout",
     }
@@ -99,8 +105,12 @@ def test_api_run_flow(tmp_path: Path):
     assert [item["concurrency"] for item in diagnostic_data["concurrency"]] == [1, 5, 10, 20]
     assert all(item["success_rate"] == 1.0 for item in diagnostic_data["concurrency"])
     assert all(item["isolation_consistent"] for item in diagnostic_data["concurrency"])
+    assert diagnostic_data["platform_queue"]["status"] == "pass"
+    assert diagnostic_data["platform_queue"]["completed"] == 24
+    assert 1 < diagnostic_data["platform_queue"]["peak_concurrency"] <= 4
     assert diagnostic_data["soak"]["status"] == "pass"
-    assert diagnostic_data["soak"]["duration_ms"] >= 8000
+    assert diagnostic_data["soak"]["duration_ms"] >= 3000
+    assert diagnostic_data["soak"]["target_duration_seconds"] == 3
     assert {item["id"] for item in diagnostic_data["fault_injection"]} == {
         "agentarts_timeout", "osrm_unavailable", "invalid_model_json",
         "inventory_shortage", "vehicle_shortage", "road_closure",
@@ -117,7 +127,10 @@ def test_api_run_flow(tmp_path: Path):
     approve = client.post(f"/api/runs/{run_id}/approve", json={"note": "测试审批"})
     assert approve.status_code == 200
     assert approve.json()["approved"] is True
+    assert approve.json()["approved_by_name"]
+    assert approve.json()["inventory_reservation"]["count"] > 0
     assert len(approve.json()["tasks"]) > 0
+    client.__exit__(None, None, None)
 
 
 def test_material_and_inventory_import(tmp_path: Path):
@@ -475,7 +488,8 @@ def test_knowledge_upload_chunk_search_and_delete(tmp_path: Path):
     semantic = client.get("/api/knowledge/search?q=封路后车辆怎么绕行")
     assert semantic.status_code == 200 and semantic.json()
     assert semantic.json()[0]["source"] == "应急运输规则"
-    assert semantic.json()[0]["retrieval"]["mode"] == "domain-hash-vector+bm25+rerank"
+    assert semantic.json()[0]["retrieval"]["mode"] == "embedding+bm25+deterministic-rerank"
+    assert semantic.json()[0]["citation"]["locator"]
     assert semantic.json()[0]["retrieval"]["vector_similarity"] > 0
     assert client.delete(f"/api/knowledge/documents/{document['id']}").status_code == 200
 

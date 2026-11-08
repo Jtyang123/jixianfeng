@@ -6,16 +6,21 @@ import json
 import math
 import time
 import uuid
+from datetime import datetime
+from pathlib import Path
 from statistics import mean
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 import httpx
 
 from .agentarts import AgentArtsBridge, AgentArtsError
 from .agents import build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
+from .config import EVALUATION_CONCURRENCY_LEVELS, EVALUATION_SOAK_SECONDS
 from .database import Database
 from .orchestrator import _parse_json_text
 from .routing import generate_route_candidates
+from .run_queue import RunQueueService, RunWorkerPool
 
 
 def _p95(values: list[float]) -> float:
@@ -51,22 +56,23 @@ def _scenario_request(scenario: dict, materials: list[dict]) -> dict:
 
 def _independent_layout(
     destinations: list[dict], warehouses: list[dict], routes: list[dict],
-    vehicles: list[dict], inventory: list[dict],
+    vehicles: list[dict], inventory: list[dict], profile: dict,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
-    """Build a distinct route/warehouse layout without changing material master data."""
+    """Build a distinct warehouse/destination/route topology for independent evaluation."""
+    prefix = profile["prefix"]
     destination_map = {}
     layout_destinations = []
     for index, source in enumerate(destinations):
         item = copy.deepcopy(source)
         old_id = item["id"]
-        new_id = f"DST-X{index + 1:02d}"
+        new_id = f"DST-{prefix}{index + 1:02d}"
         destination_map[old_id] = new_id
         item["id"] = new_id
-        item["name"] = f"{item.get('name', '安置点')}（独立布局）"
-        item["region"] = "演练·西部走廊"
-        item["address"] = "独立路网演练安置点"
-        item["lat"] = round(30.93 + index * 0.07, 6)
-        item["lng"] = round(114.78 - index * 0.09, 6)
+        item["name"] = f"{item.get('name', '安置点')}（{profile['name']}）"
+        item["region"] = profile["region"]
+        item["address"] = profile["address"]
+        item["lat"] = round(profile["destination_lat"] + index * profile["lat_step"], 6)
+        item["lng"] = round(profile["destination_lng"] - index * profile["lng_step"], 6)
         layout_destinations.append(item)
 
     warehouse_map = {}
@@ -74,41 +80,42 @@ def _independent_layout(
     for index, source in enumerate(warehouses):
         item = copy.deepcopy(source)
         old_id = item["id"]
-        new_id = f"WH-X{index + 1:02d}"
+        new_id = f"WH-{prefix}{index + 1:02d}"
         warehouse_map[old_id] = new_id
         item["id"] = new_id
-        item["name"] = f"{item.get('name', '仓库')}（独立布局）"
-        item["region"] = "演练·西部走廊"
-        item["lat"] = round(31.18 - index * 0.08, 6)
-        item["lng"] = round(114.56 + index * 0.12, 6)
+        item["name"] = f"{item.get('name', '仓库')}（{profile['name']}）"
+        item["region"] = profile["region"]
+        item["lat"] = round(profile["warehouse_lat"] - index * profile["warehouse_lat_step"], 6)
+        item["lng"] = round(profile["warehouse_lng"] + index * profile["warehouse_lng_step"], 6)
         layout_warehouses.append(item)
 
     layout_inventory = []
     for source in inventory:
         item = copy.deepcopy(source)
         item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
-        item["warehouse_name"] = f"{item.get('warehouse_name', item['warehouse_id'])}（独立布局）"
+        item["warehouse_name"] = f"{item.get('warehouse_name', item['warehouse_id'])}（{profile['name']}）"
         layout_inventory.append(item)
 
+    vehicle_count = max(1, math.ceil(len(vehicles) * profile.get("vehicle_ratio", 1.0)))
     layout_vehicles = []
-    for index, source in enumerate(vehicles):
+    for index, source in enumerate(vehicles[:vehicle_count]):
         item = copy.deepcopy(source)
-        item["id"] = f"VEH-X{index + 1:03d}"
+        item["id"] = f"VEH-{prefix}{index + 1:03d}"
         item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
-        item["lat"] = round(31.18 - (index % max(1, len(warehouses))) * 0.08, 6)
-        item["lng"] = round(114.56 + (index % max(1, len(warehouses))) * 0.12, 6)
+        item["lat"] = round(profile["warehouse_lat"] - (index % max(1, len(warehouses))) * profile["warehouse_lat_step"], 6)
+        item["lng"] = round(profile["warehouse_lng"] + (index % max(1, len(warehouses))) * profile["warehouse_lng_step"], 6)
         layout_vehicles.append(item)
 
     layout_routes = []
     for index, source in enumerate(routes):
         item = copy.deepcopy(source)
-        item["id"] = f"ROUTE-X{index + 1:03d}"
+        item["id"] = f"ROUTE-{prefix}{index + 1:03d}"
         item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
         item["destination_id"] = destination_map.get(item.get("destination_id"), item.get("destination_id"))
-        item["road_name"] = f"西部走廊-{index + 1:02d}"
-        item["distance_km"] = round(float(item.get("distance_km") or 0) * 1.17, 2)
-        item["eta_hours"] = round(float(item.get("eta_hours") or 0) + 0.22, 2)
-        item["cost"] = round(float(item.get("cost") or 0) * 1.09, 2)
+        item["road_name"] = f"{profile['road_prefix']}-{index + 1:02d}"
+        item["distance_km"] = round(float(item.get("distance_km") or 0) * profile["distance_factor"], 2)
+        item["eta_hours"] = round(float(item.get("eta_hours") or 0) + profile["eta_add"], 2)
+        item["cost"] = round(float(item.get("cost") or 0) * profile["cost_factor"], 2)
         item["geometry"] = []
         item["status"] = "open"
         layout_routes.append(item)
@@ -122,7 +129,9 @@ def _benchmark_contexts(db: Database) -> list[dict]:
     routes = db.route_rows()
     vehicles = db.vehicle_rows()
     snapshot = db.latest_snapshot()
-    inventory = db.inventory_rows(snapshot["id"] if snapshot else None)
+    inventory = copy.deepcopy(db.inventory_rows(snapshot["id"] if snapshot else None))
+    for row in inventory:
+        row["locked_quantity"] = 0
     rain = db.get_scenario("rainstorm-ii")
     heat = db.get_scenario("heatwave-iii")
     if not rain or not heat:
@@ -130,7 +139,8 @@ def _benchmark_contexts(db: Database) -> list[dict]:
 
     def build(
         scenario: dict, *, inventory_rows=None, vehicle_rows=None, feasible=True, name=None,
-        destination_rows=None, warehouse_rows=None, route_rows=None, independence="shared_layout",
+        destination_rows=None, warehouse_rows=None, route_rows=None,
+        independence="shared_layout", layout_id="default-network",
     ):
         return {
             "id": scenario["id"], "name": name or scenario["name"], "scenario": scenario,
@@ -141,8 +151,7 @@ def _benchmark_contexts(db: Database) -> list[dict]:
             "vehicles": copy.deepcopy(vehicle_rows if vehicle_rows is not None else vehicles),
             "inventory": copy.deepcopy(inventory_rows if inventory_rows is not None else inventory),
             "closed_routes": list(scenario["closed_routes"]), "feasible": feasible,
-            "data_independence": independence,
-            "layout_id": "western-corridor" if independence == "independent_layout" else "default-network",
+            "data_independence": independence, "layout_id": layout_id,
         }
 
     shortage_inventory = copy.deepcopy(inventory)
@@ -150,26 +159,139 @@ def _benchmark_contexts(db: Database) -> list[dict]:
         row["quantity"] = round(float(row.get("quantity") or 0) * 0.05, 2)
         row["locked_quantity"] = 0
 
-    layout_destinations, layout_warehouses, layout_routes, layout_vehicles, layout_inventory = _independent_layout(
-        destinations, warehouses, routes, vehicles, inventory
-    )
-    independent_scenario = copy.deepcopy(heat)
-    independent_scenario["id"] = "western-corridor-layout"
-    independent_scenario["name"] = "西部走廊独立路网"
-    independent_scenario["location"] = "演练·西部走廊"
-    independent_scenario["closed_routes"] = []
-    independent_scenario["default_demand"] = copy.deepcopy(heat["default_demand"])
+    western_profile = {
+        "prefix": "W", "name": "西部走廊", "region": "演练·西部走廊", "address": "西部走廊独立安置点",
+        "destination_lat": 30.93, "destination_lng": 114.78, "lat_step": 0.07, "lng_step": 0.09,
+        "warehouse_lat": 31.18, "warehouse_lng": 114.56, "warehouse_lat_step": 0.08,
+        "warehouse_lng_step": 0.12, "vehicle_ratio": 1.0, "road_prefix": "西部通道",
+        "distance_factor": 1.17, "eta_add": 0.22, "cost_factor": 1.09,
+    }
+    southern_profile = {
+        "prefix": "S", "name": "南部环线", "region": "演练·南部环线", "address": "南部环线独立安置点",
+        "destination_lat": 30.31, "destination_lng": 114.51, "lat_step": 0.05, "lng_step": 0.11,
+        "warehouse_lat": 30.18, "warehouse_lng": 114.28, "warehouse_lat_step": 0.07,
+        "warehouse_lng_step": 0.15, "vehicle_ratio": 1.0, "road_prefix": "南部环线",
+        "distance_factor": 1.31, "eta_add": 0.35, "cost_factor": 0.96,
+    }
+    western = _independent_layout(destinations, warehouses, routes, vehicles, inventory, western_profile)
+    southern = _independent_layout(destinations, warehouses, routes, vehicles, inventory, southern_profile)
+    western_scenario = copy.deepcopy(heat)
+    western_scenario["id"] = "western-corridor-layout"
+    western_scenario["name"] = "西部走廊独立路网"
+    western_scenario["location"] = "演练·西部走廊"
+    western_scenario["closed_routes"] = []
+    western_scenario["default_demand"] = copy.deepcopy(heat["default_demand"])
+    southern_scenario = copy.deepcopy(rain)
+    southern_scenario["id"] = "southern-ring-layout"
+    southern_scenario["name"] = "南部环线独立路网"
+    southern_scenario["location"] = "演练·南部环线"
+    southern_scenario["closed_routes"] = []
+    southern_scenario["default_demand"] = copy.deepcopy(rain["default_demand"])
+
     return [
         build(rain, independence="shared_layout"),
         build(heat, independence="shared_layout"),
         build(rain, inventory_rows=shortage_inventory, feasible=False, name="库存严重缺口", independence="controlled_variant"),
         build(heat, vehicle_rows=[], feasible=False, name="无可用车辆", independence="controlled_variant"),
         build(
-            independent_scenario, name="西部走廊独立路网", independence="independent_layout",
-            destination_rows=layout_destinations, warehouse_rows=layout_warehouses,
-            route_rows=layout_routes, vehicle_rows=layout_vehicles, inventory_rows=layout_inventory,
+            western_scenario, name="西部走廊独立路网", independence="independent_layout", layout_id="western-corridor",
+            destination_rows=western[0], warehouse_rows=western[1], route_rows=western[2],
+            vehicle_rows=western[3], inventory_rows=western[4],
+        ),
+        build(
+            southern_scenario, name="南部环线独立路网", independence="independent_layout", layout_id="southern-ring",
+            destination_rows=southern[0], warehouse_rows=southern[1], route_rows=southern[2],
+            vehicle_rows=southern[3], inventory_rows=southern[4],
         ),
     ]
+
+
+def _generate_baseline_plan(
+    demand_plan: dict, inventory: list[dict], warehouses: list[dict], routes: list[dict],
+    vehicles: list[dict], closed_routes: list[str], policy: str,
+) -> dict:
+    """Independent single-agent baseline: greedy allocation without verification or repair."""
+    stock: dict[tuple[str, int], float] = {}
+    for row in inventory:
+        key = (str(row["warehouse_id"]), int(row["material_id"]))
+        stock[key] = stock.get(key, 0.0) + max(0.0, float(row.get("quantity") or 0) - float(row.get("locked_quantity") or 0))
+    warehouse_map = {item["id"]: item for item in warehouses}
+    vehicle_count: dict[str, int] = {}
+    for vehicle in vehicles:
+        if vehicle.get("status") == "available":
+            vehicle_count[vehicle["warehouse_id"]] = vehicle_count.get(vehicle["warehouse_id"], 0) + 1
+    closed = set(closed_routes)
+    used: dict[tuple[str, int], float] = {}
+    assignments, unmet = [], []
+    for demand in demand_plan["items"]:
+        remaining = float(demand["quantity"])
+        candidates = []
+        for warehouse in warehouses:
+            wh_id = warehouse["id"]
+            available = max(0.0, stock.get((wh_id, int(demand["material_id"])), 0.0) - used.get((wh_id, int(demand["material_id"])), 0.0))
+            if available <= 0.001:
+                continue
+            route_options = [
+                route for route in routes
+                if route["warehouse_id"] == wh_id and route["destination_id"] == demand["destination_id"]
+                and route.get("status") == "open" and route["id"] not in closed
+            ]
+            if not route_options:
+                continue
+            route = min(route_options, key=lambda item: float(item["eta_hours"]))
+            candidates.append({"warehouse": warehouse, "route": route, "available": available})
+        if policy == "stock":
+            candidates.sort(key=lambda item: item["available"], reverse=True)
+        elif policy == "cost":
+            candidates.sort(key=lambda item: float(item["route"]["cost"]))
+        else:
+            candidates.sort(key=lambda item: float(item["route"]["eta_hours"]))
+        for candidate in candidates:
+            if remaining <= 0.001:
+                break
+            take = min(remaining, candidate["available"])
+            key = (candidate["warehouse"]["id"], int(demand["material_id"]))
+            used[key] = used.get(key, 0.0) + take
+            remaining -= take
+            assignments.append({
+                "warehouse_id": candidate["warehouse"]["id"], "warehouse_name": candidate["warehouse"]["name"],
+                "destination_id": demand["destination_id"], "destination_name": demand["destination_name"],
+                "material_id": demand["material_id"], "material_code": demand["material_code"],
+                "material_name": demand["material_name"], "base_unit": demand["base_unit"],
+                "quantity": round(take, 2), "priority": demand["priority"],
+                "deadline_hours": demand["deadline_hours"], "route_id": candidate["route"]["id"],
+                "route_name": candidate["route"]["road_name"], "route_eta_hours": candidate["route"]["eta_hours"],
+                "route_cost": candidate["route"]["cost"], "is_primary_route": bool(candidate["route"]["is_primary"]),
+                "unit_weight_kg": demand["unit_weight_kg"], "group_vehicle_trips": 1,
+                "group_cost": candidate["route"]["cost"],
+                "group_id": f"BASE-{candidate['warehouse']['id']}-{demand['destination_id']}",
+            })
+        if remaining > 0.001:
+            unmet.append({
+                "material_id": demand["material_id"], "material_name": demand["material_name"],
+                "destination_id": demand["destination_id"], "destination_name": demand["destination_name"],
+                "quantity": round(remaining, 2), "unit": demand["base_unit"],
+            })
+    total_demand = sum(float(item["quantity"]) for item in demand_plan["items"])
+    delivered = sum(float(item["quantity"]) for item in assignments)
+    total_cost = sum(float(item["route_cost"]) for item in assignments)
+    group_cost = sum(
+        float(next(route["cost"] for route in routes if route["id"] == item["route_id"]))
+        for item in assignments
+    )
+    return {
+        "plan_id": f"BASELINE-{policy.upper()}", "name": f"单 Agent 贪心基线（{policy}）", "tag": "基线",
+        "strategy": f"baseline-{policy}", "attempt": 1, "assignments": assignments, "unmet": unmet, "groups": [],
+        "metrics": {
+            "total_cost": round(group_cost or total_cost, 2),
+            "max_eta_hours": round(max([float(item["route_eta_hours"]) for item in assignments] or [0]), 2),
+            "coverage": round(delivered / total_demand, 4) if total_demand else 0.0,
+            "vehicle_trips": len(assignments),
+            "warehouse_count": len({item["warehouse_id"] for item in assignments}),
+            "assignment_count": len(assignments), "unmet_items": len(unmet),
+        },
+        "policy_note": "独立基线：最近仓库贪心分配，不执行多目标协同、独立核验或反馈重算。",
+    }
 
 def run_benchmark(db: Database, repetitions: int = 20) -> dict:
     try:
@@ -183,6 +305,8 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
     baseline_scores = []
     multi_scores = []
     baseline_unsafe = 0
+    baseline_candidate_unsafe = 0
+    baseline_candidate_scores: list[float] = []
     multi_unsafe = 0
     detected_unsafe = 0
     feasible_without_final_delivery = 0
@@ -207,16 +331,29 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         final_verdict = "rework"
         rework_rounds = 0
 
+        scenario_candidate_scores = []
+        scenario_candidate_unsafe = 0
         for _ in range(repetitions):
             baseline_started = time.perf_counter()
-            baseline_plans = generate_plans(
-                demand, context["inventory"], context["warehouses"], context["routes"],
-                context["vehicles"], 1, context["closed_routes"],
-            )
-            baseline_truth = verify_plans(
-                [baseline_plans[0]], demand, context["inventory"], context["routes"],
-                context["vehicles"], context["closed_routes"],
-            )
+            baseline_plans = [
+                _generate_baseline_plan(
+                    demand, context["inventory"], context["warehouses"], context["routes"],
+                    context["vehicles"], context["closed_routes"], policy,
+                )
+                for policy in ("nearest", "stock", "cost")
+            ]
+            baseline_truths = [
+                verify_plans([plan], demand, context["inventory"], context["routes"], context["vehicles"], context["closed_routes"])
+                for plan in baseline_plans
+            ]
+            baseline_truth = baseline_truths[0]
+            for truth in baseline_truths:
+                safety = float(truth["score"])
+                baseline_candidate_scores.append(safety)
+                scenario_candidate_scores.append(safety)
+                if truth["verdict"] != "pass":
+                    baseline_candidate_unsafe += 1
+                    scenario_candidate_unsafe += 1
             baseline_latencies.append((time.perf_counter() - baseline_started) * 1000)
 
             multi_started = time.perf_counter()
@@ -276,6 +413,9 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "rework_rounds": rework_rounds,
             "baseline_latency_ms": round(mean(baseline_latencies), 2),
             "multi_latency_ms": round(mean(multi_latencies), 2),
+            "baseline_generator": "独立贪心单 Agent（nearest/stock/cost 三种候选）",
+            "baseline_candidate_safety_scores": sorted(set(scenario_candidate_scores)),
+            "baseline_candidate_unsafe_exposure": scenario_candidate_unsafe,
         })
 
     total_samples = len(contexts) * repetitions
@@ -286,6 +426,8 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
     overhead_ms = round(multi_avg - baseline_avg, 2)
     baseline_unsafe_rate = baseline_unsafe / total_samples
     multi_unsafe_rate = multi_unsafe / total_samples
+    baseline_candidate_samples = max(total_samples * 3, 1)
+    baseline_candidate_exposure_rate = baseline_candidate_unsafe / baseline_candidate_samples
     interception_rate = detected_unsafe / max(baseline_unsafe, 1)
     coverage = mean(item["coverage"] for item in scenario_results)
     baseline_avg_score = round(mean(baseline_scores), 2)
@@ -300,6 +442,12 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "label": "单 Agent / 不执行独立核验",
             "unsafe_acceptance_rate": round(baseline_unsafe_rate, 4),
             "unsafe_acceptance_ci95": _wilson_interval(baseline_unsafe, total_samples),
+            "candidate_unsafe_exposure_rate": round(baseline_candidate_exposure_rate, 4),
+            "candidate_unsafe_exposure_ci95": _wilson_interval(baseline_candidate_unsafe, baseline_candidate_samples),
+            "candidate_samples": baseline_candidate_samples,
+            "average_candidate_safety_score": round(mean(baseline_candidate_scores), 2) if baseline_candidate_scores else 0,
+            "generator": "独立贪心 nearest-warehouse 单 Agent；未使用多目标生成器",
+            "audit_method": "独立确定性核验器仅作为外部真值和误差审计，不参与基线决策",
             "risk_detection_rate": 0.0,
             "average_verification_score": baseline_avg_score,
             "average_latency_ms": baseline_avg,
@@ -328,6 +476,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         },
     }
     quantitative_rows = [
+        {"metric": "安全结果率（可行交付或不可行升级）", "baseline": f"{(1 - baseline_unsafe_rate) * 100:.1f}%", "multi": f"{quantitative['multi_agent']['safe_outcome_rate'] * 100:.1f}%", "change": f"+{(quantitative['multi_agent']['safe_outcome_rate'] - (1 - baseline_unsafe_rate)) * 100:.1f} 个百分点"},
         {"metric": "不安全方案验收率", "baseline": f"{baseline_unsafe_rate * 100:.1f}%", "multi": f"{multi_unsafe_rate * 100:.1f}%", "change": f"-{(baseline_unsafe_rate - multi_unsafe_rate) * 100:.1f} 个百分点"},
         {"metric": "硬风险检出率", "baseline": "0.0%", "multi": f"{interception_rate * 100:.1f}%", "change": f"+{interception_rate * 100:.1f} 个百分点"},
         {"metric": "平均核验评分", "baseline": str(baseline_avg_score), "multi": str(multi_avg_score), "change": f"{multi_avg_score - baseline_avg_score:+.2f}"},
@@ -356,6 +505,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "demand_rows": total_demand_rows,
             "inventory_snapshot": "共享快照 + 独立布局 + 明确标注的受控变体",
             "independent_layout_scenarios": sum(1 for item in contexts if item["data_independence"] == "independent_layout"),
+            "independent_layout_count": len({item["layout_id"] for item in contexts if item["data_independence"] == "independent_layout"}),
             "controlled_variant_scenarios": sum(1 for item in contexts if item["data_independence"] == "controlled_variant"),
             "shared_layout_scenarios": sum(1 for item in contexts if item["data_independence"] == "shared_layout"),
             "repetitions": repetitions,
@@ -363,18 +513,20 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "samples": total_samples,
             "rework_rate": quantitative["multi_agent"]["rework_rate"],
             "convergence_rate": quantitative["multi_agent"]["safe_outcome_rate"],
+            "safe_outcome_rate": quantitative["multi_agent"]["safe_outcome_rate"],
+            "unsafe_acceptance_reduction_pp": quantitative["tradeoff"]["unsafe_acceptance_reduction_pp"],
         },
         "quantitative": quantitative,
         "quantitative_rows": quantitative_rows,
         "scenario_results": scenario_results,
         "comparison": [
-            {"label": "单 Agent / 无独立核验", "score": round(baseline_avg_score), "unsafe_plans": baseline_unsafe, "passed": False},
-            {"label": "多 Agent / 自适应多轮核验", "score": round(multi_avg_score), "unsafe_plans": multi_unsafe, "passed": multi_unsafe == 0},
+            {"label": "单 Agent / 无独立核验", "score": round((1 - baseline_unsafe_rate) * 100, 1), "unsafe_plans": baseline_unsafe, "passed": False, "metric": "safe_outcome_rate"},
+            {"label": "多 Agent / 自适应多轮核验", "score": round(quantitative["multi_agent"]["safe_outcome_rate"] * 100, 1), "unsafe_plans": multi_unsafe, "passed": multi_unsafe == 0, "metric": "safe_outcome_rate"},
         ],
         "notes": [
             f"基准覆盖 {len(contexts)} 个差异化场景，每个场景重复 {repetitions} 次，共 {total_samples} 个样本。",
-            "场景包括道路中断、正常条件、库存严重缺口、无可用车辆和西部走廊独立路网；不可行场景的正确行为是转人工研判而不是伪造方案。",
-            "5 个场景中 2 个共享默认路网、2 个明确标注为受控变体、1 个使用独立仓库/安置点/路线布局；不把受控变体包装成多城市泛化。",
+            "场景包括道路中断、正常条件、库存严重缺口、无可用车辆、西部走廊独立路网和南部环线独立路网；不可行场景的正确行为是转人工研判而不是伪造方案。",
+            "6 个场景中 2 个共享默认路网、2 个明确标注为受控变体、2 个使用不同的独立仓库/安置点/路线布局；不把受控变体包装成多城市泛化。",
             "耗时只统计本地确定性计算，不包含公网 AgentArts 等待；真实云端端到端指标从持久化运行记录读取并单独展示。",
             "并发测试是单进程 asyncio 压测，不等同于多实例生产集群容量；生产部署需在 ECS/容器集群上重新压测。",
         ],
@@ -400,11 +552,14 @@ def _diagnostic_fixture(db: Database) -> dict:
     if missing:
         raise RuntimeError(f"诊断场景缺少物资主数据：{', '.join(missing)}")
     snapshot = db.latest_snapshot()
+    diagnostic_inventory = copy.deepcopy(db.inventory_rows(snapshot["id"] if snapshot else None))
+    for row in diagnostic_inventory:
+        row["locked_quantity"] = 0
     return {
         "scenario": scenario,
         "materials": materials,
         "snapshot": snapshot,
-        "inventory": db.inventory_rows(snapshot["id"] if snapshot else None),
+        "inventory": diagnostic_inventory,
         "destinations": db.destination_rows(),
         "warehouses": db.warehouse_rows(),
         "routes": db.route_rows(),
@@ -769,6 +924,69 @@ async def _fault_suite(fixture: dict) -> list[dict]:
     return results
 
 
+async def _platform_queue_stress(samples: int = 24, concurrency: int = 4) -> dict:
+    """Exercise the persistent platform queue with a fake orchestrator in an isolated DB."""
+    with TemporaryDirectory() as temp_dir:
+        db = Database(Path(temp_dir) / "queue-stress.db", database_url="")
+        db.initialize()
+        queue = RunQueueService(db)
+        for index in range(samples):
+            run_id = f"QUEUE-STRESS-{index + 1:03d}"
+            db.create_run(run_id, "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+            queue.enqueue(run_id, float(index + 1))
+        active = 0
+        peak = 0
+        completed = 0
+
+        async def fake_orchestrator(run_db: Database, run_id: str, _request: dict) -> None:
+            nonlocal active, peak, completed
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(0.04)
+                run_db.update_run(run_id, "awaiting_approval", {"fake": True})
+                completed += 1
+            finally:
+                active -= 1
+
+        pool = RunWorkerPool(
+            lambda: db, fake_orchestrator, concurrency=concurrency,
+            poll_interval=0.01, lease_seconds=30,
+        )
+        started = time.perf_counter()
+        await pool.start()
+        deadline = time.perf_counter() + 12
+        while time.perf_counter() < deadline:
+            metrics = queue.metrics()
+            if metrics["queued"] == 0 and metrics["running"] == 0:
+                break
+            await asyncio.sleep(0.02)
+        await pool.stop()
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        waits = []
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT queued_at, started_at FROM runs WHERE started_at IS NOT NULL"
+            ).fetchall()
+        for row in rows:
+            try:
+                waits.append(max(0.0, (datetime.fromisoformat(row["started_at"]) - datetime.fromisoformat(row["queued_at"])).total_seconds() * 1000))
+            except (TypeError, ValueError):
+                pass
+        return {
+            "status": "pass" if completed == samples and 1 < peak <= concurrency else "fail",
+            "samples": samples,
+            "completed": completed,
+            "concurrency_limit": concurrency,
+            "peak_concurrency": peak,
+            "wall_ms": elapsed_ms,
+            "throughput_runs_per_second": round(completed / (elapsed_ms / 1000), 2) if elapsed_ms else 0,
+            "average_wait_ms": round(mean(waits), 2) if waits else 0,
+            "p95_wait_ms": _p95(waits),
+            "scope": "隔离 SQLite 数据库上的平台队列真实 Worker 并发；PostgreSQL 使用 FOR UPDATE SKIP LOCKED 支持多实例",
+        }
+
+
 async def _run_soak_suite(
     fixture: dict, duration_seconds: float = 8.0, concurrency: int = 4, interval_seconds: float = 0.35,
 ) -> dict:
@@ -816,17 +1034,19 @@ async def _run_soak_suite(
 
 def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
     run_id = f"EVAL-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-    levels = sorted({max(1, min(50, int(level))) for level in (levels or [1, 5, 10, 20])})
+    levels = sorted({max(1, min(50, int(level))) for level in (levels or EVALUATION_CONCURRENCY_LEVELS)})
     db.create_evaluation_run(run_id, "stress_and_fault", "rainstorm-ii")
     started = time.perf_counter()
     try:
         fixture = _diagnostic_fixture(db)
+        platform_queue = asyncio.run(_platform_queue_stress())
         concurrency = asyncio.run(_run_concurrency_suite(fixture, levels))
-        soak = asyncio.run(_run_soak_suite(fixture, duration_seconds=8.0, concurrency=4))
+        soak = asyncio.run(_run_soak_suite(fixture, duration_seconds=EVALUATION_SOAK_SECONDS, concurrency=4))
         faults = asyncio.run(_fault_suite(fixture))
         error_profile = _error_profile(fixture)
         all_passed = (
-            all(item["status"] == "pass" for item in concurrency)
+            platform_queue["status"] == "pass"
+            and all(item["status"] == "pass" for item in concurrency)
             and soak["status"] == "pass"
             and all(item["passed"] for item in faults)
         )
@@ -838,6 +1058,7 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
             "status": "passed" if all_passed else "warning",
             "all_passed": all_passed,
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            "platform_queue": platform_queue,
             "concurrency": concurrency,
             "soak": soak,
             "fault_injection": faults,
@@ -847,6 +1068,7 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
                 if all_passed else "存在未达到预期的诊断项，请查看失败证据。"
             ),
             "notes": [
+                "平台队列压测使用隔离数据库和真实 RunWorkerPool，验证并发上限、排队与完成数。",
                 "并发测试使用同一冻结库存快照，每个并发级别运行相应数量的完整自适应闭环。",
                 "长稳测试持续提交 8 秒并记录实际样本、吞吐、P95 与隔离一致性；它证明单进程持续可用性，不冒充多实例集群容量。",
                 "故障注入是可重复的受控测试：不向公网发送 AgentArts 请求，OSRM 故障由 MockTransport 注入。",

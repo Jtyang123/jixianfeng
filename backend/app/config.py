@@ -78,3 +78,26 @@ LLM_ENABLED = os.getenv("LLM_ENABLED", "false").strip().lower() == "true"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+
+RUN_WORKER_CONCURRENCY = max(1, min(16, int(os.getenv("RUN_WORKER_CONCURRENCY", "2"))))
+RUN_QUEUE_MAX_SIZE = max(1, int(os.getenv("RUN_QUEUE_MAX_SIZE", "100")))
+RUN_LEASE_SECONDS = max(30, int(os.getenv("RUN_LEASE_SECONDS", "120")))
+RUN_POLL_INTERVAL_SECONDS = max(0.05, float(os.getenv("RUN_POLL_INTERVAL_SECONDS", "0.25")))
+
+EVALUATION_SOAK_SECONDS = max(2.0, float(os.getenv("EVALUATION_SOAK_SECONDS", "30")))
+EVALUATION_CONCURRENCY_LEVELS = [
+    max(1, min(50, int(item.strip())))
+    for item in os.getenv("EVALUATION_CONCURRENCY_LEVELS", "1,5,10,20").split(",")
+    if item.strip()
+]
+
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "hash").strip().lower()
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "").rstrip("/")
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "")
+EMBEDDING_DIMENSIONS = max(64, min(4096, int(os.getenv("EMBEDDING_DIMENSIONS", "256"))))
+EMBEDDING_TIMEOUT = max(1.0, float(os.getenv("EMBEDDING_TIMEOUT", "20")))
+
+RETRY_WORKER_ENABLED = os.getenv("RETRY_WORKER_ENABLED", "true").strip().lower() == "true"
+RETRY_MAX_ATTEMPTS = max(1, min(10, int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))))
+RETRY_POLL_INTERVAL_SECONDS = max(1.0, float(os.getenv("RETRY_POLL_INTERVAL_SECONDS", "5")))

@@ -13,7 +13,7 @@ const stats = computed(() => ({
   completed: runs.value.filter((run) => ['awaiting_approval', 'needs_human'].includes(run.status)).length,
 }))
 const statusLabel = {
-  queued: '排队中', running: '推演中', awaiting_approval: '待审批', needs_human: '人工研判', failed: '执行失败',
+  queued: '排队中', running: '推演中', awaiting_approval: '待审批', approved: '已审批', needs_human: '人工研判', failed: '执行失败',
 }
 
 async function load() {
@@ -42,14 +42,15 @@ onMounted(load)
     <section class="content-card">
       <div class="table-wrap">
         <table class="data-table history-table">
-          <thead><tr><th>运行编号</th><th>场景</th><th>状态</th><th>创建时间</th><th>审批</th><th>操作</th></tr></thead>
+          <thead><tr><th>运行编号</th><th>场景</th><th>状态</th><th>调度</th><th>创建时间</th><th>审批人</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="run in runs" :key="run.id">
               <td><span class="mono run-id">{{ run.id }}</span></td>
               <td><strong>{{ run.scenario_id === 'rainstorm-ii' ? '武汉暴雨洪涝应急演练' : '持续高温生活保障推演' }}</strong></td>
               <td><span class="run-status" :class="`run-status--${run.status}`">{{ statusLabel[run.status] || run.status }}</span></td>
+              <td><span class="mono">P{{ Number(run.priority_score || 0).toFixed(1) }}</span><small class="cell-sub">第 {{ run.attempts || 0 }}/{{ run.max_attempts || 3 }} 次尝试</small></td>
               <td>{{ formatTime(run.created_at) }}</td>
-              <td><span v-if="run.approved" class="approved-chip"><CheckCircle2 :size="13" />已通过</span><span v-else class="muted-text">未审批</span></td>
+              <td><span v-if="run.approved" class="approved-chip"><CheckCircle2 :size="13" />{{ run.approved_by_name || '已通过' }}</span><span v-else class="muted-text">未审批</span></td>
               <td><button class="text-action" @click="openReport(run.id)"><FileText :size="15" />查看报告</button></td>
             </tr>
           </tbody>

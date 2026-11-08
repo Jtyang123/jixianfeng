@@ -8,8 +8,8 @@ from uuid import uuid4
 import httpx
 
 from .agentarts import AgentArtsBridge
-from .agents import allowed_rework_policies, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
-from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
+from .agents import allowed_rework_policies, apply_llm_priority_adjustments, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, normalize_llm_weight_profile, verify_plans
+from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
 from .database import Database
 from .knowledge import retrieve
 from .knowledge_base import KnowledgeRepository
@@ -17,6 +17,7 @@ from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
 from .memory import MemoryRepository
 from .registry import AgentRegistryService, apply_agent_load
+from .retry_queue import RetryQueueRepository
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
 from .tools import ToolError, ToolService
 from .workflow_engine import WorkflowEngine, WorkflowRepository
@@ -58,7 +59,11 @@ def new_run_id() -> str:
     return f"RUN-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:4].upper()}"
 
 
-def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict], llm_status: dict) -> list[dict]:
+def build_ai_decision_matrix(
+    agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict],
+    llm_status: dict, llm_decisions: dict | None = None,
+) -> list[dict]:
+    llm_decisions = llm_decisions or {}
     demand_trace = traces.get("demand_agent") or {}
     rework_trace = traces.get("rework_policy") or {}
     matching_trace = traces.get("matching_agent") or {}
@@ -68,12 +73,18 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
     rework_parsed = rework_trace.get("parsed") if isinstance(rework_trace, dict) else None
     verifier_parsed = verifier_trace.get("parsed") if isinstance(verifier_trace, dict) else None
     delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
-    return [
+    demand_priority_decision = llm_decisions.get("demand_priority") or {}
+    weight_decision = llm_decisions.get("matching_weights") or {}
+    matrix = [
         {
             "id": "D1", "decision": "需求理解与假设补全", "level": "AI 决策",
-            "ai_role": "补充摘要、假设和证据引用",
-            "applied": bool(demand_parsed),
-            "source": demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic",
+            "ai_role": "补充摘要、假设和证据引用；可在相邻一级范围内调整物资优先级",
+            "applied": bool(demand_parsed) or bool(demand_priority_decision.get("applied")),
+            "source": (
+                f"agentarts+llm-priority:{len(demand_priority_decision.get('changes', []))}"
+                if demand_parsed and demand_priority_decision.get("applied")
+                else (demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic")
+            ),
             "boundary": "物资数量、单位和安置点分配仍由确定性工具计算",
             "fallback": "本地需求拆分与主数据校验",
             "local_equivalent": "确定性需求拆分、主数据映射、人口分配与置信度因子计算",
@@ -115,6 +126,15 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "local_equivalent": "无扩展 Agent 时跳过该层，不伪造扩展结论",
         },
         {
+            "id": "D7", "decision": "已核验方案目标权重调整", "level": "AI 决策",
+            "ai_role": "在用户权重基础上提出 speed/cost/risk 权重建议，影响已核验方案排序",
+            "applied": bool(weight_decision.get("applied")),
+            "source": weight_decision.get("source", llm_status.get("model", "deterministic-fallback")),
+            "boundary": weight_decision.get("boundary", "用户权重与 LLM 建议各占 50%，只能重排已核验方案"),
+            "fallback": "完全使用用户设置的权重",
+            "local_equivalent": "用户权重加确定性多目标排序",
+        },
+        {
             "id": "D6", "decision": "交付摘要组织", "level": "AI 生成",
             "ai_role": "将已核验事实组织成可读摘要",
             "applied": bool(delivery_parsed),
@@ -124,6 +144,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "local_equivalent": "确定性交付模板、方案对比、执行清单、风险提示与证据引用",
         },
     ]
+    return sorted(matrix, key=lambda item: int(item["id"][1:]))
 
 def emit(
     db: Database,
@@ -163,6 +184,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         agentarts.override_endpoint(agent_id, endpoint)
     runtime_metrics = registry.runtime_metrics()
     ai_reasoning: dict = {}
+    llm_decisions: dict = {}
     agent_decision: dict = {"applied": False, "rationale": "AgentArts 未配置，使用确定性排序。"}
     agentarts_trace: dict = {}
     extension_agents = [
@@ -215,7 +237,11 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         except Exception as exc:
             fallback = {"mode": "local-fallback-after-agentarts-error", "error": str(exc)[:240]}
             agentarts_trace[trace_id or agent_id] = fallback
-            emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行。", fallback)
+            RetryQueueRepository(db).enqueue(
+                "agentarts", {"agent_id": agent_id, "payload": payload, "session_id": run_id},
+                str(exc), run_id=run_id, max_attempts=RETRY_MAX_ATTEMPTS,
+            )
+            emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行；失败请求已写入持久化重试队列。", fallback)
             return fallback
 
     async def invoke_extension_agent(agent_id: str, payload: dict) -> dict:
@@ -242,6 +268,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         )
         return local
     async def invoke_workflow_tool(tool_id: str, arguments: dict, workflow_state: dict) -> dict:
+        nonlocal evidence
         emit(db, run_id, "tool.called", "tool_runtime", f"调用工具 · {tool_id}", "工作流工具节点开始执行。", {"arguments": arguments})
         try:
             call = await ToolService(db).call_tool(tool_id, arguments, session_id=run_id)
@@ -256,6 +283,18 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 db, run_id, "tool.consumed", "matching_agent", "库存工具结果已进入方案计算",
                 f"资源匹配将使用工具返回的 {len(tool_result['items'])} 条库存记录，而不是再次直接读取数据库。",
                 {"tool_id": tool_id, "inventory_rows": len(tool_result["items"])},
+            )
+        if tool_id == "knowledge_search" and isinstance(tool_result.get("items"), list):
+            knowledge_items = [item for item in tool_result["items"] if isinstance(item, dict)]
+            merged = {item.get("id"): item for item in evidence if isinstance(item, dict)}
+            for item in knowledge_items:
+                merged[item.get("id")] = item
+            evidence = sorted(merged.values(), key=lambda item: float(item.get("score", 0)), reverse=True)[:10]
+            pipeline_state["execution_evidence"] = knowledge_items
+            emit(
+                db, run_id, "tool.consumed", "matching_agent", "知识工具结果已进入推理上下文",
+                f"{len(knowledge_items)} 条带引用定位的知识片段已注入匹配、核验和交付上下文。",
+                {"tool_id": tool_id, "evidence_ids": [item.get("id") for item in knowledge_items]},
             )
         emit(db, run_id, "tool.completed", "tool_runtime", f"工具完成 · {tool_id}", "工具结果已写入工作流上下文。", call.get("audit") or {})
         return {"tool_id": tool_id, "result": tool_result, "inventory_tool_result": tool_result, "audit": call.get("audit"), "mode": "tool"}
@@ -420,7 +459,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         await pace(0.25)
 
-        pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False, "execution_inventory": None, "inventory_source": "database snapshot", "prompt_adaptations": [], "active_prompt_versions": {"demand_agent": "v1.3", "matching_agent": "v1.4", "verifier_agent": "v1.5", "delivery_agent": "v1.2"}}
+        pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False, "execution_inventory": None, "execution_evidence": [], "inventory_source": "database snapshot", "prompt_adaptations": [], "decision_weights": request.get("weights", {}), "active_prompt_versions": {"demand_agent": "v1.3", "matching_agent": "v1.4", "verifier_agent": "v1.5", "delivery_agent": "v1.2"}}
         core_runs: list[dict] = []
         rounds: list[dict] = []
         rework_directives: list[dict] = []
@@ -436,10 +475,16 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     demand_plan = build_demand_plan(request, materials, destinations)
                     demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
                     ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
+                    llm_decisions["demand_priority"] = apply_llm_priority_adjustments(demand_plan, ai_reasoning["demand_agent"])
                     demand_remote = await call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence})
                     remote_demand = demand_remote.get("parsed") if isinstance(demand_remote, dict) else None
                     if remote_demand:
                         demand_plan["agentarts_interpretation"] = remote_demand
+                        agentarts_priority = apply_llm_priority_adjustments(
+                            demand_plan, {"mode": "agentarts", "result": remote_demand}
+                        )
+                        if agentarts_priority.get("applied"):
+                            llm_decisions["demand_priority"] = agentarts_priority
                         if remote_demand.get("summary"):
                             demand_plan["summary"] = remote_demand["summary"]
                         if remote_demand.get("assumptions"):
@@ -478,6 +523,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     },
                     evidence,
                 )
+                llm_decisions["matching_weights"] = normalize_llm_weight_profile(
+                    request.get("weights", {}), ai_reasoning["matching_agent"],
+                )
+                pipeline_state["decision_weights"] = llm_decisions["matching_weights"]["weights"]
                 emit(db, run_id, "plan.generated", "matching_agent", f"第 {attempt} 轮候选方案生成", "方案已提交独立核验。", {
                     "attempt": attempt,
                     "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in plans],
@@ -713,6 +762,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "summary": "已完成多目标候选方案生成与约束修正。",
             "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
             "closed_routes": closed_routes,
+            "requested_weights": request.get("weights", {}),
+            "weight_profile_schema": {"speed": "0-1", "cost": "0-1", "risk": "0-1"},
             "active_prompt_version": pipeline_state.get("active_prompt_versions", {}).get("matching_agent", "v1.4"),
             "prompt_adaptations": pipeline_state.get("prompt_adaptations", []),
         }
@@ -747,6 +798,12 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             reasoning = ai_reasoning.setdefault("matching_agent", {})
             if isinstance(reasoning, dict):
                 reasoning["agentarts_interpretation"] = remote_matching
+            agentarts_weight_decision = normalize_llm_weight_profile(
+                request.get("weights", {}), {"mode": "agentarts", "result": remote_matching}
+            )
+            if agentarts_weight_decision.get("applied"):
+                llm_decisions["matching_weights"] = agentarts_weight_decision
+                pipeline_state["decision_weights"] = agentarts_weight_decision["weights"]
         agent_decision = normalize_agentarts_decision(remote_matching, final_plans)
         emit(db, run_id, "agentarts.decision", "matching_agent",
              "AgentArts 方案推荐已解析" if agent_decision["applied"] else "AgentArts 推荐回退",
@@ -806,8 +863,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
         await pace(0.4)
         delivery = build_delivery_package(
-            final_verification, scenario, snapshot, request.get("weights", {}), agent_decision=agent_decision
+            final_verification, scenario, snapshot, pipeline_state.get("decision_weights") or request.get("weights", {}),
+            agent_decision=agent_decision,
         )
+        delivery["llm_weight_decision"] = llm_decisions.get("matching_weights", {})
         delivery["extension_reviews"] = extension_reviews
         for review in extension_reviews:
             parsed = review.get("parsed") or {}
@@ -826,7 +885,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             if isinstance(reasoning, dict):
                 reasoning["agentarts_interpretation"] = remote_delivery
         ai_decision_matrix = build_ai_decision_matrix(
-            agent_decision, agentarts_trace, final_verification, extension_reviews, llm_service.status
+            agent_decision, agentarts_trace, final_verification, extension_reviews, llm_service.status,
+            llm_decisions=llm_decisions,
         )
         emit(db, run_id, "agent.completed", "delivery_agent", "交付包生成完成", delivery["summary"], {
             "status": delivery["status"],
@@ -910,6 +970,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "rework_directives": rework_directives,
             "prompt_adaptations": pipeline_state.get("prompt_adaptations", []),
             "active_prompt_versions": pipeline_state.get("active_prompt_versions", {}),
+            "llm_decisions": llm_decisions,
+            "execution_evidence": pipeline_state.get("execution_evidence", []),
+            "execution_weights": pipeline_state.get("decision_weights", request.get("weights", {})),
             "memory_context": memory_context,
             "memory_writes": [
                 {"agent_id": item["agent_id"], "memory_key": item["memory_key"], "confidence": item["confidence"]}

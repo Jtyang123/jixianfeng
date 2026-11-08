@@ -8,19 +8,22 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .agentarts import AgentArtsBridge
 from .auth import AuthService
-from .config import AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, BASE_DIR
+from .config import (
+    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, BASE_DIR,
+    RETRY_MAX_ATTEMPTS, RETRY_WORKER_ENABLED, RUN_WORKER_CONCURRENCY,
+)
 from .database import Database
 from .evaluation import run_benchmark, run_diagnostics
 from .event_import import normalize_event, parse_event_package
 from .geocoder import GeocoderError, geocode_address
 from .knowledge import catalog as knowledge_catalog
-from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, chunk_text, extract_text
+from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, extract_document_chunks
 from .llm import LLMService
 from .local_agents import invoke_local_registered_agent
 from .memory import MemoryRepository
@@ -33,9 +36,12 @@ from .models import (
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
+from .reservations import InventoryReservationError, InventoryReservationService
+from .retry_queue import RetryQueueRepository, RetryWorker
 from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
-from .scheduler import platform_manifest
+from .run_queue import QueueFullError, RunQueueService, RunWorkerPool, run_priority
+from .scheduler import AGENTS, platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
 from .tools import ToolError, ToolRepository, ToolService, validate_tool_endpoint
 from .workflow_engine import WorkflowEngine, WorkflowRepository, WorkflowValidationError, validate_workflow
@@ -46,6 +52,64 @@ ops = OperationsRepository(db)
 auth_service = AuthService(db)
 registry_service = AgentRegistryService(db)
 TEMPLATE_DIR = BASE_DIR / "templates"
+run_worker_pool: RunWorkerPool | None = None
+retry_worker: RetryWorker | None = None
+
+
+def _db_provider() -> Database:
+    return db
+
+
+def _retry_runtime():
+    async def replay(job: dict) -> dict:
+        kind = str(job.get("kind") or "")
+        payload = job.get("payload") or {}
+        if kind == "agentarts":
+            bridge = AgentArtsBridge()
+            for agent_id, endpoint in registry_service.active_endpoints().items():
+                bridge.override_endpoint(agent_id, endpoint)
+            agent_id = str(payload.get("agent_id") or "")
+            task_payload = payload.get("payload") or {}
+            session_id = str(payload.get("session_id") or "retry-replay")
+            if not agent_id:
+                raise ValueError("重放作业缺少 agent_id")
+            return await bridge.invoke(agent_id, task_payload, session_id=session_id)
+        if kind == "osrm":
+            warehouse_ids = set(payload.get("warehouse_ids") or [])
+            destination_ids = set(payload.get("destination_ids") or [])
+            warehouses = [item for item in db.warehouse_rows() if not warehouse_ids or item["id"] in warehouse_ids]
+            destinations = [item for item in db.destination_rows() if not destination_ids or item["id"] in destination_ids]
+            routes, warnings = await generate_route_candidates(warehouses, destinations)
+            return {"routes": routes, "warnings": warnings, "status": "succeeded" if not warnings else "still-fallback"}
+        raise ValueError(f"暂不支持自动重放的作业类型：{kind}")
+
+    return replay
+
+
+async def start_runtime() -> None:
+    global run_worker_pool, retry_worker, registry_service
+    if run_worker_pool is not None:
+        return
+    registry_service = AgentRegistryService(db)
+    registry_service.sync_builtin_agents(AGENTS, AgentArtsBridge().endpoints)
+    RunQueueService(db).recover_stale()
+    run_worker_pool = RunWorkerPool(
+        _db_provider, orchestrate, concurrency=RUN_WORKER_CONCURRENCY,
+    )
+    await run_worker_pool.start()
+    if RETRY_WORKER_ENABLED:
+        retry_worker = RetryWorker(_db_provider, _retry_runtime)
+        await retry_worker.start()
+
+
+async def stop_runtime() -> None:
+    global run_worker_pool, retry_worker
+    if run_worker_pool is not None:
+        await run_worker_pool.stop()
+        run_worker_pool = None
+    if retry_worker is not None:
+        await retry_worker.stop()
+        retry_worker = None
 
 
 class ApprovalRequest(BaseModel):
@@ -459,6 +523,7 @@ def manifest() -> dict:
     tool_repository.ensure_builtins()
     data["tools"] = tool_repository.list_tools(enabled_only=True)
     data["llm"] = LLMService().status
+    data["knowledge"]["embedding"] = KnowledgeRepository(db).embedding.status
     data["agentarts"] = AgentArtsBridge().status
     data["mcp"] = {"endpoint": "/api/mcp", "protocol_version": "2024-11-05", "methods": ["initialize", "tools/list", "tools/call"]}
     return data
@@ -646,8 +711,7 @@ async def upload_knowledge_document(
     if len(payload) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="知识文档不能超过 20 MB")
     try:
-        text = extract_text(file.filename or "knowledge.txt", payload)
-        chunks = chunk_text(text)
+        chunks = extract_document_chunks(file.filename or "knowledge.txt", payload)
         document = KnowledgeRepository(db).insert_document(
             Path(file.filename or "知识文档").stem, category, "upload", chunks,
         )
@@ -1086,6 +1150,12 @@ async def generate_routes(payload: RouteGenerateRequest) -> dict:
     if not warehouses or not destinations:
         raise HTTPException(status_code=400, detail="至少需要一个已定位仓库和一个已定位安置点")
     routes, warnings = await generate_route_candidates(warehouses, destinations)
+    if warnings:
+        RetryQueueRepository(db).enqueue(
+            "osrm",
+            {"warehouse_ids": [item["id"] for item in warehouses], "destination_ids": [item["id"] for item in destinations]},
+            warnings[0], max_attempts=RETRY_MAX_ATTEMPTS,
+        )
     if payload.replace_generated:
         warehouse_ids = {item["id"] for item in warehouses}
         destination_ids = {item["id"] for item in destinations}
@@ -1193,7 +1263,24 @@ def scenarios() -> list[dict]:
     return db.scenario_rows()
 
 @router.post("/runs")
-def start_run(payload: RunRequest, background_tasks: BackgroundTasks) -> dict:
+def start_run(
+    payload: RunRequest,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    idempotency_key = (idempotency_key or "").strip()[:120]
+    if idempotency_key:
+        existing = db.get_run_by_idempotency(idempotency_key)
+        if existing:
+            return {
+                "run_id": existing["id"], "status": existing["status"],
+                "scenario_id": existing.get("scenario_id"),
+                "idempotent_replay": True,
+                "priority_score": existing.get("priority_score", 0),
+            }
+    queue_metrics = RunQueueService(db).metrics()
+    if queue_metrics["queued"] + queue_metrics["running"] >= queue_metrics["max_queue_size"]:
+        raise HTTPException(status_code=429, detail=f"运行队列已满（上限 {queue_metrics['max_queue_size']}），请稍后重试")
     event_record = ops.get_event(payload.event_id) if payload.event_id else None
     if event_record:
         scenario = ops.ensure_operational_scenario(event_record)
@@ -1219,14 +1306,50 @@ def start_run(payload: RunRequest, background_tasks: BackgroundTasks) -> dict:
     if not request_payload["event"]["closed_route_ids"]:
         request_payload["event"]["closed_route_ids"] = scenario["closed_routes"]
     run_id = new_run_id()
-    db.create_run(run_id, scenario["id"], request_payload)
-    background_tasks.add_task(orchestrate, db, run_id, request_payload)
-    return {"run_id": run_id, "status": "queued", "scenario_id": scenario["id"], "event_id": payload.event_id}
+    priority = run_priority(request_payload)
+    db.create_run(
+        run_id, scenario["id"], request_payload,
+        priority_score=priority, max_attempts=RETRY_MAX_ATTEMPTS, idempotency_key=idempotency_key,
+    )
+    db.add_event(
+        run_id, "run.queued", "run_scheduler", "平台运行队列", "运行任务已入队",
+        f"优先级 {priority:.2f}；并发上限 {RUN_WORKER_CONCURRENCY}。",
+        {"priority_score": priority, "idempotency_key": idempotency_key},
+    )
+    RunQueueService(db).enqueue(run_id, priority)
+    return {
+        "run_id": run_id, "status": "queued", "scenario_id": scenario["id"],
+        "event_id": payload.event_id, "priority_score": priority,
+    }
 
 
 @router.get("/runs")
 def list_runs(limit: int = 20) -> list[dict]:
     return db.list_runs(limit=limit)
+
+
+@router.get("/queue/metrics")
+def queue_metrics() -> dict:
+    data = RunQueueService(db).metrics()
+    data["retry_jobs"] = RetryQueueRepository(db).metrics()
+    data["scheduler_started"] = run_worker_pool is not None
+    return data
+
+
+@router.get("/retry-jobs")
+def list_retry_jobs(status: str | None = None, limit: int = 100) -> list[dict]:
+    return RetryQueueRepository(db).list_jobs(status=status, limit=limit)
+
+
+@router.post("/retry-jobs/{job_id}/replay")
+def replay_retry_job(job_id: str, request: Request) -> dict:
+    current = _require_admin(request)
+    job = RetryQueueRepository(db).requeue(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="重试作业不存在")
+    auth_service.audit("retry_job_requeued", "POST", f"/api/retry-jobs/{job_id}/replay", 200, current,
+                       resource_type="retry_job", resource_id=job_id)
+    return job
 
 
 @router.get("/runs/{run_id}")
@@ -1238,23 +1361,13 @@ def get_run(run_id: str) -> dict:
 
 
 @router.post("/runs/{run_id}/approve")
-def approve_run(run_id: str, payload: ApprovalRequest) -> dict:
+def approve_run(run_id: str, payload: ApprovalRequest, request: Request) -> dict:
     run = db.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
     if run["status"] != "awaiting_approval":
         raise HTTPException(status_code=409, detail="当前方案尚未进入待审批状态")
-    db.approve_run(run_id, payload.note)
-    db.add_event(
-        run_id=run_id,
-        event_type="human.approved",
-        agent_id="orchestrator",
-        agent_name="编排控制器",
-        title="人工审批通过",
-        detail=payload.note or "值班负责人已确认方案并进入执行准备。",
-        payload={"approved": True},
-    )
-    tasks = []
+    user = getattr(request.state, "user", None) or {}
     result = run.get("result") or {}
     recommended_id = ((result.get("delivery") or {}).get("recommended_plan") or {}).get("plan_id")
     approved_plan = None
@@ -1263,41 +1376,97 @@ def approve_run(run_id: str, payload: ApprovalRequest) -> dict:
             if plan.get("plan_id") == recommended_id:
                 approved_plan = plan
                 break
-    if approved_plan:
-        tasks = ops.replace_tasks(run_id, approved_plan)
+        if approved_plan:
+            break
+    if not approved_plan:
+        raise HTTPException(status_code=409, detail="推荐方案不存在，不能审批")
+    try:
+        reservation = InventoryReservationService(db).reserve(run_id, approved_plan, user, payload.note)
+    except InventoryReservationError as exc:
         db.add_event(
-            run_id=run_id,
-            event_type="tasks.created",
-            agent_id="orchestrator",
-            agent_name="编排控制器",
-            title="执行任务已生成",
-            detail=f"已生成 {len(tasks)} 条运输执行任务。",
-            payload={"task_count": len(tasks)},
+            run_id, "inventory.reservation_failed", "orchestrator", "库存预留",
+            "审批库存预留失败", str(exc), {"shortages": exc.shortages},
         )
-    return {"run_id": run_id, "approved": True, "tasks": tasks}
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    approved_by_name = user.get("display_name") or user.get("username", "")
+    db.add_event(
+        run_id=run_id,
+        event_type="human.approved",
+        agent_id="orchestrator",
+        agent_name="编排控制器",
+        title="人工审批通过",
+        detail=payload.note or "值班负责人已确认方案并进入执行准备。",
+        payload={
+            "approved": True, "approved_by": user.get("id"),
+            "approved_by_name": approved_by_name,
+            "inventory_reservation": reservation,
+        },
+    )
+    tasks = ops.replace_tasks(run_id, approved_plan)
+    db.add_event(
+        run_id=run_id,
+        event_type="tasks.created",
+        agent_id="orchestrator",
+        agent_name="编排控制器",
+        title="执行任务已生成",
+        detail=f"已生成 {len(tasks)} 条运输执行任务，并锁定推荐方案所需库存。",
+        payload={"task_count": len(tasks), "reservation_count": reservation.get("count", 0)},
+    )
+    return {
+        "run_id": run_id, "approved": True, "approved_by": user.get("id"),
+        "approved_by_name": approved_by_name, "inventory_reservation": reservation,
+        "tasks": tasks,
+    }
+
+
+@router.post("/runs/{run_id}/release-reservation")
+def release_run_reservation(run_id: str, request: Request) -> dict:
+    current = _require_admin(request)
+    if not db.get_run(run_id):
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    released = InventoryReservationService(db).release(run_id)
+    db.add_event(
+        run_id, "inventory.reservation_released", "orchestrator", "库存预留",
+        "库存预留已释放", f"释放 {released['count']} 条预留。", released,
+    )
+    auth_service.audit("inventory_reservation_released", "POST", f"/api/runs/{run_id}/release-reservation", 200,
+                       current, resource_type="run", resource_id=run_id)
+    return released
 
 
 @router.get("/runs/{run_id}/events")
-async def run_events(run_id: str, request: Request) -> StreamingResponse:
+async def run_events(
+    run_id: str,
+    request: Request,
+    after: int = 0,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
     if not db.get_run(run_id):
         raise HTTPException(status_code=404, detail="运行记录不存在")
 
     async def event_stream():
-        after = 0
-        terminal = {"awaiting_approval", "needs_human", "failed"}
+        cursor = max(0, int(after or 0))
+        if last_event_id:
+            try:
+                cursor = max(cursor, int(last_event_id))
+            except ValueError:
+                pass
+        terminal = {"awaiting_approval", "approved", "needs_human", "failed", "cancelled"}
         idle_after_terminal = 0
         while True:
             if await request.is_disconnected():
                 break
-            events = db.events_after(run_id, after)
+            events = db.events_after(run_id, cursor)
             for event in events:
-                after = max(after, event["seq"])
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                cursor = max(cursor, event["seq"])
+                yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
             run = db.get_run(run_id)
             if run and run["status"] in terminal:
                 idle_after_terminal += 1
                 if not events and idle_after_terminal >= 2:
                     break
+            else:
+                idle_after_terminal = 0
             await asyncio.sleep(0.2)
 
     return StreamingResponse(

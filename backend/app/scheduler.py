@@ -277,9 +277,21 @@ def platform_manifest() -> dict[str, Any]:
         "tools": TOOLS,
         "workflow": WORKFLOW,
         "knowledge": {
-            "retrieval": "Chinese character bigram + keyword hybrid retrieval",
+            "retrieval": "pluggable embedding + BM25 + deterministic rerank",
             "source_count": 6,
             "citation_required": True,
+            "citation_locator": "page/section/character range",
+        },
+        "run_scheduler": {
+            "engine": "persistent database queue + lease heartbeat",
+            "concurrency": "bounded worker pool",
+            "priority": "severity + P0-P3 + deadline urgency + affected population",
+            "restart_recovery": "expired leases requeued; max attempts dead-lettered",
+            "multi_instance": "PostgreSQL FOR UPDATE SKIP LOCKED",
+        },
+        "inventory_control": {
+            "approval_transaction": "atomic locked_quantity reservation",
+            "double_commit_prevention": True,
         },
         "memory": {
             "type": "跨运行记忆 + 运行内黑板",
@@ -289,8 +301,8 @@ def platform_manifest() -> dict[str, Any]:
         },
         "score_alignment": [
             {"item": "平台功能完整性", "evidence": "可替换主干 DAG、工作流内 loop/tool 节点、3 个可实例化模板、可见双核验投票 Agent、动态扩展审查、MCP/Function Calling、运行监控、独立核验和反馈回路"},
-            {"item": "技术可靠性与可复现性", "evidence": "本地确定性运行、库存快照、事件轨迹、独立布局基准、8 秒长稳测试、端到端样本分区、自动化测试和失败转人工"},
-            {"item": "人工智能使用合理性", "evidence": "三项 AI 实际决策（需求假设、修复优先级、方案推荐）、六项决策矩阵、混合 RAG 和确定性核验护栏"},
+            {"item": "技术可靠性与可复现性", "evidence": "持久化运行队列、租约恢复、库存原子预留、两套独立路网、可配置 30 秒长稳、端到端样本分区、自动化测试和失败转人工"},
+            {"item": "人工智能使用合理性", "evidence": "LLM 优先级与权重建议进入真实排序、AgentArts 修复策略和方案推荐、七项决策矩阵、可替换 embedding 与确定性核验护栏"},
             {"item": "文档质量", "evidence": "方案书、演示脚本、Agent 契约、接口说明和可复现运行记录"},
         ],
     }

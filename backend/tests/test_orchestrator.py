@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app import orchestrator as orchestrator_module
 from app.database import Database
+from app.knowledge_base import KnowledgeRepository
 from app.registry import AgentRegistryService
 from app.scheduler import AGENTS
 from app.workflow_engine import WorkflowRepository
@@ -351,3 +352,39 @@ def test_builtin_dual_verifier_template_runs_without_manual_registration(tmp_pat
     assert run["result"]["core_workflow"]["id"] == "dual-template-runtime"
     assert run["result"]["rounds"][0]["verification"]["vote_summary"]["total"] == 2
     assert run["result"]["final_verification"]["vote_summary"]["total"] == 2
+
+
+def test_knowledge_tool_result_is_consumed_by_downstream_context(tmp_path: Path):
+    db = Database(tmp_path / "knowledge-tool-consumption.db", database_url="")
+    db.initialize()
+    KnowledgeRepository(db).insert_document(
+        "道路封闭处置规则", "应急规则", "test",
+        [{"text": "暴雨导致道路封闭时，运输方案必须排除封闭路线并优先选择开放备用通道。", "section": "道路封闭", "char_start": 0, "char_end": 38}],
+    )
+    scenario = db.get_scenario("heatwave-iii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": [],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"], "quantity": item["quantity"],
+                "priority": item["priority"], "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    WorkflowRepository(db).instantiate_template("TPL-EVIDENCE-DELIVERY", {"id": "knowledge-consumer", "name": "知识工具消费测试"})
+    db.create_run("RUN-KNOWLEDGE-TOOL", scenario["id"], request)
+    asyncio.run(orchestrator_module.orchestrate(db, "RUN-KNOWLEDGE-TOOL", request))
+    run = db.get_run("RUN-KNOWLEDGE-TOOL")
+    assert run["status"] == "awaiting_approval", run.get("result")
+    assert run["result"]["execution_evidence"]
+    consumed = [event for event in db.events_after("RUN-KNOWLEDGE-TOOL") if event["type"] == "tool.consumed"]
+    assert any(event["payload"].get("tool_id") == "knowledge_search" for event in consumed)

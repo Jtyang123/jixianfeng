@@ -34,6 +34,79 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+PRIORITY_LEVELS = ["P0", "P1", "P2", "P3"]
+
+
+def apply_llm_priority_adjustments(demand_plan: dict, reasoning: dict) -> dict:
+    """Apply bounded priority changes proposed by the LLM reasoning layer."""
+    result = reasoning.get("result") if isinstance(reasoning, dict) else None
+    if not isinstance(result, dict):
+        return {"applied": False, "source": "deterministic-fallback", "changes": []}
+    raw = result.get("priority_adjustments") or result.get("priority_overrides") or {}
+    if isinstance(raw, list):
+        adjustments = {
+            str(item.get("material_id") or item.get("material_code") or item.get("material_name") or ""): item.get("priority")
+            for item in raw if isinstance(item, dict)
+        }
+    elif isinstance(raw, dict):
+        adjustments = raw
+    else:
+        adjustments = {}
+    changes = []
+    for item in demand_plan.get("items", []):
+        candidates = [str(item.get("material_id")), str(item.get("material_code")), str(item.get("material_name"))]
+        target = next((str(adjustments.get(key) or "") for key in candidates if adjustments.get(key)), "")
+        current = str(item.get("priority") or "P2")
+        if target not in PRIORITY_LEVELS or current not in PRIORITY_LEVELS or target == current:
+            continue
+        if abs(PRIORITY_LEVELS.index(target) - PRIORITY_LEVELS.index(current)) > 1:
+            continue
+        item["priority"] = target
+        item["llm_priority_adjustment"] = {"from": current, "to": target}
+        changes.append({
+            "material_id": item.get("material_id"), "material_name": item.get("material_name"),
+            "from": current, "to": target,
+        })
+    demand_plan["llm_priority_decision"] = {
+        "applied": bool(changes), "source": reasoning.get("mode", "llm"),
+        "changes": changes, "boundary": "仅允许相邻优先级调整一级，不改变数量、截止时间和硬规则",
+    }
+    return demand_plan["llm_priority_decision"]
+
+
+def normalize_llm_weight_profile(default_weights: dict, reasoning: dict) -> dict:
+    """Blend user weights with a bounded LLM proposal used for approved-plan ranking."""
+    defaults = {
+        "speed": max(0.0, _num(default_weights.get("speed"), 0.38)),
+        "cost": max(0.0, _num(default_weights.get("cost"), 0.27)),
+        "risk": max(0.0, _num(default_weights.get("risk"), 0.35)),
+    }
+    total = sum(defaults.values()) or 1.0
+    defaults = {key: value / total for key, value in defaults.items()}
+    result = reasoning.get("result") if isinstance(reasoning, dict) else None
+    raw = None
+    if isinstance(result, dict):
+        raw = result.get("weight_profile") or result.get("weights")
+    if not isinstance(raw, dict):
+        return {"applied": False, "weights": defaults, "source": "user-weights", "raw": {}}
+    proposed = {}
+    for key in ("speed", "cost", "risk"):
+        value = _num(raw.get(key), defaults[key])
+        proposed[key] = max(0.05, min(0.80, value))
+    proposed_total = sum(proposed.values()) or 1.0
+    proposed = {key: value / proposed_total for key, value in proposed.items()}
+    blended = {key: round(defaults[key] * 0.5 + proposed[key] * 0.5, 4) for key in defaults}
+    blended_total = sum(blended.values()) or 1.0
+    blended = {key: round(value / blended_total, 4) for key, value in blended.items()}
+    return {
+        "applied": True,
+        "weights": blended,
+        "source": reasoning.get("mode", "llm"),
+        "raw": proposed,
+        "boundary": "用户权重与 LLM 建议各占 50%，仅用于已核验方案排序，不改变核验结论",
+    }
+
+
 def build_demand_plan(request: dict, materials: list[dict], destination_rows: list[dict]) -> dict:
     material_map = {item["id"]: item for item in materials}
     total_population = sum(max(1, int(dest["population"])) for dest in destination_rows)

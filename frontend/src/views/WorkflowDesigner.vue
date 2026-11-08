@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { CheckCircle2, GitBranch, Layers3, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
+import { addWorkflowNode, applyVisualPositions, computeLoopZones, connectWorkflowNodes, findNodeByVisualId, flattenVisualNodes } from '../utils/workflowCanvas.js'
 
 const props = defineProps({ user: { type: Object, default: null } })
 const workflows = ref([])
@@ -94,20 +95,6 @@ function selectWorkflow(item) {
   error.value = ''
 }
 
-function flattenVisualNodes(nodes, scopePath = '', parentX = 24, parentY = 30) {
-  const flattened = []
-  nodes.forEach((node, index) => {
-    const visualId = scopePath ? `${scopePath}/${node.id}` : node.id
-    const x = Number(node.ui?.x ?? (scopePath ? parentX + 30 + (index % 3) * 220 : 48 + (index % 4) * 230))
-    const y = Number(node.ui?.y ?? (scopePath ? parentY + 130 + Math.floor(index / 3) * 120 : 54 + Math.floor(index / 4) * 130))
-    flattened.push({ ...node, visualId, node_id: node.id, scopePath, parentLoopId: scopePath ? scopePath.split('/').pop() : '', x, y })
-    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) {
-      flattened.push(...flattenVisualNodes(node.body.nodes, visualId, x, y))
-    }
-  })
-  return flattened
-}
-
 const visualEdges = computed(() => {
   const byId = new Map(visualNodes.value.map((node) => [node.visualId, node]))
   const edges = []
@@ -126,23 +113,7 @@ const visualEdges = computed(() => {
   return edges
 })
 
-const loopZones = computed(() => visualNodes.value.filter((node) => node.type === 'loop').map((loop) => {
-  const children = visualNodes.value.filter((node) => node.scopePath === loop.visualId)
-  if (!children.length) {
-    return { id: loop.visualId, label: loop.node_id, x: loop.x - 20, y: loop.y + 60, width: 260, height: 130 }
-  }
-  const xs = children.map((node) => node.x)
-  const ys = children.map((node) => node.y)
-  return {
-    id: loop.visualId,
-    label: loop.node_id,
-    x: Math.max(8, Math.min(loop.x + 18, ...xs) - 18),
-    y: Math.max(8, Math.min(loop.y + 105, ...ys) - 24),
-    width: Math.max(260, Math.max(loop.x + 22, ...xs.map((value) => value + 184)) - Math.min(loop.x, ...xs) + 38),
-    height: Math.max(110, Math.max(...ys.map((value) => value + 84)) - Math.min(loop.y + 105, ...ys) + 36),
-  }
-}))
-
+const loopZones = computed(() => computeLoopZones(visualNodes.value))
 const connectionPath = computed(() => {
   if (!connecting.value) return ''
   const source = connecting.value.source
@@ -176,19 +147,10 @@ function canvasPoint(event) {
   }
 }
 
-function applyVisualPositions(nodes, scopePath = '') {
-  const positions = new Map(visualNodes.value.map((node) => [node.visualId, { x: Math.round(node.x), y: Math.round(node.y) }]))
-  for (const node of nodes) {
-    const visualId = scopePath ? `${scopePath}/${node.id}` : node.id
-    node.ui = positions.get(visualId) || node.ui
-    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) applyVisualPositions(node.body.nodes, visualId)
-  }
-}
-
 function writeNodePositions() {
   try {
     const definition = parseDefinition()
-    applyVisualPositions(definition.nodes)
+    applyVisualPositions(definition.nodes, visualNodes.value)
     form.value.json = JSON.stringify(definition, null, 2)
   } catch (exc) { visualError.value = exc.message }
 }
@@ -236,18 +198,6 @@ function cancelConnection() {
   connecting.value = null
 }
 
-function findNodeByVisualId(nodes, visualId, scopePath = '') {
-  for (const node of nodes) {
-    const currentId = scopePath ? `${scopePath}/${node.id}` : node.id
-    if (currentId === visualId) return { node, nodes, scopePath }
-    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) {
-      const found = findNodeByVisualId(node.body.nodes, visualId, currentId)
-      if (found) return found
-    }
-  }
-  return null
-}
-
 function finishConnection(target, event) {
   event.preventDefault()
   event.stopPropagation()
@@ -262,14 +212,9 @@ function finishConnection(target, event) {
   }
   try {
     const definition = parseDefinition()
-    const targetEntry = findNodeByVisualId(definition.nodes, target.visualId)
-    if (targetEntry) {
-      const dependencies = new Set(targetEntry.node.depends_on || [])
-      dependencies.add(connecting.value.source.node_id)
-      targetEntry.node.depends_on = [...dependencies]
-      form.value.json = JSON.stringify(definition, null, 2)
-      message.value = `已连接 ${connecting.value.source.node_id} → ${target.node_id}，请重新校验 DAG`
-    }
+    const connected = connectWorkflowNodes(definition, connecting.value.source.visualId, target.visualId)
+    form.value.json = JSON.stringify(connected.definition, null, 2)
+    message.value = `已连接 ${connected.source.id} → ${connected.target.id}，请重新校验 DAG`
   } catch (exc) {
     visualError.value = exc.message
   } finally {
@@ -298,49 +243,8 @@ function addNode() {
   }
   try {
     const definition = parseDefinition()
-    let nodes = definition.nodes
-    let scopePath = ''
-    if (draft.loop_id) {
-      const loopEntry = findNodeByVisualId(definition.nodes, draft.loop_id)
-      if (!loopEntry || loopEntry.node.type !== 'loop' || !Array.isArray(loopEntry.node.body?.nodes)) {
-        throw new Error('目标循环体不存在')
-      }
-      nodes = loopEntry.node.body.nodes
-      scopePath = draft.loop_id
-    }
-    if (nodes.some((node) => node.id === id)) throw new Error(`当前作用域已经存在节点 ${id}`)
-    const index = nodes.length
-    const loopVisual = draft.loop_id ? visualNodes.value.find((node) => node.visualId === draft.loop_id) : null
-    const node = {
-      id,
-      type: draft.type,
-      depends_on: [],
-      priority: 80,
-      ui: {
-        x: loopVisual ? loopVisual.x + 30 + (index % 3) * 220 : 48 + (index % 4) * 230,
-        y: loopVisual ? loopVisual.y + 140 + Math.floor(index / 3) * 120 : 54 + Math.floor(index / 4) * 130,
-      },
-    }
-    if (draft.type === 'agent') node.agent_id = draft.agent_id
-    if (draft.type === 'tool') {
-      node.tool_id = draft.tool_id
-      node.arguments = {}
-    }
-    if (draft.type === 'subworkflow') node.workflow_id = draft.workflow_id
-    if (draft.type === 'condition') {
-      node.when = {
-        field: draft.condition_field,
-        operator: 'eq',
-        value: draft.condition_value === 'true' ? true : draft.condition_value === 'false' ? false : draft.condition_value,
-      }
-    }
-    if (draft.type === 'loop') {
-      node.max_iterations = 3
-      node.until = { field: 'verification.verdict', operator: 'eq', value: 'pass' }
-      node.on_exhausted = 'human_escalation'
-      node.body = { nodes: [{ id: `${id}_STEP`, type: 'condition', depends_on: [], when: { field: 'event.ready', operator: 'eq', value: true } }] }
-    }
-    nodes.push(node)
+    const result = addWorkflowNode(definition, draft, visualNodes.value)
+    const scopePath = result.scopePath
     form.value.json = JSON.stringify(definition, null, 2)
     showNodeForm.value = false
     validation.value = null

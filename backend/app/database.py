@@ -13,7 +13,7 @@ from .config import DATABASE_URL, DB_PATH, SEED_DEMO
 
 
 def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def _json(value: Any) -> str:
@@ -175,6 +175,27 @@ class Database:
                     FOREIGN KEY (material_id) REFERENCES materials(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS inventory_reservations (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    inventory_id INTEGER NOT NULL,
+                    warehouse_id TEXT NOT NULL,
+                    material_id INTEGER NOT NULL,
+                    quantity REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    released_at TEXT,
+                    UNIQUE(run_id, inventory_id),
+                    FOREIGN KEY (run_id) REFERENCES runs(id),
+                    FOREIGN KEY (inventory_id) REFERENCES inventory(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_inventory_reservations_run
+                ON inventory_reservations(run_id, status);
+                CREATE INDEX IF NOT EXISTS idx_inventory_reservations_expiry
+                ON inventory_reservations(status, expires_at);
+
                 CREATE TABLE IF NOT EXISTS vehicles (
                     id TEXT PRIMARY KEY,
                     plate_no TEXT NOT NULL,
@@ -227,14 +248,27 @@ class Database:
                     scenario_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    queued_at TEXT,
+                    started_at TEXT,
                     completed_at TEXT,
                     request_json TEXT NOT NULL,
                     result_json TEXT,
+                    priority_score REAL NOT NULL DEFAULT 0,
+                    lease_owner TEXT NOT NULL DEFAULT '',
+                    lease_expires_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    idempotency_key TEXT NOT NULL DEFAULT '',
                     approved INTEGER NOT NULL DEFAULT 0,
                     approved_at TEXT,
+                    approved_by INTEGER,
+                    approved_by_name TEXT NOT NULL DEFAULT '',
                     approval_note TEXT NOT NULL DEFAULT '',
+                    reserved_at TEXT,
                     FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
                 );
+
 
                 CREATE TABLE IF NOT EXISTS agent_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -413,6 +447,13 @@ class Database:
                     content TEXT NOT NULL,
                     keywords TEXT NOT NULL DEFAULT '',
                     embedding_json TEXT NOT NULL DEFAULT '[]',
+                    embedding_provider TEXT NOT NULL DEFAULT 'hash',
+                    embedding_model TEXT NOT NULL DEFAULT 'domain-hash-v1',
+                    embedding_dim INTEGER NOT NULL DEFAULT 256,
+                    page_no INTEGER,
+                    section TEXT NOT NULL DEFAULT '',
+                    char_start INTEGER NOT NULL DEFAULT 0,
+                    char_end INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
 
@@ -486,6 +527,24 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_id, created_at DESC);
 
+                CREATE TABLE IF NOT EXISTS retry_jobs (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    run_id TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    next_attempt_at TEXT NOT NULL,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_retry_jobs_due
+                ON retry_jobs(status, next_attempt_at);
+
                 CREATE TABLE IF NOT EXISTS evaluation_runs (
                     id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL,
@@ -510,11 +569,12 @@ class Database:
             self._ensure_route_columns(conn)
             self._ensure_knowledge_columns(conn)
             self._ensure_workflow_columns(conn)
+            self._ensure_run_columns(conn)
 
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
-                "agent_memory",
+                "agent_memory", "retry_jobs", "inventory_reservations",
                 "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
@@ -557,8 +617,47 @@ class Database:
             ).fetchall()}
         else:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
-        if "embedding_json" not in columns:
-            conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding_json TEXT NOT NULL DEFAULT '[]'")
+        additions = {
+            "embedding_json": "TEXT NOT NULL DEFAULT '[]'",
+            "embedding_provider": "TEXT NOT NULL DEFAULT 'hash'",
+            "embedding_model": "TEXT NOT NULL DEFAULT 'domain-hash-v1'",
+            "embedding_dim": "INTEGER NOT NULL DEFAULT 256",
+            "page_no": "INTEGER",
+            "section": "TEXT NOT NULL DEFAULT ''",
+            "char_start": "INTEGER NOT NULL DEFAULT 0",
+            "char_end": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, sql_type in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE knowledge_chunks ADD COLUMN {name} {sql_type}")
+
+    def _ensure_run_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("runs",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        additions = {
+            "queued_at": "TEXT",
+            "started_at": "TEXT",
+            "priority_score": "REAL NOT NULL DEFAULT 0",
+            "lease_owner": "TEXT NOT NULL DEFAULT ''",
+            "lease_expires_at": "TEXT",
+            "attempts": "INTEGER NOT NULL DEFAULT 0",
+            "max_attempts": "INTEGER NOT NULL DEFAULT 3",
+            "last_error": "TEXT NOT NULL DEFAULT ''",
+            "idempotency_key": "TEXT NOT NULL DEFAULT ''",
+            "approved_by": "INTEGER",
+            "approved_by_name": "TEXT NOT NULL DEFAULT ''",
+            "reserved_at": "TEXT",
+        }
+        for name, sql_type in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {sql_type}")
+        conn.execute("UPDATE runs SET queued_at = created_at WHERE queued_at IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, priority_score DESC, queued_at)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency ON runs(idempotency_key) WHERE idempotency_key <> ''")
 
     def _ensure_workflow_columns(self, conn) -> None:
         if self.engine == "postgresql":
@@ -1045,14 +1144,34 @@ class Database:
         item["summary"] = json.loads(item.pop("summary_json") or "{}")
         item["result"] = json.loads(item.pop("result_json") or "{}")
         return item
-    def create_run(self, run_id: str, scenario_id: str, request_payload: dict) -> dict:
+    def create_run(
+        self,
+        run_id: str,
+        scenario_id: str,
+        request_payload: dict,
+        *,
+        priority_score: float = 0.0,
+        max_attempts: int = 3,
+        idempotency_key: str = '',
+    ) -> dict:
+        now = now_iso()
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO runs (id, scenario_id, status, created_at, request_json) VALUES (?, ?, 'queued', ?, ?)",
-                (run_id, scenario_id, now_iso(), _json(request_payload)),
+                """INSERT INTO runs
+                   (id, scenario_id, status, created_at, queued_at, request_json,
+                    priority_score, max_attempts, idempotency_key)
+                   VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)""",
+                (run_id, scenario_id, now, now, _json(request_payload), priority_score, max_attempts, idempotency_key),
             )
             row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
             return dict(row)
+
+    def get_run_by_idempotency(self, idempotency_key: str) -> dict | None:
+        if not idempotency_key:
+            return None
+        with self.connect() as conn:
+            row = conn.execute("SELECT id FROM runs WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
+        return self.get_run(row["id"]) if row else None
 
     def update_run(self, run_id: str, status: str, result: dict | None = None) -> None:
         with self.connect() as conn:
@@ -1060,7 +1179,9 @@ class Database:
                 conn.execute("UPDATE runs SET status = ? WHERE id = ?", (status, run_id))
             else:
                 conn.execute(
-                    "UPDATE runs SET status = ?, result_json = ?, completed_at = ? WHERE id = ?",
+                    """UPDATE runs
+                       SET status=?, result_json=?, completed_at=?, lease_owner='', lease_expires_at=NULL
+                       WHERE id=?""",
                     (status, _json(result), now_iso(), run_id),
                 )
 
@@ -1118,16 +1239,22 @@ class Database:
     def list_runs(self, limit: int = 20) -> list[dict]:
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT id, scenario_id, status, created_at, completed_at, approved FROM runs ORDER BY created_at DESC LIMIT ?",
+                """SELECT id, scenario_id, status, created_at, queued_at, started_at, completed_at,
+                          priority_score, attempts, max_attempts, last_error, idempotency_key,
+                          approved, approved_at, approved_by, approved_by_name, approval_note, reserved_at
+                   FROM runs ORDER BY created_at DESC LIMIT ?""",
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def approve_run(self, run_id: str, note: str = "") -> dict | None:
+    def approve_run(self, run_id: str, note: str = "", user: dict | None = None) -> dict | None:
+        user = user or {}
         with self.connect() as conn:
             conn.execute(
-                "UPDATE runs SET approved = 1, approved_at = ?, approval_note = ? WHERE id = ?",
-                (now_iso(), note, run_id),
+                """UPDATE runs
+                   SET approved=1, approved_at=?, approved_by=?, approved_by_name=?, approval_note=?
+                   WHERE id=?""",
+                (now_iso(), user.get("id"), user.get("display_name") or user.get("username", ""), note, run_id),
             )
             row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
             return dict(row) if row else None

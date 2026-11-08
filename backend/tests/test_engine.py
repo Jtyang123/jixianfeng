@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.agents import build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
+from app.agents import apply_llm_priority_adjustments, build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, normalize_llm_weight_profile, verify_plans
 from app.database import Database
 
 
@@ -174,3 +174,19 @@ def test_data_quality_issue_exits_loop_with_explicit_repair_policy():
     assert directive["selected_policy"] == "data_quality_repair"
     assert directive["policies"]["data_policy"] == "request_data_repair"
     assert directive["can_retry"] is False
+
+
+def test_llm_weight_and_priority_decisions_are_bounded_and_applied():
+    demand = {"items": [{"material_id": 1, "material_name": "饮用水", "material_code": "WATER", "priority": "P1"}]}
+    priority = apply_llm_priority_adjustments(demand, {"mode": "llm", "result": {"priority_adjustments": {"1": "P0"}}})
+    assert priority["applied"] is True
+    assert demand["items"][0]["priority"] == "P0"
+    rejected = apply_llm_priority_adjustments(demand, {"mode": "llm", "result": {"priority_adjustments": {"1": "P3"}}})
+    assert rejected["applied"] is False
+    weights = normalize_llm_weight_profile({"speed": 0.38, "cost": 0.27, "risk": 0.35}, {
+        "mode": "llm", "result": {"weight_profile": {"speed": 0.8, "cost": 0.05, "risk": 0.15}},
+    })
+    assert weights["applied"] is True
+    assert abs(sum(weights["weights"].values()) - 1.0) < 0.01
+    assert weights["weights"]["speed"] < 0.8
+    assert weights["weights"]["speed"] > 0.38

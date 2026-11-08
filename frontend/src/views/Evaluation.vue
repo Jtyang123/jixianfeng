@@ -13,6 +13,7 @@ const error = ref('')
 const diagnostics = ref(null)
 const diagnosticsLoading = ref(false)
 const diagnosticsError = ref('')
+const queueMetrics = ref(null)
 
 const maxScore = computed(() => Math.max(...(benchmark.value?.comparison?.map((item) => item.score) || [100])))
 const featureChecks = computed(() => [
@@ -26,18 +27,19 @@ const featureChecks = computed(() => [
   { label: 'RAG 与证据链', status: true, evidence: '6 条规则文档与引用编号' },
   { label: '可复用工作流模板', status: true, evidence: '3 个可实例化模板 + 可见双核验投票 Agent' },
   { label: '跨运行记忆', status: true, evidence: 'SQLite/PostgreSQL 持久化，仅作安全 tie-break' },
-  { label: '独立布局与长稳证据', status: true, evidence: '西部走廊独立路网 + 8 秒持续提交 + 端到端运行样本分区' },
+  { label: '独立布局与长稳证据', status: true, evidence: '西部走廊与南部环线两套独立路网 + 可配置 30 秒持续提交 + 端到端运行样本分区' },
 ])
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [bench, platform, latest] = await Promise.all([
-      api.benchmark(), api.manifest(), api.latestDiagnostics(),
+    const [bench, platform, latest, queue] = await Promise.all([
+      api.benchmark(), api.manifest(), api.latestDiagnostics(), api.queueMetrics(),
     ])
     benchmark.value = bench
     manifest.value = platform
+    queueMetrics.value = queue
     if (latest?.result?.run_id) diagnostics.value = latest.result
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
@@ -66,26 +68,36 @@ onMounted(load)
 <template>
   <div class="evaluation-page">
     <section class="evaluation-hero">
-      <div><div class="eyebrow">VALIDATION & BENCHMARK</div><h2>结果验证与量化评估</h2><p>覆盖道路中断、正常条件、库存缺口、无可用车辆和独立路网布局；每个场景重复运行并对比单 Agent 基线与多 Agent 闭环。</p></div>
+      <div><div class="eyebrow">VALIDATION & BENCHMARK</div><h2>结果验证与量化评估</h2><p>覆盖道路中断、正常条件、库存缺口、无可用车辆和两套独立路网布局；基线使用独立的贪心单 Agent 生成器，不共享多目标方案生成器。</p></div>
       <button class="secondary-action" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ spin: loading }" />重新评估</button>
     </section>
     <div v-if="error" class="inline-error">{{ error }}</div>
     <div v-if="loading" class="loading-panel"><div class="loading-orbit" /><strong>正在执行基准场景</strong></div>
 
     <template v-else-if="benchmark">
+      <section v-if="queueMetrics" class="content-card cloud-runtime-card">
+        <div class="workflow-head"><div><div class="eyebrow">PLATFORM RUN SCHEDULER</div><h2>平台级运行队列</h2><p>持久化队列、并发上限、租约心跳和断点恢复；单次运行内部的 Agent 优先级不再冒充平台调度。</p></div><Activity :size="20" /></div>
+        <div class="cloud-runtime-summary">
+          <article><span>当前排队</span><strong>{{ queueMetrics.queued }}</strong><small>队列上限 {{ queueMetrics.max_queue_size }}</small></article>
+          <article><span>正在运行</span><strong>{{ queueMetrics.running }}</strong><small>平台并发上限 {{ queueMetrics.concurrency_limit }}</small></article>
+          <article><span>最久等待</span><strong>{{ formatNumber(queueMetrics.oldest_wait_ms, 1) }} ms</strong><small>优先级按等级、P0-P3、时限和人口计算</small></article>
+          <article><span>重试队列</span><strong>{{ Object.values(queueMetrics.retry_jobs || {}).reduce((sum, value) => sum + value, 0) }}</strong><small>{{ queueMetrics.engine }}</small></article>
+        </div>
+      </section>
+
       <section class="evaluation-metrics">
         <article><div class="eval-icon eval-icon--red"><AlertTriangle :size="19" /></div><span>硬阻断拦截</span><strong>{{ benchmark.metrics.hard_blockers_detected }}</strong><small>类问题被独立核验发现</small></article>
         <article><div class="eval-icon eval-icon--teal"><ShieldCheck :size="19" /></div><span>不安全方案拦截</span><strong>{{ benchmark.metrics.unsafe_plans_blocked }}</strong><small>候选方案被阻止交付</small></article>
-        <article><div class="eval-icon eval-icon--orange"><Target :size="19" /></div><span>核验评分提升</span><strong>+{{ benchmark.metrics.score_gain }}</strong><small>{{ benchmark.metrics.initial_score }} → {{ benchmark.metrics.final_score }}</small></article>
+        <article><div class="eval-icon eval-icon--orange"><Target :size="19" /></div><span>不安全验收下降</span><strong>{{ benchmark.metrics.unsafe_acceptance_reduction_pp }} pp</strong><small>{{ (benchmark.quantitative.baseline.unsafe_acceptance_rate * 100).toFixed(1) }}% → {{ (benchmark.quantitative.multi_agent.unsafe_acceptance_rate * 100).toFixed(1) }}%</small></article>
         <article><div class="eval-icon eval-icon--blue"><Clock3 :size="19" /></div><span>纯计算耗时</span><strong>{{ formatNumber(benchmark.metrics.compute_ms, 1) }}</strong><small>毫秒 · 重复复现 {{ benchmark.metrics.reproducible ? '一致' : '不一致' }}</small></article>
       </section>
 
       <div class="evaluation-grid">
         <section class="content-card chart-card">
-          <div class="workflow-head"><div><div class="eyebrow">BASELINE COMPARISON</div><h2>基线与反馈优化对比</h2></div><BarChart3 :size="20" /></div>
+          <div class="workflow-head"><div><div class="eyebrow">BASELINE COMPARISON</div><h2>基线 vs 多 Agent 安全结果率</h2><p>比较“可行交付或资源不足时安全升级”的比例，不把平均评分当作安全结论。</p></div><BarChart3 :size="20" /></div>
           <div class="score-chart">
             <div v-for="item in benchmark.comparison" :key="item.label" class="score-bar-row">
-              <div class="score-bar-label"><strong>{{ item.label }}</strong><span v-if="item.unsafe_plans">{{ item.unsafe_plans }} 套未安全方案</span><span v-else>全部通过硬规则</span></div>
+              <div class="score-bar-label"><strong>{{ item.label }}</strong><span v-if="item.unsafe_plans">{{ item.unsafe_plans }} 套不安全验收</span><span v-else>无安全失败结果</span></div>
               <div class="score-bar-track"><i :class="{ 'score-bar-fill--pass': item.passed }" :style="{ width: `${Math.max(4, item.score / maxScore * 100)}%` }" /></div>
               <em>{{ item.score }}</em>
             </div>
@@ -159,9 +171,16 @@ onMounted(load)
             </tbody></table>
           </div>
 
+          <div v-if="diagnostics.platform_queue" class="diagnostic-summary soak-summary">
+            <article :class="diagnostics.platform_queue.status === 'pass' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>平台队列压测</span><strong>{{ diagnostics.platform_queue.status === 'pass' ? '通过' : '异常' }}</strong><small>{{ diagnostics.platform_queue.scope }}</small></article>
+            <article><span>完成 / 提交</span><strong>{{ diagnostics.platform_queue.completed }}/{{ diagnostics.platform_queue.samples }}</strong><small>峰值并发 {{ diagnostics.platform_queue.peak_concurrency }} / 上限 {{ diagnostics.platform_queue.concurrency_limit }}</small></article>
+            <article><span>平均 / P95 排队</span><strong>{{ diagnostics.platform_queue.average_wait_ms }} ms</strong><small>P95 {{ diagnostics.platform_queue.p95_wait_ms }} ms</small></article>
+            <article><span>墙钟吞吐</span><strong>{{ diagnostics.platform_queue.throughput_runs_per_second }}</strong><small>次/秒 · {{ diagnostics.platform_queue.wall_ms }} ms</small></article>
+          </div>
+
           <div v-if="diagnostics.soak" class="diagnostic-summary soak-summary">
             <article :class="diagnostics.soak.status === 'pass' ? 'diagnostic-pass' : 'diagnostic-fail'"><span>长稳结论</span><strong>{{ diagnostics.soak.status === 'pass' ? '持续稳定' : '存在异常' }}</strong><small>{{ diagnostics.soak.scope }}</small></article>
-            <article><span>持续时间 / 样本</span><strong>{{ (diagnostics.soak.duration_ms / 1000).toFixed(1) }} s</strong><small>{{ diagnostics.soak.samples }} 个完整闭环样本</small></article>
+            <article><span>持续时间 / 样本</span><strong>{{ (diagnostics.soak.duration_ms / 1000).toFixed(1) }} s</strong><small>目标 {{ diagnostics.soak.target_duration_seconds }} 秒 · {{ diagnostics.soak.samples }} 个完整闭环样本</small></article>
             <article><span>成功率 / 吞吐</span><strong>{{ (diagnostics.soak.success_rate * 100).toFixed(1) }}%</strong><small>{{ diagnostics.soak.throughput_runs_per_second }} 次/秒 · P95 {{ diagnostics.soak.p95_latency_ms }} ms</small></article>
             <article><span>结果隔离</span><strong>{{ diagnostics.soak.isolation_consistent ? '一致' : '异常' }}</strong><small>{{ diagnostics.soak.batches }} 个批次 · {{ diagnostics.soak.concurrency }} 路持续提交</small></article>
           </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -23,10 +24,20 @@ if AUTH_REQUIRED:
 api_module.registry_service.sync_builtin_agents(AGENTS, AgentArtsBridge().endpoints)
 WorkflowRepository(db).ensure_template_library()
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await api_module.start_runtime()
+    try:
+        yield
+    finally:
+        await api_module.stop_runtime()
+
+
 app = FastAPI(
     title="急先锋 · 应急资源调度推演平台",
     description="四智能体协同、RAG 证据、独立核验与多方案生成",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 logger = logging.getLogger(__name__)

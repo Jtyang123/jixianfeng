@@ -10,8 +10,13 @@ from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
 
+import httpx
 from openpyxl import load_workbook
 
+from .config import (
+    EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT,
+)
 from .database import Database, now_iso
 
 
@@ -50,6 +55,70 @@ def extract_text(filename: str, payload: bytes) -> str:
         reader = PdfReader(io.BytesIO(payload))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     raise KnowledgeBaseError("知识文档仅支持 TXT、Markdown、CSV、JSON、DOCX、XLSX 或 PDF")
+
+
+def _sections(text: str) -> list[dict]:
+    lines = str(text or "").splitlines()
+    sections: list[dict] = []
+    current_title = ""
+    current_lines: list[str] = []
+    current_start = 0
+    offset = 0
+    heading_pattern = re.compile(r"^(#{1,6}\s+|第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+、)")
+    for line in lines:
+        if heading_pattern.match(line.strip()):
+            if current_lines:
+                body = "\n".join(current_lines).strip()
+                if body:
+                    sections.append({"text": body, "section": current_title, "char_start": current_start})
+            current_title = line.strip().lstrip("#").strip()
+            current_lines = []
+            current_start = offset + len(line) + 1
+        else:
+            current_lines.append(line)
+        offset += len(line) + 1
+    body = "\n".join(current_lines).strip()
+    if body:
+        sections.append({"text": body, "section": current_title, "char_start": current_start})
+    return sections or [{"text": str(text or ""), "section": "", "char_start": 0}]
+
+
+def extract_document_chunks(filename: str, payload: bytes, max_chars: int = 700, overlap: int = 80) -> list[dict]:
+    suffix = Path(filename).suffix.lower()
+    blocks: list[tuple[str, int | None, str]] = []
+    if suffix == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:
+            raise KnowledgeBaseError("服务器尚未安装 PDF 解析组件，请上传 TXT、Markdown、DOCX 或 XLSX") from exc
+        reader = PdfReader(io.BytesIO(payload))
+        for page_index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            blocks.extend((item["text"], page_index, item.get("section", "")) for item in _sections(text))
+    elif suffix == ".xlsx":
+        workbook = load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+        for sheet in workbook.worksheets:
+            rows = []
+            for row in sheet.iter_rows(values_only=True):
+                values = [str(value) for value in row if value not in (None, "")]
+                if values:
+                    rows.append(" | ".join(values))
+            blocks.extend((item["text"], None, sheet.title) for item in _sections("\n".join(rows)))
+    else:
+        text = extract_text(filename, payload)
+        blocks.extend((item["text"], None, item.get("section", "")) for item in _sections(text))
+
+    result: list[dict] = []
+    for block_text, page_no, section in blocks:
+        search_from = 0
+        for chunk in chunk_text(block_text, max_chars=max_chars, overlap=overlap):
+            start = block_text.find(chunk, search_from)
+            if start < 0:
+                start = search_from
+            end = start + len(chunk)
+            search_from = max(start + 1, end - overlap)
+            result.append({"text": chunk, "page_no": page_no, "section": section, "char_start": start, "char_end": end})
+    return result
 
 
 def _keywords(text: str) -> list[str]:
@@ -132,7 +201,54 @@ def embed_text(text: str, dimensions: int = 256) -> list[float]:
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right:
         return 0.0
-    return sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm <= 0 or right_norm <= 0:
+        return 0.0
+    return max(-1.0, min(1.0, dot / (left_norm * right_norm)))
+
+
+class EmbeddingService:
+    """OpenAI-compatible embedding backend with deterministic offline fallback."""
+
+    def __init__(self) -> None:
+        self.provider = EMBEDDING_PROVIDER
+        self.model = EMBEDDING_MODEL or "text-embedding-model"
+        self.dimensions = EMBEDDING_DIMENSIONS
+        self.remote = bool(
+            self.provider in {"openai", "openai-compatible", "remote"}
+            and EMBEDDING_BASE_URL and EMBEDDING_MODEL
+        )
+
+    @property
+    def status(self) -> dict:
+        return {
+            "provider": self.provider if self.remote else "hash",
+            "model": self.model if self.remote else "domain-hash-v1",
+            "dimensions": self.dimensions,
+            "remote_configured": self.remote,
+        }
+
+    def embed(self, text: str) -> tuple[list[float], dict]:
+        if self.remote:
+            try:
+                headers = {"Content-Type": "application/json"}
+                if EMBEDDING_API_KEY:
+                    headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
+                response = httpx.post(
+                    f"{EMBEDDING_BASE_URL}/embeddings", headers=headers,
+                    json={"model": self.model, "input": text, "dimensions": self.dimensions},
+                    timeout=EMBEDDING_TIMEOUT,
+                )
+                response.raise_for_status()
+                vector = [float(value) for value in response.json()["data"][0]["embedding"]]
+                if vector:
+                    return vector, {"provider": self.provider, "model": self.model, "dimensions": len(vector), "mode": "remote"}
+            except Exception:
+                pass
+        vector = embed_text(text, dimensions=self.dimensions)
+        return vector, {"provider": "hash", "model": "domain-hash-v1", "dimensions": self.dimensions, "mode": "fallback"}
 
 def _query_terms(query: str) -> list[str]:
     text = str(query or "").lower()
@@ -145,22 +261,36 @@ def _query_terms(query: str) -> list[str]:
 class KnowledgeRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
+        self.embedding = EmbeddingService()
 
-    def insert_document(self, name: str, category: str, source: str, chunks: list[str]) -> dict:
+    def insert_document(self, name: str, category: str, source: str, chunks: list[str] | list[dict]) -> dict:
         if not chunks:
             raise KnowledgeBaseError("文档没有可入库的文本内容")
+        normalized = [
+            item if isinstance(item, dict) else {"text": str(item), "page_no": None, "section": "", "char_start": 0, "char_end": len(str(item))}
+            for item in chunks
+        ]
         now = now_iso()
         with self.db.connect() as conn:
             document_id = self.db._insert_id(
                 conn,
                 "INSERT INTO knowledge_documents (name, category, source, status, chunk_count, created_at) VALUES (?, ?, ?, 'active', ?, ?)",
-                (name, category or "其他", source or "upload", len(chunks), now),
+                (name, category or "其他", source or "upload", len(normalized), now),
             )
-            for index, content in enumerate(chunks, start=1):
-                title = content.splitlines()[0][:120] if content.splitlines() else f"{name} 第 {index} 段"
+            for index, item in enumerate(normalized, start=1):
+                content = str(item.get("text") or item.get("content") or "")
+                title = str(item.get("section") or (content.splitlines()[0] if content.splitlines() else f"{name} 第 {index} 段"))[:120]
+                vector, meta = self.embedding.embed(content)
                 conn.execute(
-                    "INSERT INTO knowledge_chunks (document_id, seq, title, content, keywords, embedding_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (document_id, index, title, content, json.dumps(_keywords(content), ensure_ascii=False), json.dumps(embed_text(content)), now),
+                    """INSERT INTO knowledge_chunks
+                       (document_id, seq, title, content, keywords, embedding_json,
+                        embedding_provider, embedding_model, embedding_dim,
+                        page_no, section, char_start, char_end, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (document_id, index, title, content, json.dumps(_keywords(content), ensure_ascii=False),
+                     json.dumps(vector), meta["provider"], meta["model"], meta["dimensions"],
+                     item.get("page_no"), str(item.get("section") or ""),
+                     int(item.get("char_start") or 0), int(item.get("char_end") or len(content)), now),
                 )
         return self.get_document(document_id) or {}
 
@@ -196,7 +326,7 @@ class KnowledgeRepository:
         semantic_query = _semantic_terms(query)
         if not terms and not semantic_query:
             return []
-        query_vector = embed_text(query)
+        query_vector, query_meta = self.embedding.embed(query)
         with self.db.connect() as conn:
             rows = conn.execute(
                 """SELECT c.*, d.name AS document_name, d.category
@@ -212,11 +342,12 @@ class KnowledgeRepository:
                     embedding = json.loads(item.get("embedding_json") or "[]")
                 except (TypeError, json.JSONDecodeError):
                     embedding = []
-                if len(embedding) != 256:
-                    embedding = embed_text(str(item.get("content") or ""))
+                if len(embedding) != query_meta["dimensions"] or item.get("embedding_provider") != query_meta["provider"]:
+                    embedding, stored_meta = self.embedding.embed(str(item.get("content") or ""))
                     conn.execute(
-                        "UPDATE knowledge_chunks SET embedding_json = ? WHERE id = ?",
-                        (json.dumps(embedding), item["id"]),
+                        """UPDATE knowledge_chunks SET embedding_json=?, embedding_provider=?,
+                           embedding_model=?, embedding_dim=? WHERE id=?""",
+                        (json.dumps(embedding), stored_meta["provider"], stored_meta["model"], stored_meta["dimensions"], item["id"]),
                     )
                 item["embedding"] = embedding
                 item["tokens"] = Counter(_semantic_terms(str(item.get("content") or "")))
@@ -255,6 +386,8 @@ class KnowledgeRepository:
             hybrid_score = cosine * 0.55 + normalized_bm25 * 0.30 + exact_ratio * 0.10 + semantic_ratio * 0.05
             if hybrid_score < 0.035:
                 continue
+            heading = f"{item.get('section') or ''} {item.get('title') or ''}".lower()
+            heading_overlap = sum(1 for term in terms if term in heading) / max(len(terms), 1)
             ranked.append({
                 "id": f"KB-{item['document_id']}-{item['seq']}",
                 "title": item["title"] or item["document_name"],
@@ -263,13 +396,36 @@ class KnowledgeRepository:
                 "excerpt": content[:180],
                 "content": content,
                 "score": round(hybrid_score, 4),
+                "citation": {
+                    "page_no": item.get("page_no"),
+                    "section": item.get("section") or "",
+                    "char_start": int(item.get("char_start") or 0),
+                    "char_end": int(item.get("char_end") or 0),
+                    "locator": (
+                        f"第 {item.get('page_no')} 页" if item.get("page_no")
+                        else (f"章节：{item.get('section')}" if item.get("section") else f"字符 {int(item.get('char_start') or 0)}-{int(item.get('char_end') or 0)}")
+                    ),
+                },
                 "retrieval": {
-                    "mode": "domain-hash-vector+bm25+rerank",
+                    "mode": "embedding+bm25+deterministic-rerank",
+                    "embedding_backend": query_meta["provider"],
+                    "embedding_model": query_meta["model"],
                     "vector_similarity": round(cosine, 4),
                     "bm25": round(bm25, 4),
                     "exact_ratio": round(exact_ratio, 4),
                     "semantic_ratio": round(semantic_ratio, 4),
+                    "heading_overlap": round(heading_overlap, 4),
                 },
+                "_hybrid": hybrid_score,
+                "_heading_overlap": heading_overlap,
             })
+        ranked.sort(key=lambda item: item["_hybrid"], reverse=True)
+        document_seen: Counter = Counter()
+        for item in ranked:
+            duplicate_penalty = min(0.08, document_seen[item["source"]] * 0.025)
+            item["score"] = round(item["_hybrid"] * 0.82 + item["_heading_overlap"] * 0.18 - duplicate_penalty, 4)
+            document_seen[item["source"]] += 1
+            item.pop("_hybrid", None)
+            item.pop("_heading_overlap", None)
         ranked.sort(key=lambda item: item["score"], reverse=True)
         return ranked[:max(1, min(top_k, 20))]
