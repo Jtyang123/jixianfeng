@@ -27,7 +27,7 @@ from .models import (
     AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
     MaterialImportResult, OperationalEventCreate, PasswordChange, RouteGenerateRequest, RunRequest,
-    TaskStatusUpdate, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
+    TaskStatusUpdate, ToolInvokeRequest, ToolRegisterRequest, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
     WorkflowRunRequest, WorkflowUpsertRequest, WorkflowValidateRequest,
 )
 from .operations import OperationsRepository
@@ -36,6 +36,7 @@ from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
 from .scheduler import platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
+from .tools import ToolError, ToolRepository, ToolService
 from .workflow_engine import WorkflowEngine, WorkflowRepository, WorkflowValidationError, validate_workflow
 
 router = APIRouter(prefix="/api")
@@ -211,6 +212,54 @@ def activate_agent_version(agent_id: str, version: str, request: Request) -> dic
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/tools")
+def list_tools(enabled_only: bool = True) -> list[dict]:
+    repository = ToolRepository(db)
+    repository.ensure_builtins()
+    return repository.list_tools(enabled_only=enabled_only)
+
+
+@router.put("/tools/{tool_id}")
+def save_tool(tool_id: str, payload: ToolRegisterRequest, request: Request) -> dict:
+    current = _require_admin(request)
+    existing = ToolRepository(db).get_tool(tool_id)
+    if existing and existing["kind"] == "builtin":
+        raise HTTPException(status_code=409, detail="内置工具不能通过该接口覆盖")
+    saved = ToolRepository(db).save_tool(tool_id, payload.model_dump())
+    auth_service.audit("tool_saved", "PUT", f"/api/tools/{tool_id}", 200, current,
+                       resource_type="tool", resource_id=tool_id)
+    return saved
+
+
+@router.delete("/tools/{tool_id}")
+def delete_tool(tool_id: str, request: Request) -> dict:
+    current = _require_admin(request)
+    if not ToolRepository(db).delete_tool(tool_id):
+        raise HTTPException(status_code=404, detail="工具不存在或属于内置工具")
+    auth_service.audit("tool_deleted", "DELETE", f"/api/tools/{tool_id}", 200, current,
+                       resource_type="tool", resource_id=tool_id)
+    return {"deleted": True}
+
+
+@router.post("/tools/{tool_id}/invoke")
+async def invoke_tool(tool_id: str, payload: ToolInvokeRequest, request: Request) -> dict:
+    current = _require_admin(request)
+    try:
+        result = await ToolService(db).call_tool(tool_id, payload.arguments, payload.session_id or f"api-{uuid4().hex[:8]}")
+    except ToolError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_service.audit("tool_invoked", "POST", f"/api/tools/{tool_id}/invoke", 200, current,
+                       resource_type="tool", resource_id=tool_id)
+    return result
+
+
+@router.post("/mcp")
+async def mcp_endpoint(payload: dict, x_integration_key: str | None = Header(default=None, alias="X-Integration-Key")) -> dict:
+    expected = os.getenv("INTEGRATION_API_KEY", "").strip()
+    if expected and x_integration_key != expected:
+        return {"jsonrpc": "2.0", "id": payload.get("id"), "error": {"code": -32001, "message": "接入密钥无效"}}
+    return await ToolService(db).handle_mcp(payload)
+
 @router.get("/workflows")
 def list_workflows(stage: str | None = None, enabled_only: bool = False) -> list[dict]:
     return WorkflowRepository(db).list_workflows(stage=stage, enabled_only=enabled_only)
@@ -264,11 +313,18 @@ async def run_workflow_definition(workflow_id: str, payload: WorkflowRunRequest,
                 "node_id": node["id"],
             }
 
+    tool_runtime = ToolService(db)
+
+    async def invoke_tool_node(tool_id: str, arguments: dict, workflow_state: dict) -> dict:
+        call = await tool_runtime.call_tool(tool_id, arguments, session_id=f"workflow-test-{workflow_id}")
+        return {"tool_id": tool_id, "result": call["result"], "audit": call["audit"], "mode": "tool"}
+
     engine = WorkflowEngine(
         db,
         invoke_agent=invoke_agent,
         load_workflow=repository.get_workflow,
         max_workers=payload.max_workers,
+        invoke_tool=invoke_tool_node,
     )
     result = await engine.execute(workflow["id"], workflow["definition"], payload.context)
     auth_service.audit("workflow_tested", "POST", f"/api/workflows/{workflow_id}/run", 200,
@@ -361,8 +417,12 @@ async def agentarts_check() -> dict:
 def manifest() -> dict:
     data = platform_manifest()
     data["knowledge"]["documents"] = knowledge_catalog()
+    tool_repository = ToolRepository(db)
+    tool_repository.ensure_builtins()
+    data["tools"] = tool_repository.list_tools(enabled_only=True)
     data["llm"] = LLMService().status
     data["agentarts"] = AgentArtsBridge().status
+    data["mcp"] = {"endpoint": "/api/mcp", "protocol_version": "2024-11-05", "methods": ["initialize", "tools/list", "tools/call"]}
     return data
 
 

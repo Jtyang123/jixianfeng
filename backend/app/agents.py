@@ -93,7 +93,30 @@ def _available_inventory(inventory: list[dict]) -> dict[tuple[str, int], float]:
     return stock
 
 
-def build_rework_directive(verification: dict, next_attempt: int) -> dict:
+def allowed_rework_policies(verification: dict) -> list[dict]:
+    warning_codes = {
+        warning["code"]
+        for report in verification.get("reports", [])
+        for warning in report.get("verification", {}).get("warnings", [])
+    }
+    codes = set(verification.get("blocker_summary", [])) | warning_codes
+    policies = []
+    if any(code.startswith("ROAD-") for code in codes):
+        policies.append({"id": "route_failover", "name": "路线故障转移", "description": "排除封闭路线并优先后备通道"})
+    if any(code.startswith(("STOCK-", "COVERAGE-")) for code in codes):
+        policies.append({"id": "multi_warehouse", "name": "跨仓拆分", "description": "跨多个仓库重新平衡库存"})
+    if any(code.startswith("VEHICLE-") for code in codes):
+        policies.append({"id": "fleet_rebalance", "name": "运力再平衡", "description": "优先有可用车队的仓库并校验趟次"})
+    if any(code.startswith("ETA-") for code in codes):
+        policies.append({"id": "deadline_first", "name": "截止时间优先", "description": "提高超时惩罚并优化时效"})
+    if any(code.startswith(("DATA-", "SCHEMA-", "MISSING-", "INVALID-")) for code in codes):
+        policies.append({"id": "data_quality_repair", "name": "数据质量修复", "description": "暂停自动调度并请求补全或纠正源数据"})
+    if not policies:
+        policies.append({"id": "review_data_quality", "name": "人工数据复核", "description": "当前问题无法安全自动修复"})
+    policies.append({"id": "escalate_human", "name": "转人工研判", "description": "停止自动循环并交由值班人员处理"})
+    return policies
+
+def build_rework_directive(verification: dict, next_attempt: int, selected_policy: str = "") -> dict:
     warning_codes = sorted({
         warning["code"]
         for report in verification.get("reports", [])
@@ -121,17 +144,41 @@ def build_rework_directive(verification: dict, next_attempt: int) -> dict:
         categories.append("时效")
         policies["objective_policy"] = "deadline_first"
         tool_overrides.append("multi_objective_planner:提高截止时间惩罚")
+    data_quality_issue = any(code.startswith(("DATA-", "SCHEMA-", "MISSING-", "INVALID-")) for code in codes)
+    if data_quality_issue:
+        categories.append("数据质量")
+        policies["data_policy"] = "request_data_repair"
+        tool_overrides.append("data_quality_tool:暂停自动调度并请求修复源数据")
+
+    allowed = allowed_rework_policies(verification)
+    allowed_ids = {item["id"] for item in allowed}
+    selected = selected_policy if selected_policy in allowed_ids else ""
+    if not selected:
+        selected = next((item["id"] for item in allowed if item["id"] != "escalate_human"), "escalate_human")
+    if selected == "route_failover":
+        policies["route_policy"] = "exclude_closed_routes"
+    elif selected == "multi_warehouse":
+        policies["allocation_policy"] = "multi_warehouse"
+    elif selected == "fleet_rebalance":
+        policies["fleet_policy"] = "capacity_first"
+        policies["allocation_policy"] = "multi_warehouse"
+    elif selected == "deadline_first":
+        policies["objective_policy"] = "deadline_first"
+    elif selected == "data_quality_repair":
+        policies["data_policy"] = "request_data_repair"
 
     hard_resource_issue = any(code.startswith(("STOCK-", "COVERAGE-", "VEHICLE-", "ROAD-")) for code in codes)
-    can_retry = bool(codes) and not (next_attempt >= 3 and hard_resource_issue)
+    can_retry = bool(codes) and selected != "escalate_human" and not data_quality_issue and not (next_attempt >= 3 and hard_resource_issue)
     return {
         "attempt": next_attempt,
         "issue_codes": codes,
         "categories": categories,
         "policies": policies,
         "tool_overrides": tool_overrides,
+        "allowed_policies": allowed,
+        "selected_policy": selected,
         "can_retry": can_retry,
-        "reason": "根据核验问题代码选择路线、库存分配、运力和时效修复策略。",
+        "reason": f"根据核验问题代码选择修复策略：{selected}。" if selected else "没有可安全执行的自动修复策略。",
     }
 
 def _select_route(

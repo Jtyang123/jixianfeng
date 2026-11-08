@@ -1143,3 +1143,14 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .workflow-node-port--output { right: -7px; background: #d38342; box-shadow: 0 0 0 1px #bd7440; }
 .workflow-canvas-shell .inline-error { margin: 8px; }
 @media (max-width: 720px) { .workflow-canvas-toolbar { align-items: flex-start; flex-direction: column; } .workflow-canvas { height: 460px; } }
+/* Runtime tool registration */
+.tool-register-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tool-register-form h3 { font-size: 12px; color: var(--ink-2); }
+.tool-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
+.tool-form-grid label { display: flex; flex-direction: column; gap: 4px; }
+.tool-form-grid label span { color: var(--muted); font-size: 8px; }
+.tool-form-grid input, .tool-form-grid select { width: 100%; padding: 7px 8px; color: var(--ink-2); background: #fffef9; border: 1px solid var(--line); border-radius: 6px; font-size: 9px; }
+.tool-form-grid .full-span { grid-column: 1 / -1; }
+.tool-form-message { color: var(--teal); font-size: 8px; align-self: center; }
+.tool-form-error { color: var(--red); font-size: 8px; align-self: center; }
+@media (max-width: 720px) { .tool-form-grid { grid-template-columns: 1fr; } .tool-form-grid .full-span { grid-column: auto; } }

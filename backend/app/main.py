@@ -193,7 +193,7 @@ SELF_SERVICE_WRITES = {"/api/auth/logout", "/api/auth/change-password"}
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
-    if not path.startswith("/api/") or path in PUBLIC_API_PATHS or path.startswith("/api/integrations/"):
+    if not path.startswith("/api/") or path in PUBLIC_API_PATHS or path.startswith("/api/integrations/") or path == "/api/mcp":
         return await call_next(request)
     if not AUTH_REQUIRED:
         session_user = api_module.auth_service.resolve_session(request.cookies.get(AUTH_COOKIE_NAME, ""))

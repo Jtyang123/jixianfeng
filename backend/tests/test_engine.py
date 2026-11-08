@@ -159,3 +159,14 @@ def test_vehicle_shortage_is_a_hard_verification_blocker(tmp_path: Path):
     assert verification["verdict"] == "rework"
     assert any(code.startswith("VEHICLE-") for code in verification["blocker_summary"])
     assert any(check["name"] == "运力约束" and check["status"] == "fail" for check in verification["reports"][0]["verification"]["checks"])
+
+def test_data_quality_issue_exits_loop_with_explicit_repair_policy():
+    directive = build_rework_directive({
+        "blocker_summary": ["DATA-SCHEMA-MISMATCH"],
+        "required_fixes": ["修正库存单位字段"],
+        "reports": [],
+    }, 2)
+    assert "数据质量" in directive["categories"]
+    assert directive["selected_policy"] == "data_quality_repair"
+    assert directive["policies"]["data_policy"] == "request_data_repair"
+    assert directive["can_retry"] is False

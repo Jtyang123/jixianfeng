@@ -68,10 +68,10 @@ def test_api_run_flow(tmp_path: Path):
     assert run["result"]["loop_metrics"]["converged"] is True
     assert run["result"]["loop_metrics"]["score_gain"] > 0
     ai_matrix = run["result"]["ai_decision_matrix"]
-    assert len(ai_matrix) == 5
-    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5"}
+    assert len(ai_matrix) == 6
+    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6"}
     assert all(item["boundary"] and item["fallback"] for item in ai_matrix)
-    assert next(item for item in ai_matrix if item["id"] == "D3")["boundary"] == "硬规则结论不可被模型覆盖"
+    assert next(item for item in ai_matrix if item["id"] == "D4")["boundary"] == "硬规则结论不可被模型覆盖"
 
     benchmark = client.get("/api/evaluation/benchmark")
     assert benchmark.status_code == 200
@@ -467,3 +467,48 @@ def test_knowledge_upload_chunk_search_and_delete(tmp_path: Path):
     assert semantic.json()[0]["retrieval"]["mode"] == "domain-hash-vector+bm25+rerank"
     assert semantic.json()[0]["retrieval"]["vector_similarity"] > 0
     assert client.delete(f"/api/knowledge/documents/{document['id']}").status_code == 200
+
+
+def test_tool_registry_function_calling_and_mcp(tmp_path: Path):
+    test_db = Database(tmp_path / "tool-api.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+
+    tools = client.get("/api/tools")
+    assert tools.status_code == 200
+    tool_ids = {item["id"] for item in tools.json()}
+    assert {"inventory_query", "route_query", "vehicle_query", "knowledge_search", "rule_catalog"} <= tool_ids
+
+    custom = client.put("/api/tools/custom_delivery_note", json={
+        "name": "交付备注插件",
+        "description": "测试现场注册 API 插件",
+        "kind": "http",
+        "endpoint": "https://example.com/delivery-note",
+        "method": "POST",
+        "input_schema": {"type": "object", "properties": {"note": {"type": "string"}}},
+        "config": {"headers": {"X-Plugin": "farmmatch"}},
+        "enabled": True,
+    })
+    assert custom.status_code == 200
+    assert custom.json()["id"] == "custom_delivery_note"
+    assert custom.json()["input_schema"]["properties"]["note"]["type"] == "string"
+    assert client.delete("/api/tools/custom_delivery_note").status_code == 200
+
+    initialize = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert initialize.status_code == 200
+    assert initialize.json()["result"]["serverInfo"]["name"] == "jixianfeng-emergency-tools"
+
+    listed = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    assert listed.status_code == 200
+    assert any(item["name"] == "inventory_query" for item in listed.json()["result"]["tools"])
+
+    called = client.post("/api/mcp", json={
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "inventory_query", "arguments": {"status": "available"}},
+    })
+    assert called.status_code == 200
+    result = called.json()["result"]
+    assert result["tool"]["id"] == "inventory_query"
+    assert isinstance(result["result"]["items"], list)

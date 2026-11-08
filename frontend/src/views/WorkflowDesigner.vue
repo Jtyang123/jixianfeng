@@ -223,9 +223,18 @@ function loadCoreTemplate() {
   form.value.stage = 'core'
   form.value.json = JSON.stringify({
     nodes: [
-      { id: 'A01', type: 'agent', agent_id: 'demand_agent', depends_on: [], priority: 96, ui: { x: 48, y: 90 } },
-      { id: 'A02', type: 'agent', agent_id: 'matching_agent', depends_on: ['A01'], priority: 88, ui: { x: 278, y: 90 } },
-      { id: 'A03', type: 'agent', agent_id: 'verifier_agent', depends_on: ['A02'], priority: 99, ui: { x: 508, y: 90 } },
+      { id: 'A01', type: 'agent', agent_id: 'demand_agent', depends_on: [], priority: 96, ui: { x: 28, y: 80 } },
+      { id: 'INVENTORY_CHECK', type: 'tool', tool_id: 'inventory_query', arguments: {}, depends_on: ['A01'], priority: 94, ui: { x: 250, y: 80 } },
+      {
+        id: 'SOLVE_LOOP', type: 'loop', depends_on: ['INVENTORY_CHECK'], priority: 92, max_iterations: 3,
+        until: { field: 'verification.verdict', operator: 'eq', value: 'pass' }, on_exhausted: 'human_escalation',
+        ui: { x: 472, y: 80 },
+        body: { nodes: [
+          { id: 'A02', type: 'agent', agent_id: 'matching_agent', depends_on: [], priority: 88 },
+          { id: 'A03', type: 'agent', agent_id: 'verifier_agent', depends_on: ['A02'], priority: 99 },
+          { id: 'REWORK', type: 'agent', agent_id: 'rework_policy', depends_on: ['A03'], priority: 97, when: { field: 'verification.verdict', operator: 'eq', value: 'rework' } },
+        ] },
+      },
     ],
   }, null, 2)
   validation.value = null
@@ -322,7 +331,7 @@ onMounted(load)
       <div>
         <div class="eyebrow">CODE-BASED WORKFLOW DESIGN</div>
         <h2>代码化工作流设计器</h2>
-        <p>通过 JSON 定义 Agent 节点、依赖关系、并行分支、条件节点、重试和子工作流。发布后会进入核验后的扩展编排阶段。</p>
+        <p>通过节点画布或 JSON 定义 Agent、工具、条件、循环、并行与子工作流。主干和扩展工作流都可在同一引擎中试运行。</p>
       </div>
       <div class="workflow-designer-actions">
         <button class="secondary-action" @click="load"><RefreshCw :size="14" />刷新</button>

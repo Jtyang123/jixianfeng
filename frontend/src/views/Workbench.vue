@@ -581,8 +581,8 @@ onBeforeUnmount(() => eventSource?.close())
               </div>
             </div>
             <div v-if="runResult.ai_decision_matrix?.length" class="table-wrap" style="margin-bottom: 14px;">
-              <table class="data-table"><thead><tr><th>编号</th><th>AI 决策</th><th>模型职责</th><th>来源</th><th>安全边界</th><th>降级策略</th></tr></thead><tbody>
-                <tr v-for="item in runResult.ai_decision_matrix" :key="item.id"><td><strong>{{ item.id }}</strong></td><td><strong>{{ item.decision }}</strong></td><td>{{ item.ai_role }}</td><td><span class="inventory-status" :class="item.applied ? 'inventory-status--available' : 'inventory-status--expired'">{{ item.applied ? '已生效' : '已降级' }} · {{ item.source }}</span></td><td>{{ item.boundary }}</td><td>{{ item.fallback }}</td></tr>
+              <table class="data-table"><thead><tr><th>编号</th><th>层级</th><th>AI 决策</th><th>模型职责</th><th>来源</th><th>安全边界</th><th>降级策略</th></tr></thead><tbody>
+                <tr v-for="item in runResult.ai_decision_matrix" :key="item.id"><td><strong>{{ item.id }}</strong></td><td><span class="plan-tag">{{ item.level }}</span></td><td><strong>{{ item.decision }}</strong></td><td>{{ item.ai_role }}</td><td><span class="inventory-status" :class="item.applied ? 'inventory-status--available' : 'inventory-status--expired'">{{ item.applied ? '已生效' : '已降级' }} · {{ item.source }}</span></td><td>{{ item.boundary }}</td><td>{{ item.fallback }}</td></tr>
               </tbody></table>
             </div>
             <div class="delivery-grid">

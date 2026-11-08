@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from .agentarts import AgentArtsBridge
-from .agents import build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
+from .agents import allowed_rework_policies, build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
@@ -17,6 +17,7 @@ from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
 from .registry import AgentRegistryService, apply_agent_load
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
+from .tools import ToolError, ToolService
 from .workflow_engine import WorkflowEngine, WorkflowRepository
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
@@ -55,15 +56,17 @@ def new_run_id() -> str:
 
 def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict], llm_status: dict) -> list[dict]:
     demand_trace = traces.get("demand_agent") or {}
+    rework_trace = traces.get("rework_policy") or {}
     matching_trace = traces.get("matching_agent") or {}
     verifier_trace = traces.get("verifier_agent") or {}
     delivery_trace = traces.get("delivery_agent") or {}
     demand_parsed = demand_trace.get("parsed") if isinstance(demand_trace, dict) else None
+    rework_parsed = rework_trace.get("parsed") if isinstance(rework_trace, dict) else None
     verifier_parsed = verifier_trace.get("parsed") if isinstance(verifier_trace, dict) else None
     delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
     return [
         {
-            "id": "D1", "decision": "需求理解与假设补全",
+            "id": "D1", "decision": "需求理解与假设补全", "level": "AI 决策",
             "ai_role": "补充摘要、假设和证据引用",
             "applied": bool(demand_parsed),
             "source": demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic",
@@ -71,15 +74,23 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "fallback": "本地需求拆分与主数据校验",
         },
         {
-            "id": "D2", "decision": "已核验方案推荐",
-            "ai_role": "在通过硬规则的方案中选择推荐方案",
+            "id": "D2", "decision": "修复策略优先级选择", "level": "AI 决策",
+            "ai_role": "从当前问题允许的策略集合中选择下一条修复路径",
+            "applied": bool(rework_parsed) and rework_trace.get("mode") == "agentarts",
+            "source": rework_trace.get("mode", "deterministic-fallback") if isinstance(rework_trace, dict) else "deterministic-fallback",
+            "boundary": "只能选择 allowed_policies，硬修复项仍由规则层强制执行",
+            "fallback": "按道路、库存、运力、时效问题代码选择默认策略",
+        },
+        {
+            "id": "D3", "decision": "已核验方案推荐", "level": "AI 决策",
+            "ai_role": "在通过硬规则的方案中选择最终推荐方案",
             "applied": bool(agent_decision.get("applied")),
             "source": agent_decision.get("source", "deterministic-fallback"),
             "boundary": "只能从已通过独立核验的方案集合中选择",
             "fallback": "按速度、成本和风险权重排序",
         },
         {
-            "id": "D3", "decision": "核验解释与风险归纳",
+            "id": "D4", "decision": "核验解释与风险归纳", "level": "AI 辅助",
             "ai_role": "解释核验问题并补充风险说明",
             "applied": bool(verifier_parsed),
             "source": verifier_trace.get("mode", "deterministic-rules") if isinstance(verifier_trace, dict) else "deterministic-rules",
@@ -87,7 +98,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "fallback": "确定性规则引擎给出最终 verdict",
         },
         {
-            "id": "D4", "decision": "扩展 Agent 风险合成",
+            "id": "D5", "decision": "扩展 Agent 风险合成", "level": "AI 辅助",
             "ai_role": "补充领域风险和现场提示",
             "applied": bool(extension_reviews),
             "source": "registered-extension-agents" if extension_reviews else "none",
@@ -95,7 +106,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "fallback": "跳过扩展审查，保留确定性风险清单",
         },
         {
-            "id": "D5", "decision": "交付摘要组织",
+            "id": "D6", "decision": "交付摘要组织", "level": "AI 生成",
             "ai_role": "将已核验事实组织成可读摘要",
             "applied": bool(delivery_parsed),
             "source": delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template",
@@ -153,7 +164,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     extension_workflow_runs = []
     agent_executor: AsyncPriorityExecutor | None = None
 
-    async def call_agentarts(agent_id: str, payload: dict) -> dict:
+    async def call_agentarts(agent_id: str, payload: dict, trace_id: str | None = None) -> dict:
         if not agentarts.enabled:
             return {"mode": "local-fallback", "reason": "AgentArts 未配置"}
         try:
@@ -183,14 +194,14 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             parsed = _parse_json_text(response.get("text", ""))
             if parsed:
                 response["parsed"] = parsed
-            agentarts_trace[agent_id] = response
+            agentarts_trace[trace_id or agent_id] = response
             emit(db, run_id, "agentarts.completed", agent_id, f"AgentArts 返回 · {AGENT_NAMES.get(agent_id, agent_id)}", "已完成云端智能体调用，结果等待确定性规则复核。", {
                 "session_id": run_id,
             })
             return response
         except Exception as exc:
             fallback = {"mode": "local-fallback-after-agentarts-error", "error": str(exc)[:240]}
-            agentarts_trace[agent_id] = fallback
+            agentarts_trace[trace_id or agent_id] = fallback
             emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行。", fallback)
             return fallback
 
@@ -217,6 +228,57 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             {"mode": "local-rule-agent"},
         )
         return local
+    async def invoke_workflow_tool(tool_id: str, arguments: dict, workflow_state: dict) -> dict:
+        emit(db, run_id, "tool.called", "tool_runtime", f"调用工具 · {tool_id}", "工作流工具节点开始执行。", {"arguments": arguments})
+        try:
+            call = await ToolService(db).call_tool(tool_id, arguments, session_id=run_id)
+        except ToolError as exc:
+            emit(db, run_id, "tool.failed", "tool_runtime", f"工具失败 · {tool_id}", str(exc), {"arguments": arguments})
+            raise
+        emit(db, run_id, "tool.completed", "tool_runtime", f"工具完成 · {tool_id}", "工具结果已写入工作流上下文。", call.get("audit") or {})
+        return {"tool_id": tool_id, "result": call.get("result"), "audit": call.get("audit"), "mode": "tool"}
+    async def select_rework_policy(verification: dict, next_attempt: int) -> dict:
+        allowed = allowed_rework_policies(verification)
+        allowed_ids = {item["id"] for item in allowed}
+        default_policy = next((item["id"] for item in allowed if item["id"] != "escalate_human"), "escalate_human")
+        if not agentarts.enabled:
+            return {
+                "selected_policy": default_policy,
+                "allowed_policies": allowed,
+                "source": "deterministic-fallback",
+                "rationale": "AgentArts 未启用，使用规则匹配选择修复策略。",
+            }
+        response = await call_agentarts("matching_agent", {
+            "task_type": "rework_strategy",
+            "next_attempt": next_attempt,
+            "issue_codes": verification.get("blocker_summary", []),
+            "required_fixes": verification.get("required_fixes", [])[:5],
+            "allowed_policies": allowed,
+            "constraints": [
+                "只能从 allowed_policies 中选择一个 id",
+                "不得选择不存在或不允许的策略",
+                "最终硬约束仍由规则层执行",
+            ],
+        }, trace_id="rework_policy")
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        candidate = ""
+        if isinstance(parsed, dict):
+            candidate = str(
+                parsed.get("selected_policy")
+                or parsed.get("policy_id")
+                or parsed.get("strategy_id")
+                or ((parsed.get("policy") or {}).get("id") if isinstance(parsed.get("policy"), dict) else "")
+            )
+        selected = candidate if candidate in allowed_ids else default_policy
+        result = {
+            "selected_policy": selected,
+            "allowed_policies": allowed,
+            "source": "agentarts" if candidate in allowed_ids else "deterministic-fallback",
+            "rationale": str(parsed.get("rationale") or parsed.get("summary") or "根据问题代码选择安全修复策略。") if isinstance(parsed, dict) else "AgentArts 未返回有效策略，使用规则回退。",
+            "attempt": next_attempt,
+        }
+        emit(db, run_id, "ai.rework_policy", "rework_policy", "AI 修复策略选择完成", result["rationale"], result)
+        return result
     async def run_stage_workflows(stage_name: str, stage_context: dict) -> None:
         selected = [item for item in all_extension_workflows if item["stage"] == stage_name]
         if not selected:
@@ -240,6 +302,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     ),
                     agent_metrics=runtime_metrics,
                     max_workers=4,
+                    invoke_tool=invoke_workflow_tool,
                 )
                 result = await engine.execute(workflow_record["id"], workflow_record["definition"], stage_context)
                 extension_workflow_runs.append({
@@ -405,10 +468,30 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 await pace(0.35)
                 return {"agent_id": "verifier_agent", "verification": verification, "attempt": attempt, "mode": "core-phase"}
 
+            if agent_id == "rework_policy":
+                verification = workflow_state.get("verification") or pipeline_state.get("verification")
+                if not verification:
+                    raise ValueError("修复策略节点执行前没有核验结果")
+                next_attempt = attempt + 1
+                policy_selection = await select_rework_policy(verification, next_attempt)
+                directive = build_rework_directive(
+                    verification, next_attempt, selected_policy=policy_selection["selected_policy"]
+                )
+                directive["policy_selection"] = policy_selection
+                emit(db, run_id, "rework.requested", "rework_policy", f"生成第 {next_attempt} 轮修复指令", directive["reason"], {
+                    "attempt": next_attempt,
+                    "policy_selection": policy_selection,
+                    "directive": directive,
+                })
+                return {
+                    "agent_id": "rework_policy",
+                    "rework_directive": directive,
+                    "policy_selection": policy_selection,
+                    "continue_loop": directive["can_retry"],
+                    "mode": "ai-policy-selection",
+                }
             if agent_id == "verification_vote":
-                base = pipeline_state.get("verification")
-                if not base:
-                    base = verify_plans(pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                base = verify_plans(pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
                 votes = []
                 for output in workflow_state.get("node_outputs", {}).values():
                     if not isinstance(output, dict):
@@ -430,11 +513,12 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 return {"agent_id": "verification_vote", "verification": base, "mode": "internal-vote"}
 
             agents = {item["id"]: item for item in registry.list_agents()}
-            candidate_verification = pipeline_state.get("verification")
-            if not candidate_verification and pipeline_state.get("plans"):
+            candidate_verification = None
+            if pipeline_state.get("plans"):
                 candidate_verification = verify_plans(
                     pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes
                 )
+                pipeline_state["verification"] = candidate_verification
             response = await invoke_extension_agent(agent_id, {
                 "scenario": scenario,
                 "demand": pipeline_state.get("demand"),
@@ -444,60 +528,119 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             return {**response, "agent_id": agent_id}
 
-        for attempt in range(1, max_solution_attempts + 1):
+        core_definition = core_workflow["definition"]
+        core_has_loop = any(node.get("type") == "loop" for node in core_definition.get("nodes", []))
+        if core_has_loop:
             pipeline_state["plans"] = None
             pipeline_state["verification"] = None
-            directive = rework_directives[-1] if rework_directives else None
             engine = WorkflowEngine(
                 db,
                 invoke_agent=invoke_core_agent,
                 load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
                 event_sink=lambda node_id, message: emit(
                     db, run_id, "workflow.core_node", node_id, message, "",
-                    {"workflow_id": core_workflow["id"], "stage": "core", "attempt": attempt},
+                    {"workflow_id": core_workflow["id"], "stage": "core"},
                 ),
                 agent_metrics=runtime_metrics,
                 max_workers=4,
+                invoke_tool=invoke_workflow_tool,
             )
             core_result = await engine.execute(
-                core_workflow["id"], core_workflow["definition"],
-                {"scenario": scenario, "attempt": attempt, "rework_directive": directive},
+                core_workflow["id"], core_definition, {"scenario": scenario},
             )
             core_runs.append({
-                "attempt": attempt, "run_id": core_result["run_id"], "status": core_result["status"],
+                "attempt": 1, "run_id": core_result["run_id"], "status": core_result["status"],
                 "completed": core_result["completed"], "metrics": core_result["metrics"],
+                "loop_mode": True,
             })
-            plans = pipeline_state.get("plans")
-            verification = pipeline_state.get("verification")
-            if plans is None:
-                raise ValueError("主干工作流没有生成候选方案")
-            if verification is None:
-                verification = verify_plans(plans, pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
-                emit(db, run_id, "verification.safety_fallback", "orchestrator", "主干缺少核验输出", "已自动执行内置安全核验，禁止绕过硬规则。")
-                pipeline_state["verification"] = verification
-            rounds.append({
-                "attempt": attempt, "plans": plans, "verification": verification,
-                "mode": "core-dag" if attempt == 1 else "core-dag-adaptive",
-                "rework_directive": directive, "workflow_run_id": core_result["run_id"],
-            })
-            if verification["verdict"] == "pass":
-                break
-            next_attempt = attempt + 1
-            next_directive = build_rework_directive(verification, next_attempt)
-            if not next_directive["can_retry"] or next_attempt > max_solution_attempts:
-                emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", next_directive["reason"], {
-                    "attempt": next_attempt,
-                    "issue_codes": next_directive["issue_codes"],
-                    "categories": next_directive["categories"],
+            loop_node = next(node for node in core_definition["nodes"] if node.get("type") == "loop")
+            loop_output = core_result["outputs"].get(loop_node["id"], {})
+            for iteration in loop_output.get("iterations", []):
+                merged = {}
+                for item in iteration.get("outputs", {}).values():
+                    if isinstance(item, dict):
+                        merged.update({key: value for key, value in item.items() if key not in {"agent_id", "mode", "node_id"}})
+                plans = merged.get("plans")
+                verification = merged.get("verification")
+                if plans is None or verification is None:
+                    continue
+                rounds.append({
+                    "attempt": iteration["iteration"], "plans": plans, "verification": verification,
+                    "mode": "core-workflow-loop",
+                    "rework_directive": iteration.get("input_rework_directive"),
+                    "workflow_run_id": core_result["run_id"],
                 })
-                break
-            rework_directives.append(next_directive)
-            emit(db, run_id, "rework.requested", "orchestrator", f"触发第 {next_attempt} 轮自适应重算", next_directive["reason"], {
-                "attempt": next_attempt,
-                "constraints": verification["required_fixes"][:5],
-                "directive": next_directive,
-            })
-
+                if iteration.get("rework_directive"):
+                    rework_directives.append(iteration["rework_directive"])
+            if not rounds:
+                raise ValueError(f"工作流循环没有产生可核验轮次：{core_result.get('outputs', {})}")
+            if loop_output.get("status") != "completed":
+                emit(db, run_id, "rework.escalated", "orchestrator", "工作流循环未能收敛", "达到循环上限或修复策略要求人工介入。", {
+                    "loop_status": loop_output.get("status"),
+                    "iterations": len(loop_output.get("iterations", [])),
+                    "selected_policy": (rework_directives[-1] if rework_directives else {}).get("selected_policy"),
+                })
+        else:
+            for attempt in range(1, max_solution_attempts + 1):
+                pipeline_state["plans"] = None
+                pipeline_state["verification"] = None
+                directive = rework_directives[-1] if rework_directives else None
+                engine = WorkflowEngine(
+                    db,
+                    invoke_agent=invoke_core_agent,
+                    load_workflow=lambda workflow_id: workflow_repo.get_workflow(workflow_id),
+                    event_sink=lambda node_id, message: emit(
+                        db, run_id, "workflow.core_node", node_id, message, "",
+                        {"workflow_id": core_workflow["id"], "stage": "core", "attempt": attempt},
+                    ),
+                    agent_metrics=runtime_metrics,
+                    max_workers=4,
+                    invoke_tool=invoke_workflow_tool,
+                )
+                core_result = await engine.execute(
+                    core_workflow["id"], core_definition,
+                    {"scenario": scenario, "attempt": attempt, "rework_directive": directive},
+                )
+                core_runs.append({
+                    "attempt": attempt, "run_id": core_result["run_id"], "status": core_result["status"],
+                    "completed": core_result["completed"], "metrics": core_result["metrics"],
+                })
+                plans = pipeline_state.get("plans")
+                verification = pipeline_state.get("verification")
+                if plans is None:
+                    raise ValueError("主干工作流没有生成候选方案")
+                if verification is None:
+                    verification = verify_plans(plans, pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                    emit(db, run_id, "verification.safety_fallback", "orchestrator", "主干缺少核验输出", "已自动执行内置安全核验，禁止绕过硬规则。")
+                    pipeline_state["verification"] = verification
+                rounds.append({
+                    "attempt": attempt, "plans": plans, "verification": verification,
+                    "mode": "core-dag" if attempt == 1 else "core-dag-adaptive",
+                    "rework_directive": directive, "workflow_run_id": core_result["run_id"],
+                })
+                if verification["verdict"] == "pass":
+                    break
+                next_attempt = attempt + 1
+                policy_selection = await select_rework_policy(verification, next_attempt)
+                next_directive = build_rework_directive(
+                    verification, next_attempt, selected_policy=policy_selection["selected_policy"]
+                )
+                next_directive["policy_selection"] = policy_selection
+                if not next_directive["can_retry"] or next_attempt > max_solution_attempts:
+                    emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", next_directive["reason"], {
+                        "attempt": next_attempt,
+                        "issue_codes": next_directive["issue_codes"],
+                        "categories": next_directive["categories"],
+                        "policy_selection": policy_selection,
+                    })
+                    break
+                rework_directives.append(next_directive)
+                emit(db, run_id, "rework.requested", "orchestrator", f"触发第 {next_attempt} 轮自适应重算", next_directive["reason"], {
+                    "attempt": next_attempt,
+                    "constraints": verification["required_fixes"][:5],
+                    "policy_selection": policy_selection,
+                    "directive": next_directive,
+                })
         demand_plan = pipeline_state["demand"]
         round1_plans = rounds[0]["plans"]
         round1_verification = rounds[0]["verification"]

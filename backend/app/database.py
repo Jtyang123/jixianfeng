@@ -442,6 +442,33 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(workflow_run_id, id);
 
+                CREATE TABLE IF NOT EXISTS tool_definitions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'builtin',
+                    endpoint TEXT NOT NULL DEFAULT '',
+                    method TEXT NOT NULL DEFAULT 'POST',
+                    input_schema_json TEXT NOT NULL DEFAULT '{}',
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS tool_calls (
+                    id TEXT PRIMARY KEY,
+                    tool_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL DEFAULT '{}',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    latency_ms REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_id, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS evaluation_runs (
                     id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL,

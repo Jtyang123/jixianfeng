@@ -6,14 +6,26 @@ import {
 } from '@lucide/vue'
 import { api } from '../api'
 
-defineProps({ user: { type: Object, default: null } })
+const props = defineProps({ user: { type: Object, default: null } })
 
 const manifest = ref(null)
 const loading = ref(true)
 const error = ref('')
 const checking = ref(false)
 const checkResult = ref(null)
-
+const toolSaving = ref(false)
+const toolMessage = ref('')
+const toolError = ref('')
+const toolForm = ref({
+  id: 'delivery-note-plugin',
+  name: '交付备注插件',
+  kind: 'http',
+  endpoint: 'https://example.com/tool',
+  method: 'POST',
+  description: '通过标准 HTTP API 扩展交付能力',
+  schema: JSON.stringify({ type: 'object', properties: { note: { type: 'string' } } }, null, 2),
+})
+const isAdmin = computed(() => props.user?.role === 'admin')
 const agentIcons = [BrainCircuit, Network, ShieldCheck, CheckCircle2]
 const runtimeOK = computed(() => manifest.value?.llm?.enabled)
 const agentartsOK = computed(() => manifest.value?.agentarts?.enabled)
@@ -33,10 +45,10 @@ function agentCheckState(agentId) {
 }
 const moduleCards = computed(() => [
   { icon: Bot, title: 'Agent 定义与配置', detail: `${manifest.value?.agents?.length || 0} 个角色、工具白名单、记忆和版本契约`, tag: 'ONLINE' },
-  { icon: GitBranch, title: '工作流编排', detail: '并行入口、条件分支、核验门控与 PDCA 回环', tag: 'DAG' },
+  { icon: GitBranch, title: '工作流编排', detail: '主干/扩展 DAG、工作流 loop、tool 节点、投票与子流程', tag: 'DAG' },
   { icon: Cpu, title: '智能调度与执行', detail: '能力加权优先级、并行批次、运行态状态机', tag: 'SCHEDULED' },
   { icon: ShieldCheck, title: '结果验证与监控', detail: '独立核验、确定性硬规则、SSE 全量事件', tag: 'GUARDED' },
-  { icon: RotateCcw, title: '反馈循环与优化', detail: '结构化问题回传，最多两轮重算后转人工', tag: 'SELF-LOOP' },
+  { icon: RotateCcw, title: '反馈循环与优化', detail: '工作流内 loop、AI 策略选择、最多三轮后转人工', tag: 'SELF-LOOP' },
 ])
 
 async function load() {
@@ -46,6 +58,41 @@ async function load() {
 async function checkConnection() {
   checking.value = true
   try { checkResult.value = await api.checkAgentArts() } catch (exc) { checkResult.value = { status: 'error', error: exc.message } } finally { checking.value = false }
+}
+async function registerTool() {
+  if (!isAdmin.value) return
+  toolSaving.value = true
+  toolError.value = ''
+  toolMessage.value = ''
+  try {
+    const schema = JSON.parse(toolForm.value.schema)
+    await api.saveTool(toolForm.value.id, {
+      name: toolForm.value.name,
+      kind: toolForm.value.kind,
+      endpoint: toolForm.value.endpoint,
+      method: toolForm.value.method,
+      description: toolForm.value.description,
+      input_schema: schema,
+      config: {},
+      enabled: true,
+    })
+    toolMessage.value = `工具 ${toolForm.value.id} 已注册`
+    await load()
+  } catch (exc) {
+    toolError.value = exc.message
+  } finally {
+    toolSaving.value = false
+  }
+}
+
+async function removeTool(tool) {
+  if (!isAdmin.value || tool.kind === 'builtin') return
+  if (!window.confirm(`确认删除工具“${tool.name}”？`)) return
+  try {
+    await api.deleteTool(tool.id)
+    toolMessage.value = '工具已删除'
+    await load()
+  } catch (exc) { toolError.value = exc.message }
 }
 onMounted(load)
 </script>
@@ -160,7 +207,22 @@ onMounted(load)
               <div class="registry-icon"><Wrench :size="15" /></div>
               <div><strong>{{ tool.name }}</strong><span>{{ tool.description }}</span></div>
               <em>{{ tool.protocol }}</em>
+              <button v-if="isAdmin && tool.kind !== 'builtin'" class="record-delete" @click="removeTool(tool)">删除</button>
             </div>
+          </div>
+          <div v-if="isAdmin" class="tool-register-form">
+            <div class="workflow-head"><div><div class="eyebrow">ADD TOOL AT RUNTIME</div><h3>现场注册工具</h3></div></div>
+            <div class="tool-form-grid">
+              <label><span>工具 ID</span><input v-model="toolForm.id" /></label>
+              <label><span>名称</span><input v-model="toolForm.name" /></label>
+              <label><span>类型</span><select v-model="toolForm.kind"><option value="http">HTTP API</option><option value="mcp">MCP</option></select></label>
+              <label><span>方法</span><input v-model="toolForm.method" /></label>
+              <label class="full-span"><span>Endpoint</span><input v-model="toolForm.endpoint" /></label>
+              <label class="full-span"><span>说明</span><input v-model="toolForm.description" /></label>
+            </div>
+            <label class="workflow-json-label"><span>Function Calling Schema</span><textarea v-model="toolForm.schema" rows="7" spellcheck="false" /></label>
+            <div class="workflow-editor-actions"><button class="primary-action" :disabled="toolSaving" @click="registerTool">{{ toolSaving ? '注册中...' : '注册工具' }}</button><span v-if="toolMessage" class="tool-form-message">{{ toolMessage }}</span><span v-if="toolError" class="tool-form-error">{{ toolError }}</span></div>
+            <div class="benchmark-note"><ShieldCheck :size="14" /><span>MCP 服务地址：<code>/api/mcp</code>，支持 initialize、tools/list、tools/call。</span></div>
           </div>
         </section>
 

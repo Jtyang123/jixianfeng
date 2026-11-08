@@ -145,6 +145,15 @@ export const api = {
     return request('/api/knowledge/documents', { method: 'POST', body: formData })
   },
   deleteKnowledge: (id) => request(`/api/knowledge/documents/${id}`, { method: 'DELETE' }),  auditLogs: (limit = 200) => request(`/api/auth/audit-logs?limit=${limit}`),
+  tools: () => request('/api/tools'),
+  saveTool: (id, payload) => request(`/api/tools/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  deleteTool: (id) => request(`/api/tools/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  invokeTool: (id, argumentsValue = {}) => request(`/api/tools/${encodeURIComponent(id)}/invoke`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arguments: argumentsValue }),
+  }),
   workflows: () => request('/api/workflows'),
   workflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`),
   workflowRun: (id) => request(`/api/workflow-runs/${encodeURIComponent(id)}`),

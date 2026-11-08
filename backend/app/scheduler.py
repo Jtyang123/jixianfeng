@@ -61,10 +61,21 @@ TOOLS = [
 CORE_WORKFLOW_DEFINITION = {
     "nodes": [
         {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": [], "priority": 96},
-        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": ["A01"], "priority": 88},
-        {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99},
+        {"id": "INVENTORY_CHECK", "type": "tool", "tool_id": "inventory_query", "arguments": {}, "depends_on": ["A01"], "priority": 94},
+        {
+            "id": "SOLVE_LOOP", "type": "loop", "depends_on": ["INVENTORY_CHECK"], "priority": 92,
+            "max_iterations": 3,
+            "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+            "on_exhausted": "human_escalation",
+            "body": {"nodes": [
+                {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": [], "priority": 88},
+                {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99},
+                {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["A03"], "priority": 97,
+                 "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}},
+            ]},
+        },
     ],
-    "description": "默认主干：需求研判 → 资源匹配 → 独立核验。可在工作流设计器中替换或插入节点。",
+    "description": "默认主干：需求研判 → 工作流内循环 [资源匹配 → 独立核验 → 修复策略] → 交付。",
 }
 
 CORE_WORKFLOW = {
@@ -258,9 +269,9 @@ def platform_manifest() -> dict[str, Any]:
             "replay_supported": True,
         },
         "score_alignment": [
-            {"item": "平台功能完整性", "evidence": "Agent 定义、动态扩展审查、DAG 编排、运行监控、独立核验和反馈回路"},
+            {"item": "平台功能完整性", "evidence": "可替换主干 DAG、工作流内 loop/tool 节点、动态扩展审查、MCP/Function Calling、运行监控、独立核验和反馈回路"},
             {"item": "技术可靠性与可复现性", "evidence": "本地确定性运行、库存快照、事件轨迹、自动化测试和失败转人工"},
-            {"item": "人工智能使用合理性", "evidence": "AgentArts 受限推荐、扩展审查、RAG 证据和确定性核验护栏"},
+            {"item": "人工智能使用合理性", "evidence": "三项 AI 实际决策（需求假设、修复优先级、方案推荐）、六项决策矩阵、混合 RAG 和确定性核验护栏"},
             {"item": "文档质量", "evidence": "方案书、演示脚本、Agent 契约、接口说明和可复现运行记录"},
         ],
     }

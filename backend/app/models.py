@@ -206,6 +206,21 @@ class WorkflowUpsertRequest(BaseModel):
     definition: dict
     enabled: bool = True
 
+class ToolRegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=500)
+    kind: Literal["http", "mcp"] = "http"
+    endpoint: str = Field(default="", max_length=500)
+    method: str = Field(default="POST", max_length=10)
+    input_schema: dict = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    config: dict = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class ToolInvokeRequest(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+    session_id: str | None = Field(default=None, max_length=120)
+
 class WorkflowRunRequest(BaseModel):
     context: dict = Field(default_factory=dict)
     max_workers: int = Field(default=4, ge=1, le=8)

@@ -102,3 +102,84 @@ def test_workflow_parallel_retry_condition_and_subworkflow(tmp_path: Path):
     assert stored["status"] == "success"
     assert stored["metrics"]["peak_concurrency"] >= 2
     assert any(node["node_id"] == "SUB.CHILD" for node in stored["nodes"])
+
+
+def test_workflow_loop_node_supports_until_condition_and_max_iterations(tmp_path: Path):
+    db = Database(tmp_path / "workflow-loop.db", database_url="")
+    db.initialize()
+    calls = []
+
+    async def invoke(agent_id, context, node):
+        attempt = int(context["attempt"])
+        calls.append(attempt)
+        return {
+            "agent_id": agent_id,
+            "verification": {"verdict": "pass" if attempt >= 3 else "rework", "score": attempt * 40},
+            "continue_loop": True,
+        }
+
+    definition = {
+        "nodes": [{
+            "id": "SOLVE_LOOP",
+            "type": "loop",
+            "depends_on": [],
+            "max_iterations": 3,
+            "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+            "body": {"nodes": [
+                {"id": "STEP", "type": "agent", "agent_id": "step_agent", "depends_on": []},
+            ]},
+        }]
+    }
+    engine = WorkflowEngine(db, invoke_agent=invoke, load_workflow=lambda _: None, max_workers=2)
+    result = asyncio.run(engine.execute("loop-test", definition, {}))
+    assert result["status"] == "success"
+    assert result["outputs"]["SOLVE_LOOP"]["status"] == "completed"
+    assert len(result["outputs"]["SOLVE_LOOP"]["iterations"]) == 3
+    assert result["outputs"]["SOLVE_LOOP"]["verification"]["verdict"] == "pass"
+    assert calls == [1, 2, 3]
+
+
+def test_workflow_loop_node_reports_exhaustion(tmp_path: Path):
+    db = Database(tmp_path / "workflow-loop-exhaust.db", database_url="")
+    db.initialize()
+
+    async def invoke(agent_id, context, node):
+        return {"agent_id": agent_id, "verification": {"verdict": "rework"}, "continue_loop": True}
+
+    definition = {
+        "nodes": [{
+            "id": "LOOP", "type": "loop", "depends_on": [], "max_iterations": 2,
+            "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+            "body": {"nodes": [{"id": "STEP", "type": "agent", "agent_id": "step", "depends_on": []}]},
+        }]
+    }
+    result = asyncio.run(WorkflowEngine(
+        db, invoke_agent=invoke, load_workflow=lambda _: None, max_workers=1,
+    ).execute("loop-exhaust", definition, {}))
+    assert result["outputs"]["LOOP"]["status"] == "exhausted"
+    assert len(result["outputs"]["LOOP"]["iterations"]) == 2
+
+def test_workflow_tool_node_uses_registered_tool_runtime(tmp_path: Path):
+    db = Database(tmp_path / "workflow-tool.db", database_url="")
+    db.initialize()
+    calls = []
+
+    async def invoke_agent(agent_id, context, node):
+        return {"agent_id": agent_id, "ok": True}
+
+    async def invoke_tool(tool_id, arguments, context):
+        calls.append((tool_id, arguments))
+        return {"tool_id": tool_id, "result": {"available": 42}, "mode": "tool"}
+
+    definition = {
+        "nodes": [
+            {"id": "TOOL", "type": "tool", "tool_id": "inventory_query", "arguments": {"status": "available"}, "depends_on": []},
+        ]
+    }
+    result = asyncio.run(WorkflowEngine(
+        db, invoke_agent=invoke_agent, load_workflow=lambda _: None,
+        invoke_tool=invoke_tool, max_workers=1,
+    ).execute("tool-node", definition, {}))
+    assert result["status"] == "success"
+    assert result["outputs"]["TOOL"]["result"]["available"] == 42
+    assert calls == [("inventory_query", {"status": "available"})]

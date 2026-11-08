@@ -11,9 +11,10 @@ from uuid import uuid4
 from .database import Database, now_iso
 
 
-NODE_TYPES = {"agent", "condition", "subworkflow"}
+NODE_TYPES = {"agent", "condition", "subworkflow", "loop", "tool"}
 CONDITION_OPERATORS = {"eq", "ne", "in", "exists", "truthy", "contains"}
 MAX_SUBWORKFLOW_DEPTH = 5
+MAX_LOOP_DEPTH = 6
 
 
 class WorkflowValidationError(ValueError):
@@ -86,6 +87,21 @@ def validate_workflow(definition: dict) -> dict:
             raise WorkflowValidationError(f"Agent 节点 {node_id} 缺少 agent_id")
         if node_type == "subworkflow" and not str(node.get("workflow_id") or "").strip():
             raise WorkflowValidationError(f"子工作流节点 {node_id} 缺少 workflow_id")
+        if node_type == "tool" and not str(node.get("tool_id") or "").strip():
+            raise WorkflowValidationError(f"工具节点 {node_id} 缺少 tool_id")
+        if node_type == "loop":
+            body = node.get("body")
+            if not isinstance(body, dict):
+                raise WorkflowValidationError(f"循环节点 {node_id} 缺少 body")
+            node["body"] = validate_workflow(body)
+            node["max_iterations"] = max(1, min(10, int(node.get("max_iterations", 3))))
+            until = node.get("until")
+            if until is not None:
+                if not isinstance(until, dict):
+                    raise WorkflowValidationError(f"循环节点 {node_id} 的 until 必须是对象")
+                if str(until.get("operator") or "truthy") not in CONDITION_OPERATORS:
+                    raise WorkflowValidationError(f"循环节点 {node_id} 的 until 操作符不受支持")
+            node["on_exhausted"] = str(node.get("on_exhausted") or "human_escalation")
         dependencies = node.get("depends_on") or []
         if not isinstance(dependencies, list):
             raise WorkflowValidationError(f"节点 {node_id} 的 depends_on 必须是数组")
@@ -288,9 +304,11 @@ class WorkflowEngine:
         event_sink: Callable[[str, str], Any] | None = None,
         agent_metrics: dict[str, dict] | None = None,
         max_workers: int = 4,
+        invoke_tool: Callable[[str, dict, dict], Awaitable[dict]] | None = None,
     ) -> None:
         self.db = db
         self.invoke_agent = invoke_agent
+        self.invoke_tool = invoke_tool
         self.load_workflow = load_workflow
         self.event_sink = event_sink
         self.agent_metrics = agent_metrics or {}
@@ -326,7 +344,11 @@ class WorkflowEngine:
                     output = await self.invoke_agent(str(node["agent_id"]), context, node)
                 elif node["type"] == "condition":
                     output = {"matched": evaluate_rule(node.get("when"), context)}
-                else:
+                elif node["type"] == "tool":
+                    if not self.invoke_tool:
+                        raise WorkflowValidationError("当前运行环境未配置工具调用器")
+                    output = await self.invoke_tool(str(node["tool_id"]), node.get("arguments") or {}, context)
+                elif node["type"] == "subworkflow":
                     if depth >= MAX_SUBWORKFLOW_DEPTH:
                         raise WorkflowValidationError("子工作流嵌套超过最大深度")
                     child = self.load_workflow(str(node["workflow_id"]))
@@ -340,6 +362,55 @@ class WorkflowEngine:
                         "workflow_id": node["workflow_id"],
                         "status": child_result["status"],
                         "outputs": child_result["outputs"],
+                    }
+                else:
+                    if depth >= MAX_LOOP_DEPTH:
+                        raise WorkflowValidationError("循环嵌套超过最大深度")
+                    body = validate_workflow(node["body"])
+                    history = []
+                    loop_context = dict(context)
+                    loop_status = "exhausted"
+                    for iteration in range(1, int(node.get("max_iterations", 3)) + 1):
+                        iteration_context = dict(loop_context)
+                        iteration_context["attempt"] = iteration
+                        iteration_context["loop_iteration"] = iteration
+                        iteration_context["node_outputs"] = {}
+                        input_rework_directive = iteration_context.get("rework_directive")
+                        child_result = await self._run_scope(
+                            body["nodes"], iteration_context, depth + 1,
+                            prefix=f"{prefix}{node['id']}.I{iteration}.",
+                        )
+                        merged = {}
+                        for item in child_result["outputs"].values():
+                            if isinstance(item, dict):
+                                merged.update({key: value for key, value in item.items() if key not in {"agent_id", "mode", "node_id"}})
+                        loop_context.update(merged)
+                        history.append({
+                            "iteration": iteration,
+                            "status": child_result["status"],
+                            "outputs": child_result["outputs"],
+                            "verification": merged.get("verification"),
+                            "input_rework_directive": input_rework_directive,
+                            "rework_directive": merged.get("rework_directive"),
+                        })
+                        if child_result["status"] != "success":
+                            loop_status = "failed"
+                            break
+                        await self._event(node["id"], f"循环 {node['id']} 第 {iteration} 次执行完成")
+                        if evaluate_rule(node.get("until"), loop_context):
+                            loop_status = "completed"
+                            break
+                        if merged.get("continue_loop") is False:
+                            loop_status = "escalated"
+                            break
+                    output = {
+                        "status": loop_status,
+                        "iterations": history,
+                        "verification": loop_context.get("verification"),
+                        "plans": loop_context.get("plans"),
+                        "rework_directive": loop_context.get("rework_directive"),
+                        "max_iterations": node.get("max_iterations", 3),
+                        "on_exhausted": node.get("on_exhausted", "human_escalation"),
                     }
                 normalized = output if isinstance(output, dict) else {"result": output}
                 retry_context = {**context, **normalized}
@@ -443,7 +514,7 @@ class WorkflowEngine:
                     completed.add(node["id"])
                     outputs[node["id"]] = result["output"]
                     context["node_outputs"][f"{prefix}{node['id']}"] = result["output"]
-                    context.update({key: value for key, value in result["output"].items() if key not in context})
+                    context.update({key: value for key, value in result["output"].items() if key not in {"agent_id", "mode", "node_id"}})
                 elif node.get("on_error") == "continue":
                     skipped.add(node["id"])
                 else:

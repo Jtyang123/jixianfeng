@@ -28,7 +28,12 @@ class FakeAgentArts:
     async def invoke(self, agent_id, payload, session_id="farmmatch", client=None):
         self.started_at[agent_id] = time.monotonic()
         await asyncio.sleep(0.15)
-        if agent_id == "matching_agent":
+        if payload.get("task_type") == "rework_strategy":
+            text = json.dumps({
+                "selected_policy": payload["allowed_policies"][0]["id"],
+                "rationale": "测试环境：从允许策略中选择路线故障转移。",
+            })
+        elif agent_id == "matching_agent":
             text = json.dumps({"recommended_plan_id": payload["plans"][0]["plan_id"]})
         elif agent_id == "verifier_agent":
             text = json.dumps({"verdict": "pass", "score": 100})
@@ -130,15 +135,21 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
 
     run = db.get_run(run_id)
-    assert run["status"] == "awaiting_approval"
+    assert run["status"] == "awaiting_approval", run.get("result")
     assert set(run["result"]["agentarts_trace"]) == {
-        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent", "risk_extension", "demand_extension",
+        "demand_agent", "matching_agent", "verifier_agent", "delivery_agent",
+        "risk_extension", "demand_extension", "rework_policy",
     }
     assert abs(fake.started_at["matching_agent"] - fake.started_at["verifier_agent"]) < 0.2
     scheduler_metrics = run["result"]["orchestration"]["runtime_metrics"]
     assert scheduler_metrics["engine"] == "asyncio.PriorityQueue"
     assert scheduler_metrics["total_tasks"] >= 6
     assert scheduler_metrics["peak_concurrency"] >= 2
+    decisions = {item["id"]: item for item in run["result"]["ai_decision_matrix"]}
+    assert decisions["D1"]["applied"] is True
+    assert decisions["D2"]["applied"] is True
+    assert decisions["D2"]["source"] == "agentarts"
+    assert decisions["D3"]["applied"] is True
     assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension", "demand_extension"}
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
@@ -188,10 +199,18 @@ def test_core_workflow_can_replace_verifier_with_two_agent_vote(tmp_path: Path):
         "definition": {
             "nodes": [
                 {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": []},
-                {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": ["A01"]},
-                {"id": "VA", "type": "agent", "agent_id": "verifier_a", "depends_on": ["A02"]},
-                {"id": "VB", "type": "agent", "agent_id": "verifier_b", "depends_on": ["A02"]},
-                {"id": "VOTE", "type": "agent", "agent_id": "verification_vote", "depends_on": ["VA", "VB"]},
+                {"id": "TOOL", "type": "tool", "tool_id": "inventory_query", "arguments": {}, "depends_on": ["A01"]},
+                {
+                    "id": "LOOP", "type": "loop", "depends_on": ["TOOL"], "max_iterations": 3,
+                    "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+                    "body": {"nodes": [
+                        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": []},
+                        {"id": "VA", "type": "agent", "agent_id": "verifier_a", "depends_on": ["A02"]},
+                        {"id": "VB", "type": "agent", "agent_id": "verifier_b", "depends_on": ["A02"]},
+                        {"id": "VOTE", "type": "agent", "agent_id": "verification_vote", "depends_on": ["VA", "VB"]},
+                        {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["VOTE"], "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}},
+                    ]},
+                },
             ]
         },
     })
@@ -199,10 +218,12 @@ def test_core_workflow_can_replace_verifier_with_two_agent_vote(tmp_path: Path):
     db.create_run(run_id, scenario["id"], request)
     asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
     run = db.get_run(run_id)
-    assert run["status"] == "awaiting_approval"
+    assert run["status"] == "awaiting_approval", run.get("result")
     assert run["result"]["core_workflow"]["id"] == "core-vote"
-    assert len(run["result"]["core_workflow_runs"]) == 2
-    assert set(run["result"]["core_workflow_runs"][0]["completed"]) == {"A01", "A02", "VA", "VB", "VOTE"}
+    assert len(run["result"]["core_workflow_runs"]) == 1
+    assert run["result"]["core_workflow_runs"][0]["loop_mode"] is True
+    assert set(run["result"]["core_workflow_runs"][0]["completed"]) == {"A01", "TOOL", "LOOP"}
+    assert len(run["result"]["rounds"]) == 2
     assert run["result"]["rounds"][0]["verification"]["vote_summary"]["total"] == 2
     assert run["result"]["rounds"][0]["verification"]["verdict"] == "rework"
     assert run["result"]["final_verification"]["vote_summary"] == {"pass": 2, "total": 2, "rule": "majority"}
