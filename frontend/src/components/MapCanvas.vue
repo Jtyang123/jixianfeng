@@ -272,7 +272,7 @@ watch(() => props.network, () => {
   draw()
   refreshRouteGeometries()
 }, { deep: true })
-watch(() => [props.plan, props.closedRoutes, props.running], () => {
+watch(() => [props.plan, props.closedRoutes, props.running, props.eventLocation], () => {
   draw()
   refreshRouteGeometries()
 }, { deep: true })

@@ -21,6 +21,10 @@ const sourceLabels = {
   webhook: '系统推送',
   test: '测试数据',
 }
+function notifyEventsChanged(eventId, action) {
+  window.dispatchEvent(new CustomEvent('farmmatch:events-changed', { detail: { eventId, action } }))
+  emit('refresh-dashboard')
+}
 function sourceLabel(value) {
   return sourceLabels[value] || '其他来源'
 }
@@ -68,6 +72,7 @@ async function importEvent(fileEvent) {
     }
     const event = await response.json()
     events.value.unshift(event)
+    notifyEventsChanged(event.id, 'imported')
     message.value = `事件 ${event.id} 已导入，包含 ${event.demand_items?.length || 0} 条需求`
   } catch (exc) { error.value = exc.message } finally {
     importing.value = false
@@ -114,6 +119,7 @@ async function createEvent() {
     delete payload.closed_routes_text
     const event = await api.createEvent(payload)
     events.value.unshift(event)
+    notifyEventsChanged(event.id, 'created')
     message.value = `事件 ${event.id} 已创建并确认`
     form.value = { title: '', event_type: '暴雨洪涝', severity: 'II级', location: '', affected_population: 0, description: '', source: 'manual', source_ref: '', lat: null, lng: null, closed_routes_text: '' }
   } catch (exc) { error.value = exc.message } finally { saving.value = false }
@@ -128,8 +134,8 @@ async function removeEvent(event) {
   try {
     await api.deleteEvent(event.id)
     events.value = events.value.filter((item) => item.id !== event.id)
+    notifyEventsChanged(event.id, 'deleted')
     message.value = `事件“${event.title}”已删除`
-    emit('refresh-dashboard')
   } catch (exc) {
     error.value = exc.message
   } finally {

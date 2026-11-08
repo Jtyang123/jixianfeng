@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, Clock3, FileDown,
   Gauge, MapPinned, PackageOpen, Play, Plus, RotateCcw, Route,
@@ -35,6 +35,7 @@ const approved = ref(false)
 const dispatchTasks = ref([])
 const materialToAdd = ref('')
 let eventSource = null
+let loadedOnce = false
 
 const selectedOperationalEvent = computed(() => operationalEvents.value.find((item) => item.id === selectedEventId.value))
 const selectedScenario = computed(() => {
@@ -180,6 +181,30 @@ function updateWeights() {
   }
 }
 
+async function refreshOperationalEvents(preferredEventId = '') {
+  try {
+    const rows = await api.events()
+    const previousId = selectedEventId.value
+    operationalEvents.value = rows
+    const preferred = preferredEventId || previousId
+    if (preferred && rows.some((item) => item.id === preferred)) {
+      if (runSource.value === 'event' || preferredEventId) applyOperationalEvent(preferred)
+      return
+    }
+    if (runSource.value === 'event') {
+      if (rows.length) applyOperationalEvent(rows[0].id)
+      else {
+        selectedEventId.value = ''
+        demandItems.value = []
+        runResult.value = null
+      }
+    }
+  } catch (_) {}
+}
+
+async function handleEventsChanged(event) {
+  await refreshOperationalEvents(event?.detail?.eventId || '')
+}
 async function loadData() {
   loading.value = true
   error.value = ''
@@ -202,6 +227,7 @@ async function loadData() {
     error.value = exc.message
   } finally {
     loading.value = false
+    loadedOnce = true
   }
 }
 
@@ -292,8 +318,17 @@ function openReport() {
   if (runId.value) window.open(`/api/runs/${runId.value}/report`, '_blank')
 }
 
-onMounted(loadData)
-onBeforeUnmount(() => eventSource?.close())
+onMounted(() => {
+  window.addEventListener('farmmatch:events-changed', handleEventsChanged)
+  loadData()
+})
+onActivated(() => {
+  if (loadedOnce) refreshOperationalEvents()
+})
+onBeforeUnmount(() => {
+  eventSource?.close()
+  window.removeEventListener('farmmatch:events-changed', handleEventsChanged)
+})
 </script>
 <template>
   <div class="workbench-page">
