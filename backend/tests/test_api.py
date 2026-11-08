@@ -72,14 +72,21 @@ def test_api_run_flow(tmp_path: Path):
     ai_matrix = run["result"]["ai_decision_matrix"]
     assert len(ai_matrix) == 6
     assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6"}
-    assert all(item["boundary"] and item["fallback"] for item in ai_matrix)
+    assert all(item["boundary"] and item["fallback"] and item["local_equivalent"] for item in ai_matrix)
     assert next(item for item in ai_matrix if item["id"] == "D4")["boundary"] == "硬规则结论不可被模型覆盖"
+    assert run["result"]["demand"]["confidence_factors"]
+    assert run["result"]["active_prompt_versions"]["matching_agent"].startswith("v1.4+adaptive")
+    assert run["result"]["memory_writes"]
 
     benchmark = client.get("/api/evaluation/benchmark")
     assert benchmark.status_code == 200
     assert benchmark.json()["metrics"]["reproducible"] is True
-    assert benchmark.json()["quantitative"]["scenarios"] == 4
-    assert len(benchmark.json()["scenario_results"]) == 4
+    assert benchmark.json()["quantitative"]["scenarios"] == 5
+    assert len(benchmark.json()["scenario_results"]) == 5
+    assert benchmark.json()["metrics"]["independent_layout_scenarios"] == 1
+    assert {item["data_independence"] for item in benchmark.json()["scenario_results"]} == {
+        "shared_layout", "controlled_variant", "independent_layout",
+    }
     assert benchmark.json()["quantitative"]["baseline"]["unsafe_acceptance_rate"] < 1
     assert benchmark.json()["quantitative"]["multi_agent"]["unsafe_acceptance_rate"] == 0
     assert benchmark.json()["runtime_evidence"]["fully_cloud"]["samples"] == 0
@@ -92,6 +99,8 @@ def test_api_run_flow(tmp_path: Path):
     assert [item["concurrency"] for item in diagnostic_data["concurrency"]] == [1, 5, 10, 20]
     assert all(item["success_rate"] == 1.0 for item in diagnostic_data["concurrency"])
     assert all(item["isolation_consistent"] for item in diagnostic_data["concurrency"])
+    assert diagnostic_data["soak"]["status"] == "pass"
+    assert diagnostic_data["soak"]["duration_ms"] >= 8000
     assert {item["id"] for item in diagnostic_data["fault_injection"]} == {
         "agentarts_timeout", "osrm_unavailable", "invalid_model_json",
         "inventory_shortage", "vehicle_shortage", "road_closure",

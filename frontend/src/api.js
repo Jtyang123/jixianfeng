@@ -155,6 +155,12 @@ export const api = {
     body: JSON.stringify({ arguments: argumentsValue }),
   }),
   workflows: () => request('/api/workflows'),
+  workflowTemplates: () => request('/api/workflow-templates'),
+  instantiateWorkflowTemplate: (id, payload = {}) => request(`/api/workflow-templates/${encodeURIComponent(id)}/instantiate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  memory: (agentId = '') => request(`/api/memory${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`),
+  deleteMemory: (agentId, memoryKey) => request(`/api/memory/${encodeURIComponent(agentId)}/${encodeURIComponent(memoryKey)}`, { method: 'DELETE' }),
   workflow: (id) => request(`/api/workflows/${encodeURIComponent(id)}`),
   workflowRun: (id) => request(`/api/workflow-runs/${encodeURIComponent(id)}`),
   runWorkflow: (id, context, maxWorkers = 4) => request(`/api/workflows/${encodeURIComponent(id)}/run`, {

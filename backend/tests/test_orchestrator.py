@@ -6,6 +6,7 @@ from pathlib import Path
 from app import orchestrator as orchestrator_module
 from app.database import Database
 from app.registry import AgentRegistryService
+from app.scheduler import AGENTS
 from app.workflow_engine import WorkflowRepository
 
 
@@ -150,6 +151,9 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert decisions["D2"]["applied"] is True
     assert decisions["D2"]["source"] == "agentarts"
     assert decisions["D3"]["applied"] is True
+    assert run["result"]["prompt_adaptations"]
+    assert run["result"]["prompt_adaptations"][0]["active_version"].startswith("v1.4+adaptive")
+    assert run["result"]["active_prompt_versions"]["matching_agent"].startswith("v1.4+adaptive")
     assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension", "demand_extension"}
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
@@ -228,3 +232,122 @@ def test_core_workflow_can_replace_verifier_with_two_agent_vote(tmp_path: Path):
     assert run["result"]["rounds"][0]["verification"]["verdict"] == "rework"
     assert run["result"]["final_verification"]["vote_summary"] == {"pass": 2, "total": 2, "rule": "majority"}
     assert run["result"]["final_verification"]["verdict"] == "pass"
+
+def test_inventory_tool_result_changes_matching_decision(tmp_path: Path):
+    db = Database(tmp_path / "inventory-tool-impact.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("heatwave-iii")
+    materials = db.list_materials()
+    water = next(item for item in materials if item["code"] == "MAT-WATER-001")
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": [],
+        },
+        "demand_items": [{"material_id": water["id"], "quantity": 1000, "priority": "P0", "deadline_hours": 8}],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    WorkflowRepository(db).save_workflow("tool-impact", {
+        "name": "库存工具影响测试",
+        "stage": "core",
+        "enabled": True,
+        "definition": {"nodes": [
+            {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": []},
+            {"id": "TOOL", "type": "tool", "tool_id": "inventory_query", "arguments": {"material_id": 6}, "depends_on": ["A01"]},            {"id": "LOOP", "type": "loop", "depends_on": ["TOOL"], "max_iterations": 2,
+             "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+             "body": {"nodes": [
+                 {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": []},
+                 {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"]},
+                 {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["A03"],
+                  "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}},
+             ]},
+            },
+        ]},
+    })
+    run_id = "RUN-TOOL-IMPACT"
+    db.create_run(run_id, scenario["id"], request)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "needs_human"
+    assert run["result"]["inventory_source"] == "inventory_query tool"
+    assert run["result"]["execution_inventory_rows"] > 0
+    assert run["result"]["final_verification"]["verdict"] == "rework"
+    unmet_material_ids = {item["material_id"] for plan in run["result"]["final_plans"] for item in plan.get("unmet", [])}
+    assert water["id"] in unmet_material_ids
+
+def test_cross_run_memory_changes_safe_default_tie_break(tmp_path: Path):
+    db = Database(tmp_path / "cross-run-memory.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("rainstorm-ii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": scenario["closed_routes"],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"],
+                "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    for run_id in ("RUN-MEMORY-1", "RUN-MEMORY-2"):
+        db.create_run(run_id, scenario["id"], request)
+        asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+
+    first = db.get_run("RUN-MEMORY-1")["result"]
+    second = db.get_run("RUN-MEMORY-2")["result"]
+    assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-fallback"
+    assert second["rework_directives"][0]["policy_selection"]["source"] == "memory-assisted-deterministic"
+    assert second["memory_context"]["matching_agent"]["successful_repair_policy"]["value"]["policy"] == "route_failover"
+    memory_events = [event["type"] for event in db.events_after("RUN-MEMORY-2")]
+    assert "memory.loaded" in memory_events
+    assert "memory.saved" in memory_events
+
+def test_builtin_dual_verifier_template_runs_without_manual_registration(tmp_path: Path):
+    db = Database(tmp_path / "builtin-dual-template.db", database_url="")
+    db.initialize()
+    AgentRegistryService(db).sync_builtin_agents(AGENTS)
+    scenario = db.get_scenario("rainstorm-ii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": scenario["closed_routes"],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"],
+                "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    workflow = WorkflowRepository(db).instantiate_template(
+        "TPL-DUAL-VERIFY-VOTE", {"id": "dual-template-runtime", "name": "双核验模板实例"}
+    )
+    assert workflow["id"] == "dual-template-runtime"
+    run_id = "RUN-DUAL-TEMPLATE"
+    db.create_run(run_id, scenario["id"], request)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "awaiting_approval", run.get("result")
+    assert run["result"]["core_workflow"]["id"] == "dual-template-runtime"
+    assert run["result"]["rounds"][0]["verification"]["vote_summary"]["total"] == 2
+    assert run["result"]["final_verification"]["vote_summary"]["total"] == 2

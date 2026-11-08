@@ -49,6 +49,72 @@ def _scenario_request(scenario: dict, materials: list[dict]) -> dict:
     }
 
 
+def _independent_layout(
+    destinations: list[dict], warehouses: list[dict], routes: list[dict],
+    vehicles: list[dict], inventory: list[dict],
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    """Build a distinct route/warehouse layout without changing material master data."""
+    destination_map = {}
+    layout_destinations = []
+    for index, source in enumerate(destinations):
+        item = copy.deepcopy(source)
+        old_id = item["id"]
+        new_id = f"DST-X{index + 1:02d}"
+        destination_map[old_id] = new_id
+        item["id"] = new_id
+        item["name"] = f"{item.get('name', '安置点')}（独立布局）"
+        item["region"] = "演练·西部走廊"
+        item["address"] = "独立路网演练安置点"
+        item["lat"] = round(30.93 + index * 0.07, 6)
+        item["lng"] = round(114.78 - index * 0.09, 6)
+        layout_destinations.append(item)
+
+    warehouse_map = {}
+    layout_warehouses = []
+    for index, source in enumerate(warehouses):
+        item = copy.deepcopy(source)
+        old_id = item["id"]
+        new_id = f"WH-X{index + 1:02d}"
+        warehouse_map[old_id] = new_id
+        item["id"] = new_id
+        item["name"] = f"{item.get('name', '仓库')}（独立布局）"
+        item["region"] = "演练·西部走廊"
+        item["lat"] = round(31.18 - index * 0.08, 6)
+        item["lng"] = round(114.56 + index * 0.12, 6)
+        layout_warehouses.append(item)
+
+    layout_inventory = []
+    for source in inventory:
+        item = copy.deepcopy(source)
+        item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
+        item["warehouse_name"] = f"{item.get('warehouse_name', item['warehouse_id'])}（独立布局）"
+        layout_inventory.append(item)
+
+    layout_vehicles = []
+    for index, source in enumerate(vehicles):
+        item = copy.deepcopy(source)
+        item["id"] = f"VEH-X{index + 1:03d}"
+        item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
+        item["lat"] = round(31.18 - (index % max(1, len(warehouses))) * 0.08, 6)
+        item["lng"] = round(114.56 + (index % max(1, len(warehouses))) * 0.12, 6)
+        layout_vehicles.append(item)
+
+    layout_routes = []
+    for index, source in enumerate(routes):
+        item = copy.deepcopy(source)
+        item["id"] = f"ROUTE-X{index + 1:03d}"
+        item["warehouse_id"] = warehouse_map.get(item.get("warehouse_id"), item.get("warehouse_id"))
+        item["destination_id"] = destination_map.get(item.get("destination_id"), item.get("destination_id"))
+        item["road_name"] = f"西部走廊-{index + 1:02d}"
+        item["distance_km"] = round(float(item.get("distance_km") or 0) * 1.17, 2)
+        item["eta_hours"] = round(float(item.get("eta_hours") or 0) + 0.22, 2)
+        item["cost"] = round(float(item.get("cost") or 0) * 1.09, 2)
+        item["geometry"] = []
+        item["status"] = "open"
+        layout_routes.append(item)
+    return layout_destinations, layout_warehouses, layout_routes, layout_vehicles, layout_inventory
+
+
 def _benchmark_contexts(db: Database) -> list[dict]:
     materials = db.list_materials()
     destinations = db.destination_rows()
@@ -62,27 +128,48 @@ def _benchmark_contexts(db: Database) -> list[dict]:
     if not rain or not heat:
         raise RuntimeError("基准场景不可用")
 
-    def build(scenario: dict, *, inventory_rows=None, vehicle_rows=None, feasible=True, name=None):
+    def build(
+        scenario: dict, *, inventory_rows=None, vehicle_rows=None, feasible=True, name=None,
+        destination_rows=None, warehouse_rows=None, route_rows=None, independence="shared_layout",
+    ):
         return {
             "id": scenario["id"], "name": name or scenario["name"], "scenario": scenario,
             "request": _scenario_request(scenario, materials), "materials": materials,
-            "destinations": destinations, "warehouses": warehouses, "routes": routes,
+            "destinations": destination_rows if destination_rows is not None else destinations,
+            "warehouses": warehouse_rows if warehouse_rows is not None else warehouses,
+            "routes": route_rows if route_rows is not None else routes,
             "vehicles": copy.deepcopy(vehicle_rows if vehicle_rows is not None else vehicles),
             "inventory": copy.deepcopy(inventory_rows if inventory_rows is not None else inventory),
             "closed_routes": list(scenario["closed_routes"]), "feasible": feasible,
+            "data_independence": independence,
+            "layout_id": "western-corridor" if independence == "independent_layout" else "default-network",
         }
 
     shortage_inventory = copy.deepcopy(inventory)
     for row in shortage_inventory:
         row["quantity"] = round(float(row.get("quantity") or 0) * 0.05, 2)
         row["locked_quantity"] = 0
-    return [
-        build(rain),
-        build(heat),
-        build(rain, inventory_rows=shortage_inventory, feasible=False, name="库存严重缺口"),
-        build(heat, vehicle_rows=[], feasible=False, name="无可用车辆"),
-    ]
 
+    layout_destinations, layout_warehouses, layout_routes, layout_vehicles, layout_inventory = _independent_layout(
+        destinations, warehouses, routes, vehicles, inventory
+    )
+    independent_scenario = copy.deepcopy(heat)
+    independent_scenario["id"] = "western-corridor-layout"
+    independent_scenario["name"] = "西部走廊独立路网"
+    independent_scenario["location"] = "演练·西部走廊"
+    independent_scenario["closed_routes"] = []
+    independent_scenario["default_demand"] = copy.deepcopy(heat["default_demand"])
+    return [
+        build(rain, independence="shared_layout"),
+        build(heat, independence="shared_layout"),
+        build(rain, inventory_rows=shortage_inventory, feasible=False, name="库存严重缺口", independence="controlled_variant"),
+        build(heat, vehicle_rows=[], feasible=False, name="无可用车辆", independence="controlled_variant"),
+        build(
+            independent_scenario, name="西部走廊独立路网", independence="independent_layout",
+            destination_rows=layout_destinations, warehouse_rows=layout_warehouses,
+            route_rows=layout_routes, vehicle_rows=layout_vehicles, inventory_rows=layout_inventory,
+        ),
+    ]
 
 def run_benchmark(db: Database, repetitions: int = 20) -> dict:
     try:
@@ -177,6 +264,8 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "scenario_id": context["id"],
             "name": context["name"],
             "feasible": context["feasible"],
+            "data_independence": context["data_independence"],
+            "layout_id": context["layout_id"],
             "baseline_verdict": "不安全但被接受" if baseline_score < 80 else "安全",
             "initial_verdict": initial_verdict,
             "final_verdict": final_verdict,
@@ -265,7 +354,10 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             "repeat_compute_ms": multi_p95,
             "reproducible": reproducible,
             "demand_rows": total_demand_rows,
-            "inventory_snapshot": "同一冻结快照 + 受控变体",
+            "inventory_snapshot": "共享快照 + 独立布局 + 明确标注的受控变体",
+            "independent_layout_scenarios": sum(1 for item in contexts if item["data_independence"] == "independent_layout"),
+            "controlled_variant_scenarios": sum(1 for item in contexts if item["data_independence"] == "controlled_variant"),
+            "shared_layout_scenarios": sum(1 for item in contexts if item["data_independence"] == "shared_layout"),
             "repetitions": repetitions,
             "scenarios": len(contexts),
             "samples": total_samples,
@@ -281,9 +373,10 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
         ],
         "notes": [
             f"基准覆盖 {len(contexts)} 个差异化场景，每个场景重复 {repetitions} 次，共 {total_samples} 个样本。",
-            "场景包括道路中断、正常条件、库存严重缺口和无可用车辆；不可行场景的正确行为是转人工研判而不是伪造方案。",
-            "耗时只统计本地确定性计算，不包含公网 AgentArts 等待；真实云端端到端指标单独展示在 runtime_evidence。",
-            "所有场景使用同一库存快照或明确标注的受控变体，误差分析仍只代表演练条件。",
+            "场景包括道路中断、正常条件、库存严重缺口、无可用车辆和西部走廊独立路网；不可行场景的正确行为是转人工研判而不是伪造方案。",
+            "5 个场景中 2 个共享默认路网、2 个明确标注为受控变体、1 个使用独立仓库/安置点/路线布局；不把受控变体包装成多城市泛化。",
+            "耗时只统计本地确定性计算，不包含公网 AgentArts 等待；真实云端端到端指标从持久化运行记录读取并单独展示。",
+            "并发测试是单进程 asyncio 压测，不等同于多实例生产集群容量；生产部署需在 ECS/容器集群上重新压测。",
         ],
     }
 
@@ -676,6 +769,51 @@ async def _fault_suite(fixture: dict) -> list[dict]:
     return results
 
 
+async def _run_soak_suite(
+    fixture: dict, duration_seconds: float = 8.0, concurrency: int = 4, interval_seconds: float = 0.35,
+) -> dict:
+    """Sustained single-process submission test with explicit production scope."""
+    started = time.perf_counter()
+    deadline = started + max(2.0, float(duration_seconds))
+    results: list[dict] = []
+    errors: list[str] = []
+    batches = 0
+    while time.perf_counter() < deadline:
+        batch = await asyncio.gather(
+            *(asyncio.to_thread(_run_multi_pipeline, fixture) for _ in range(max(1, int(concurrency)))),
+            return_exceptions=True,
+        )
+        results.extend(item for item in batch if isinstance(item, dict))
+        errors.extend(str(item)[:240] for item in batch if isinstance(item, Exception))
+        batches += 1
+        remaining = deadline - time.perf_counter()
+        if remaining > 0:
+            await asyncio.sleep(min(interval_seconds, remaining))
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    successful = [item for item in results if item["final_verdict"] == "pass"]
+    latencies = [item["elapsed_ms"] for item in successful]
+    signatures = {item["signature"] for item in successful}
+    target_met = elapsed_ms >= duration_seconds * 1000
+    status = "pass" if results and not errors and len(successful) == len(results) and len(signatures) == 1 and target_met else "fail"
+    return {
+        "status": status,
+        "scope": "单进程 asyncio + 线程池持续提交；不代表多实例集群容量",
+        "target_duration_seconds": duration_seconds,
+        "duration_ms": elapsed_ms,
+        "concurrency": concurrency,
+        "batches": batches,
+        "samples": len(results),
+        "successful": len(successful),
+        "success_rate": round(len(successful) / len(results), 4) if results else 0.0,
+        "throughput_runs_per_second": round(len(successful) / (elapsed_ms / 1000), 2) if elapsed_ms else 0.0,
+        "average_latency_ms": round(mean(latencies), 2) if latencies else 0.0,
+        "p95_latency_ms": _p95(latencies),
+        "isolation_consistent": len(signatures) == 1 if successful else False,
+        "target_met": target_met,
+        "errors": errors[:10],
+    }
+
+
 def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
     run_id = f"EVAL-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     levels = sorted({max(1, min(50, int(level))) for level in (levels or [1, 5, 10, 20])})
@@ -684,10 +822,13 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
     try:
         fixture = _diagnostic_fixture(db)
         concurrency = asyncio.run(_run_concurrency_suite(fixture, levels))
+        soak = asyncio.run(_run_soak_suite(fixture, duration_seconds=8.0, concurrency=4))
         faults = asyncio.run(_fault_suite(fixture))
         error_profile = _error_profile(fixture)
-        all_passed = all(item["status"] == "pass" for item in concurrency) and all(
-            item["passed"] for item in faults
+        all_passed = (
+            all(item["status"] == "pass" for item in concurrency)
+            and soak["status"] == "pass"
+            and all(item["passed"] for item in faults)
         )
         result = {
             "run_id": run_id,
@@ -698,6 +839,7 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
             "all_passed": all_passed,
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             "concurrency": concurrency,
+            "soak": soak,
             "fault_injection": faults,
             "error_analysis": error_profile,
             "conclusion": (
@@ -706,6 +848,7 @@ def run_diagnostics(db: Database, levels: list[int] | None = None) -> dict:
             ),
             "notes": [
                 "并发测试使用同一冻结库存快照，每个并发级别运行相应数量的完整自适应闭环。",
+                "长稳测试持续提交 8 秒并记录实际样本、吞吐、P95 与隔离一致性；它证明单进程持续可用性，不冒充多实例集群容量。",
                 "故障注入是可重复的受控测试：不向公网发送 AgentArts 请求，OSRM 故障由 MockTransport 注入。",
                 "误差归类依据核验器真实阻断/告警代码，不使用人工填写的固定分数。",
             ],

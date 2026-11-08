@@ -13,15 +13,17 @@
 - 独立核验：道路封闭、库存、车辆趟次、时效和需求覆盖检查
 - 退回重算：第一轮主通道方案被核验退回，第二轮改走备用通道后重新核验
 - 实时运行轨迹：FastAPI SSE 推送调度、需求、RAG、匹配、核验、重规划和交付事件
-- Agent 编排中心：五核心模块、四 Agent 契约、工具注册、DAG 与条件回环可视化
+- Agent 编排中心：五核心模块、四核心 Agent 契约、双核验投票支持 Agent、工具注册、DAG 与条件回环可视化
 - 评估中心：基线对比、重复计算一致性、1/5/10/20 并发压力、6 类故障注入、误差分类与 Wilson 95% 区间
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
 - Agent 注册表：动态注册、版本切换；配置端点时调用 AgentArts，未配置端点时自动使用离线角色执行器
-- 可视化与代码化工作流：节点卡片、拖拽连线、JSON 双向同步、可替换主干 DAG、工作流内 loop、tool 节点、条件/并行/投票和子工作流
+- 跨运行记忆：PostgreSQL/SQLite 持久化置信度、阻断历史、成功修复策略和推荐方案；只作为允许策略集合内的 tie-break
+- 置信度与 Prompt 证据：需求置信度按可解释因子计算，反馈循环生成 `v1.4+adaptive.rN` Prompt 补丁并进入下一轮上下文
+- 可视化与代码化工作流：节点卡片、拖拽连线、往返 JSON 同步、可替换主干 DAG、工作流内 loop/tool 节点、条件/并行/投票/子工作流，以及 3 个可实例化模板
 - 可上传知识库：多格式上传、自动分块、领域同义词扩展哈希向量 + BM25 + 重排的混合检索；内置 knowledge_search Function Calling 工具
-- 三项 AI 实际决策：需求假设补全、允许策略集内的修复优先级选择、已核验方案推荐；AI 决策矩阵同时列出辅助生成项与降级路径
-- 多场景量化评估：道路中断、正常条件、库存缺口、无可用车辆 4 个场景重复测试，统计不安全验收、误拒、不可行场景升级、P95 与真实 AgentArts 端到端指标
-- AgentArts 调用加速：HTTP 连接复用、任务完成即返回、资源匹配与独立核验云端复核并行；最新完整云端运行 28.8 秒
+- 三项 AI 实际决策：需求假设补全、允许策略集内的修复优先级选择、已核验方案推荐；决策矩阵同时列出本地确定性等价能力、安全边界与降级路径
+- 量化评估：道路中断、正常条件、库存缺口、无可用车辆和西部走廊独立路网共 5 个场景、100 个默认样本；另含 8 秒长稳提交、1/5/10/20 并发、故障注入和真实端到端样本分区
+- AgentArts 运行观测：HTTP 连接复用、任务完成即返回、匹配与核验复核并行；本机最近一次完整链路约 37.0 秒，仅作观测值，不作为 SLA
 - 安全与审计：登录、四类角色、失败锁定和操作审计
 - 交付结果：方案对比、调拨明细、评分、风险提示、执行清单和打印报告
 - 演练兜底：本地确定性编排不依赖外网，AgentArts 适配器可单独接入
@@ -35,7 +37,7 @@
 
 - 后端：FastAPI、Pydantic、PostgreSQL 18（SQLite 离线回退）
 - 前端：Vue 3、Vite、Leaflet、高德兼容真实地图瓦片
-- 智能体：四个职责隔离的 Agent 契约 + 本地执行器 + 华为云 AgentArts SDK `/invocations` 适配
+- 智能体：四个核心 Agent 契约 + 双核验支持 Agent + 本地执行器 + 华为云 AgentArts SDK `/invocations` 适配
 - 实时通信：Server-Sent Events
 - 数据上传：CSV / XLSX
 
@@ -144,9 +146,18 @@ LLM_API_KEY=your-key
 LLM_MODEL=your-model
 ```
 
-AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /invocations` 和 `GET /ping` 契约。部署后可通过 `GET /api/agentarts/check` 检查连接。未配置 LLM/AgentArts 时使用确定性的本地回退，不影响库存、规划、核验和回环演示。四个 Agent 的角色、输入输出和工具权限见 `docs/AGENT_DESIGN.md`。
+AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /invocations` 和 `GET /ping` 契约。部署后可通过 `GET /api/agentarts/check` 检查连接。未配置 LLM/AgentArts 时使用确定性的本地回退，不影响库存、规划、核验和回环演示。四个核心 Agent 的角色、输入输出和工具权限见 `docs/AGENT_DESIGN.md`。
 
-重要原则：库存、路线、载重、时效和核验规则由确定性代码计算；AgentArts 负责理解、编排与解释，不能替代硬规则审批。
+外部 HTTP/MCP 工具必须显式配置可信域名；系统默认阻止回环、内网、链路本地和保留地址，避免 SSRF：
+
+```env
+TOOL_ALLOWED_HOSTS=tool.example.com,mcp.example.com
+TOOL_ALLOW_PRIVATE_HOSTS=false
+TOOL_HTTP_TIMEOUT=20
+MCP_PROTOCOL_VERSION=2024-11-05
+```
+
+重要原则：库存、路线、载重、时效和核验规则由确定性代码计算；AgentArts 负责理解、编排、策略选择与解释，不能替代硬规则审批。系统把“确定性规则 = 安全内核，LLM = 理解与编排层”作为主动架构决策，并在决策矩阵中逐项列出本地确定性等价能力。
 
 ## API
 
@@ -170,6 +181,10 @@ AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /i
 - `POST /api/tools/{tool_id}/invoke`
 - `POST /api/mcp`
 - `GET /api/workflows`
+- `GET /api/workflow-templates`
+- `POST /api/workflow-templates/{template_id}/instantiate`
+- `GET /api/memory`
+- `DELETE /api/memory/{agent_id}/{memory_key}`
 - `POST /api/workflows/validate`
 - `PUT /api/workflows/{workflow_id}`
 - `POST /api/workflows/{workflow_id}/run`
@@ -226,7 +241,7 @@ cd backend
 pytest -q
 ```
 
-测试覆盖工作流内循环、tool 节点、MCP 握手与工具调用、可替换主干 DAG、双核验 Agent 投票、离线注册 Agent、语义混合检索、多场景基准、自适应多轮核验、问题分类修复策略、运力不足硬阻断、真实异步优先队列、四智能体编排、AgentArts 适配、动态 Agent 注册、注册 Agent 直接调用权限与失败边界、仅全云端运行的指标过滤、并发诊断、故障注入、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：46 passed，1 条第三方弃用警告。另已使用当前提交导出的干净源码完成一键安装、前端构建、独立端口启动、完整调度和审批出单验收。
+测试覆盖工作流内循环、tool 节点、工具结果实际影响匹配决策、MCP initialize/session 握手、SSRF 防护、可替换主干 DAG、双核验 Agent 投票、模板实例化、跨运行记忆 tie-break、Prompt 自适应、动态置信度、语义混合检索、五场景基准、长稳提交、自适应多轮核验、问题分类修复策略、真实异步优先队列、AgentArts 适配、认证鉴权、资源 CRUD、路线生成和 API 主流程。当前结果：51 passed，1 条第三方弃用警告。另已使用当前服务完成数据库无损迁移、完整调度、记忆写入、模板读取、独立布局基准和 8 秒长稳验收。
 
 ## 边界说明
 

@@ -675,9 +675,26 @@ onBeforeUnmount(() => {
                 <p>{{ review.parsed?.summary || review.parsed?.rationale || review.text || '扩展审查已完成' }}</p>
               </div>
             </div>
+            <div class="delivery-grid" style="margin-bottom: 14px;">
+              <div class="delivery-block">
+                <h4>需求置信度证据 · {{ ((runResult.demand?.confidence || 0) * 100).toFixed(0) }}%</h4>
+                <ul>
+                  <li v-for="(value, key) in (runResult.demand?.confidence_factors || {})" :key="key">{{ key }}：{{ (Number(value) * 100).toFixed(1) }}%</li>
+                  <li>计算方法：{{ runResult.demand?.confidence_method || '确定性因子加权' }}</li>
+                </ul>
+              </div>
+              <div class="delivery-block">
+                <h4>Prompt 自适应证据</h4>
+                <ul>
+                  <li>当前匹配 Prompt：{{ runResult.active_prompt_versions?.matching_agent || 'v1.4' }}</li>
+                  <li v-for="item in (runResult.prompt_adaptations || [])" :key="`${item.active_version}-${item.selection_policy}`">{{ item.active_version }} · {{ item.source_issue_codes.join('、') }} → {{ item.instructions.join('；') }}</li>
+                  <li v-if="!runResult.prompt_adaptations?.length">本轮未触发反馈补丁，使用基础 Prompt。</li>
+                </ul>
+              </div>
+            </div>
             <div v-if="runResult.ai_decision_matrix?.length" class="table-wrap" style="margin-bottom: 14px;">
-              <table class="data-table"><thead><tr><th>编号</th><th>层级</th><th>AI 决策</th><th>模型职责</th><th>来源</th><th>安全边界</th><th>降级策略</th></tr></thead><tbody>
-                <tr v-for="item in runResult.ai_decision_matrix" :key="item.id"><td><strong>{{ item.id }}</strong></td><td><span class="plan-tag">{{ item.level }}</span></td><td><strong>{{ item.decision }}</strong></td><td>{{ item.ai_role }}</td><td><span class="inventory-status" :class="item.applied ? 'inventory-status--available' : 'inventory-status--expired'">{{ item.applied ? '已生效' : '已降级' }} · {{ item.source }}</span></td><td>{{ item.boundary }}</td><td>{{ item.fallback }}</td></tr>
+              <table class="data-table"><thead><tr><th>编号</th><th>层级</th><th>AI 决策</th><th>模型职责</th><th>来源</th><th>安全边界</th><th>降级策略</th><th>本地确定性等价能力</th></tr></thead><tbody>
+                <tr v-for="item in runResult.ai_decision_matrix" :key="item.id"><td><strong>{{ item.id }}</strong></td><td><span class="plan-tag">{{ item.level }}</span></td><td><strong>{{ item.decision }}</strong></td><td>{{ item.ai_role }}</td><td><span class="inventory-status" :class="item.applied ? 'inventory-status--available' : 'inventory-status--expired'">{{ item.applied ? '已生效' : '已降级' }} · {{ item.source }}</span></td><td>{{ item.boundary }}</td><td>{{ item.fallback }}</td><td>{{ item.local_equivalent }}</td></tr>
               </tbody></table>
             </div>
             <div class="delivery-grid">

@@ -23,12 +23,13 @@ from .knowledge import catalog as knowledge_catalog
 from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, chunk_text, extract_text
 from .llm import LLMService
 from .local_agents import invoke_local_registered_agent
+from .memory import MemoryRepository
 from .models import (
     AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
     InventoryEntryUpdate, LoginRequest, MaterialCreate,
     MaterialImportResult, OperationalEventCreate, PasswordChange, RouteGenerateRequest, RunRequest,
     TaskStatusUpdate, ToolInvokeRequest, ToolRegisterRequest, UserCreate, UserUpdate, VehicleCreate, VehiclePositionInput, WarehouseCreate,
-    WorkflowRunRequest, WorkflowUpsertRequest, WorkflowValidateRequest,
+    WorkflowRunRequest, WorkflowTemplateInstantiateRequest, WorkflowUpsertRequest, WorkflowValidateRequest,
 )
 from .operations import OperationsRepository
 from .registry import AgentRegistryError, AgentRegistryService
@@ -36,7 +37,7 @@ from .routing import fetch_route_geometry, generate_route_candidates
 from .orchestrator import new_run_id, orchestrate
 from .scheduler import platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
-from .tools import ToolError, ToolRepository, ToolService
+from .tools import ToolError, ToolRepository, ToolService, validate_tool_endpoint
 from .workflow_engine import WorkflowEngine, WorkflowRepository, WorkflowValidationError, validate_workflow
 
 router = APIRouter(prefix="/api")
@@ -212,6 +213,21 @@ def activate_agent_version(agent_id: str, version: str, request: Request) -> dic
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/memory")
+def list_memory(agent_id: str | None = None, limit: int = 100) -> list[dict]:
+    return MemoryRepository(db).list_memories(agent_id=agent_id, limit=limit)
+
+
+@router.delete("/memory/{agent_id}/{memory_key}")
+def delete_memory(agent_id: str, memory_key: str, request: Request) -> dict:
+    current = _require_admin(request)
+    if not MemoryRepository(db).delete(agent_id, memory_key):
+        raise HTTPException(status_code=404, detail="记忆记录不存在")
+    auth_service.audit("memory_deleted", "DELETE", f"/api/memory/{agent_id}/{memory_key}", 200, current,
+                       resource_type="agent_memory", resource_id=f"{agent_id}:{memory_key}")
+    return {"deleted": True}
+
+
 @router.get("/tools")
 def list_tools(enabled_only: bool = True) -> list[dict]:
     repository = ToolRepository(db)
@@ -225,6 +241,11 @@ def save_tool(tool_id: str, payload: ToolRegisterRequest, request: Request) -> d
     existing = ToolRepository(db).get_tool(tool_id)
     if existing and existing["kind"] == "builtin":
         raise HTTPException(status_code=409, detail="内置工具不能通过该接口覆盖")
+    try:
+        if payload.kind in {"http", "mcp"}:
+            validate_tool_endpoint(payload.endpoint)
+    except ToolError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     saved = ToolRepository(db).save_tool(tool_id, payload.model_dump())
     auth_service.audit("tool_saved", "PUT", f"/api/tools/{tool_id}", 200, current,
                        resource_type="tool", resource_id=tool_id)
@@ -263,6 +284,23 @@ async def mcp_endpoint(payload: dict, x_integration_key: str | None = Header(def
 @router.get("/workflows")
 def list_workflows(stage: str | None = None, enabled_only: bool = False) -> list[dict]:
     return WorkflowRepository(db).list_workflows(stage=stage, enabled_only=enabled_only)
+
+
+@router.get("/workflow-templates")
+def list_workflow_templates() -> list[dict]:
+    return WorkflowRepository(db).list_templates()
+
+
+@router.post("/workflow-templates/{template_id}/instantiate")
+def instantiate_workflow_template(template_id: str, payload: WorkflowTemplateInstantiateRequest, request: Request) -> dict:
+    current = _require_admin(request)
+    try:
+        workflow = WorkflowRepository(db).instantiate_template(template_id, payload.model_dump())
+    except WorkflowValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_service.audit("workflow_template_instantiated", "POST", f"/api/workflow-templates/{template_id}/instantiate", 200, current,
+                       resource_type="workflow", resource_id=workflow["id"])
+    return workflow
 
 
 @router.post("/workflows/validate")
@@ -458,6 +496,11 @@ def benchmark() -> dict:
         "fully_cloud": cloud_runs,
         "scheduler": scheduler_evidence,
     }
+    data["metrics"]["end_to_end_latest_ms"] = all_runs.get("latest_run_end_to_end_ms", 0)
+    data["metrics"]["end_to_end_average_ms"] = all_runs.get("average_end_to_end_ms", 0)
+    data["metrics"]["end_to_end_p95_ms"] = all_runs.get("p95_end_to_end_ms", 0)
+    data["metrics"]["end_to_end_samples"] = all_runs.get("samples", 0)
+    data["metrics"]["fully_cloud_samples"] = cloud_runs.get("samples", 0)
     return data
 
 

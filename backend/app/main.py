@@ -15,11 +15,13 @@ from .api import auth_service, db, router
 from .agentarts import AgentArtsBridge
 from .config import ALLOWED_ORIGINS, AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, PROJECT_DIR
 from .scheduler import AGENTS
+from .workflow_engine import WorkflowRepository
 
 db.initialize()
 if AUTH_REQUIRED:
     auth_service.ensure_bootstrap_admin()
 api_module.registry_service.sync_builtin_agents(AGENTS, AgentArtsBridge().endpoints)
+WorkflowRepository(db).ensure_template_library()
 
 app = FastAPI(
     title="急先锋 · 应急资源调度推演平台",

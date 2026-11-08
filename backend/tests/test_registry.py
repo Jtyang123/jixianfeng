@@ -28,6 +28,7 @@ def test_fully_cloud_metrics_exclude_fallback_runs(tmp_path: Path):
     service = AgentRegistryService(db)
     agent_ids = ["demand_agent", "matching_agent", "verifier_agent", "delivery_agent"]
     full_trace = {agent_id: {"mode": "agentarts"} for agent_id in agent_ids}
+    full_trace["verification_vote"] = {"mode": "internal-vote"}
     mixed_trace = dict(full_trace)
     mixed_trace["verifier_agent"] = {"mode": "local-fallback-after-agentarts-error"}
 

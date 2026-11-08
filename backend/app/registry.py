@@ -208,6 +208,7 @@ class AgentRegistryService:
             "successful_runs": successful,
             "success_rate": round(successful / len(rows), 4) if rows else 0,
             "average_end_to_end_ms": round(sum(durations) / len(durations), 2) if durations else 0,
+            "latest_run_end_to_end_ms": round(durations[0], 2) if durations else 0,
             "p95_end_to_end_ms": round(p95, 2),
             "agentarts_run_count": agentarts_runs,
             "agent_call_count": agent_calls,
@@ -231,13 +232,13 @@ class AgentRegistryService:
                 result=json.loads(row.get("result_json") or "{}")
                 trace=result.get("agentarts_trace") or {}
                 expected_agents={"demand_agent","matching_agent","verifier_agent","delivery_agent"}
-                if set(trace) != expected_agents:
+                if not expected_agents.issubset(trace):
                     continue
-                modes=[str((item or {}).get("mode", "")) for item in trace.values()]
-                if any(mode != "agentarts" for mode in modes):
+                core_modes=[str((trace.get(agent_id) or {}).get("mode", "")) for agent_id in expected_agents]
+                if any(mode != "agentarts" for mode in core_modes):
                     continue
                 run_ids.append(row["id"])
-                calls += len(modes); successes += len(modes)
+                calls += len(core_modes); successes += len(core_modes)
                 if row["status"] in {"awaiting_approval", "approved"}: successful += 1
                 start=datetime.fromisoformat(row["created_at"]); end=datetime.fromisoformat(row["completed_at"])
                 durations.append(max(0,(end-start).total_seconds()*1000))

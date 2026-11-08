@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import time
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 
+from .config import MCP_PROTOCOL_VERSION, TOOL_ALLOWED_HOSTS, TOOL_ALLOW_PRIVATE_HOSTS, TOOL_HTTP_TIMEOUT
 from .database import Database, now_iso
 from .knowledge import catalog as knowledge_catalog
 from .knowledge_base import KnowledgeRepository
@@ -56,6 +60,98 @@ def _matches(item: dict, arguments: dict) -> bool:
         return False
     return True
 
+
+def validate_tool_endpoint(endpoint: str) -> str:
+    parsed = urlparse(str(endpoint or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ToolError("工具 endpoint 必须是合法的 http/https 地址")
+    host = parsed.hostname.lower()
+    allowed = any(
+        host == item or (item.startswith("*.") and host.endswith(item[1:])) or host.endswith("." + item)
+        for item in TOOL_ALLOWED_HOSTS
+    )
+    if not allowed:
+        raise ToolError(f"工具域名不在白名单：{host}")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
+    except OSError as exc:
+        raise ToolError(f"工具域名解析失败：{host}") from exc
+    risky = []
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            risky.append(str(ip))
+    if risky and not TOOL_ALLOW_PRIVATE_HOSTS:
+        raise ToolError("工具 endpoint 解析到内网、回环或链路本地地址，已阻止 SSRF 风险")
+    return endpoint
+
+
+def _rpc_json(response: httpx.Response) -> dict:
+    if "text/event-stream" in response.headers.get("content-type", ""):
+        for line in reversed(response.text.splitlines()):
+            if line.startswith("data:"):
+                payload = line[5:].strip()
+                if payload and payload != "[DONE]":
+                    return json.loads(payload)
+        raise ToolError("MCP SSE 响应没有 JSON-RPC 数据")
+    return response.json()
+
+
+async def mcp_call_remote(
+    endpoint: str, remote_name: str, arguments: dict, config: dict | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> dict:
+    config = config or {}
+    validate_tool_endpoint(endpoint)
+    protocol_version = str(config.get("protocol_version") or MCP_PROTOCOL_VERSION)
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    owned_client = client is None
+    rpc_client = client or httpx.AsyncClient(timeout=float(config.get("timeout") or TOOL_HTTP_TIMEOUT))
+    try:
+        initialize_payload = {
+            "jsonrpc": "2.0", "id": f"init-{uuid4().hex[:8]}", "method": "initialize",
+            "params": {
+                "protocolVersion": protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "jixianfeng", "version": "1.0.0"},
+            },
+        }
+        initialize_response = await rpc_client.post(endpoint, json=initialize_payload, headers=headers)
+        initialize_response.raise_for_status()
+        initialize_data = _rpc_json(initialize_response)
+        if initialize_data.get("error"):
+            raise ToolError(f"MCP initialize 失败：{initialize_data['error'].get('message', initialize_data['error'])}")
+        negotiated_version = (initialize_data.get("result") or {}).get("protocolVersion", protocol_version)
+        session_id = initialize_response.headers.get("Mcp-Session-Id") or initialize_response.headers.get("mcp-session-id")
+        session_headers = dict(headers)
+        if session_id:
+            session_headers["Mcp-Session-Id"] = session_id
+        initialized_response = await rpc_client.post(
+            endpoint,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            headers=session_headers,
+        )
+        initialized_response.raise_for_status()
+        call_response = await rpc_client.post(
+            endpoint,
+            json={
+                "jsonrpc": "2.0", "id": f"call-{uuid4().hex[:8]}", "method": "tools/call",
+                "params": {"name": remote_name, "arguments": arguments},
+            },
+            headers=session_headers,
+        )
+        call_response.raise_for_status()
+        call_data = _rpc_json(call_response)
+        if call_data.get("error"):
+            raise ToolError(f"MCP tools/call 失败：{call_data['error'].get('message', call_data['error'])}")
+        return {
+            "protocol_version": negotiated_version,
+            "session_id": session_id or "",
+            "response": call_data,
+        }
+    finally:
+        if owned_client:
+            await rpc_client.aclose()
 
 class ToolRepository:
     def __init__(self, db: Database) -> None:
@@ -177,8 +273,7 @@ class ToolService:
             if tool["kind"] == "builtin":
                 result = self._builtin(tool_id, arguments)
             elif tool["kind"] == "http":
-                if not tool["endpoint"].startswith(("http://", "https://")):
-                    raise ToolError("HTTP 工具 endpoint 必须是 http/https 地址")
+                validate_tool_endpoint(tool["endpoint"])
                 headers = tool.get("config", {}).get("headers") or {}
                 timeout = float(tool.get("config", {}).get("timeout", 15))
                 async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
@@ -193,17 +288,10 @@ class ToolService:
                         payload = {"text": response.text}
                 result = {"status_code": response.status_code, "payload": payload}
             elif tool["kind"] == "mcp":
-                if not tool["endpoint"].startswith(("http://", "https://")):
-                    raise ToolError("MCP 工具 endpoint 必须是 http/https 地址")
                 remote_name = tool.get("config", {}).get("remote_name") or tool_id
-                request_payload = {
-                    "jsonrpc": "2.0", "id": f"call-{uuid4().hex[:8]}", "method": "tools/call",
-                    "params": {"name": remote_name, "arguments": arguments},
-                }
-                async with httpx.AsyncClient(timeout=float(tool.get("config", {}).get("timeout", 20))) as client:
-                    response = await client.post(tool["endpoint"], json=request_payload)
-                    response.raise_for_status()
-                    result = response.json()
+                result = await mcp_call_remote(
+                    tool["endpoint"], remote_name, arguments, tool.get("config", {})
+                )
             else:
                 raise ToolError(f"不支持的工具类型：{tool['kind']}")
             latency = round((time.perf_counter() - started) * 1000, 2)

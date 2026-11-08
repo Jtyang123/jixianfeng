@@ -21,7 +21,7 @@ GitHub 中包含：
 
 - FastAPI 后端
 - Vue 前端
-- 四个 Agent 契约与本地执行器
+- 四个核心 Agent 契约、双核验支持 Agent 与本地执行器
 - AgentArts 调用适配
 - Agent 注册、发现与版本管理
 - 测试、文档、一键安装脚本
@@ -139,7 +139,7 @@ cd frontend
 npm run build
 ```
 
-当前基线：`46 passed`，前端构建通过。
+当前基线：`51 passed`，前端生产构建通过。
 
 ## 10. 协作约定
 

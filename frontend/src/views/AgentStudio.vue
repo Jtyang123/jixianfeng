@@ -1,14 +1,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import {
-  Bot, BookOpen, BrainCircuit, CheckCircle2, Cpu, Database, GitBranch,
-  Layers3, Network, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Wrench,
+  Bot, BookOpen, BrainCircuit, CheckCircle2, Cpu, Database, GitBranch, History,
+  Layers3, Network, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Trash2, Wrench,
 } from '@lucide/vue'
 import { api } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })
 
 const manifest = ref(null)
+const memories = ref([])
 const loading = ref(true)
 const error = ref('')
 const checking = ref(false)
@@ -53,7 +54,24 @@ const moduleCards = computed(() => [
 
 async function load() {
   loading.value = true
-  try { manifest.value = await api.manifest() } catch (exc) { error.value = exc.message } finally { loading.value = false }
+  error.value = ''
+  try {
+    const [platformManifest, memoryRows] = await Promise.all([api.manifest(), api.memory()])
+    manifest.value = platformManifest
+    memories.value = memoryRows
+  } catch (exc) { error.value = exc.message } finally { loading.value = false }
+}
+function memoryValue(row) {
+  const value = row?.value
+  if (typeof value === 'string') return value
+  return JSON.stringify(value || {}, null, 0)
+}
+async function removeMemory(row) {
+  if (!isAdmin.value || !window.confirm(`确认删除 ${row.agent_id} 的记忆键“${row.memory_key}”？`)) return
+  try {
+    await api.deleteMemory(row.agent_id, row.memory_key)
+    memories.value = memories.value.filter((item) => !(item.agent_id === row.agent_id && item.memory_key === row.memory_key))
+  } catch (exc) { error.value = exc.message }
 }
 async function checkConnection() {
   checking.value = true
@@ -237,6 +255,16 @@ onMounted(load)
           </div>
         </section>
       </div>
+
+      <section class="content-card memory-card">
+        <div class="workflow-head"><div><div class="eyebrow">CROSS-RUN MEMORY</div><h2>跨运行记忆</h2><p>记忆来自真实运行，只作为上下文和安全 tie-break，不覆盖库存、道路、运力、时效与核验硬规则。</p></div><History :size="20" /></div>
+        <div v-if="memories.length" class="table-wrap">
+          <table class="data-table"><thead><tr><th>Agent</th><th>记忆键</th><th>内容</th><th>置信度</th><th>来源运行</th><th>更新时间</th><th v-if="isAdmin">操作</th></tr></thead>
+            <tbody><tr v-for="row in memories" :key="`${row.agent_id}-${row.memory_key}`"><td><strong>{{ row.agent_id }}</strong></td><td>{{ row.memory_key }}</td><td class="memory-value">{{ memoryValue(row) }}</td><td>{{ (row.confidence * 100).toFixed(0) }}%</td><td class="mono">{{ row.source_run_id || '历史种子' }}</td><td>{{ row.updated_at }}</td><td v-if="isAdmin"><button class="record-delete" @click="removeMemory(row)"><Trash2 :size="12" />删除</button></td></tr></tbody>
+          </table>
+        </div>
+        <div v-else class="empty-table"><History :size="26" /><strong>暂无跨运行记忆</strong><span>完成一次成功推演后，系统会写入可审计的置信度、阻断历史、修复策略和推荐方案。</span></div>
+      </section>
 
       <section class="content-card score-alignment">
         <div class="workflow-head"><div><div class="eyebrow">EVIDENCE MAPPING</div><h2>赛题能力证据映射</h2></div><Layers3 :size="20" /></div>

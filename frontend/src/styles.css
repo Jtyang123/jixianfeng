@@ -1098,6 +1098,7 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 /* Evaluation diagnostics */
 .diagnostics-card { margin-bottom: 16px; }
 .diagnostic-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.soak-summary { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .diagnostic-summary article { display: flex; flex-direction: column; gap: 5px; padding: 13px; background: #faf8f2; border: 1px solid var(--line); border-radius: 9px; }
 .diagnostic-summary span { color: var(--muted); font-size: 8px; }
 .diagnostic-summary strong { color: var(--ink-2); font: 600 18px 'DM Mono', monospace; }
@@ -1154,3 +1155,26 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .tool-form-message { color: var(--teal); font-size: 8px; align-self: center; }
 .tool-form-error { color: var(--red); font-size: 8px; align-self: center; }
 @media (max-width: 720px) { .tool-form-grid { grid-template-columns: 1fr; } .tool-form-grid .full-span { grid-column: auto; } }
+.workflow-canvas-toolbar .secondary-action { padding: 5px 8px; font-size: 8px; }
+
+.memory-card { margin-top: 16px; }
+.memory-value { max-width: 420px; word-break: break-word; color: var(--muted); font: 9px/1.45 'DM Mono', monospace; }
+.workflow-template-list { display: grid; gap: 8px; margin-top: 10px; }
+.workflow-template-list article { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #faf8f2; }
+.workflow-template-list article > div { display: flex; flex-direction: column; gap: 2px; }
+.workflow-template-list strong { color: var(--ink); font-size: 10px; }
+.workflow-template-list small { color: var(--muted); font: 8px 'DM Mono', monospace; }
+.workflow-template-list p { margin: 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.workflow-template-list button { justify-self: start; }
+.workflow-list-divider { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); }
+
+.workflow-loop-zone { position: absolute; z-index: 0; border: 1.5px dashed #8bb7aa; border-radius: 14px; background: rgba(220, 239, 231, .28); pointer-events: none; }
+.workflow-loop-zone span { position: absolute; top: 7px; left: 12px; color: #3d766e; font: 600 8px 'DM Mono', monospace; letter-spacing: .06em; }
+.workflow-node-card--loop-child { border-style: dashed; background: rgba(243, 251, 247, .98); }
+.workflow-node-type em { color: var(--muted); font-style: normal; }.workflow-node-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 12px; background: #f7f4ec; border-bottom: 1px solid var(--line); }
+.workflow-node-form label { display: flex; flex-direction: column; gap: 4px; }
+.workflow-node-form label span { color: var(--muted); font-size: 8px; }
+.workflow-node-form input, .workflow-node-form select { padding: 6px 7px; color: var(--ink-2); background: #fffef9; border: 1px solid var(--line); border-radius: 5px; font-size: 8px; }
+.workflow-node-form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
+@media (max-width: 900px) { .workflow-node-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .workflow-node-form { grid-template-columns: 1fr; } }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable
@@ -15,6 +16,81 @@ NODE_TYPES = {"agent", "condition", "subworkflow", "loop", "tool"}
 CONDITION_OPERATORS = {"eq", "ne", "in", "exists", "truthy", "contains"}
 MAX_SUBWORKFLOW_DEPTH = 5
 MAX_LOOP_DEPTH = 6
+
+TEMPLATE_DEFINITIONS = [
+    {
+        "id": "TPL-CORE-INVENTORY-LOOP",
+        "name": "主干：库存工具 + 核验反馈循环",
+        "description": "A01 需求标准化 -> 库存工具 -> A02/A03 自适应循环；适合作为默认生产主干。",
+        "stage": "core",
+        "definition": {
+            "nodes": [
+                {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": [], "priority": 96, "ui": {"x": 32, "y": 72}},
+                {"id": "INVENTORY_CHECK", "type": "tool", "tool_id": "inventory_query", "arguments": {}, "depends_on": ["A01"], "priority": 94, "ui": {"x": 250, "y": 72}},
+                {
+                    "id": "SOLVE_LOOP", "type": "loop", "depends_on": ["INVENTORY_CHECK"], "priority": 92,
+                    "max_iterations": 3,
+                    "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+                    "on_exhausted": "human_escalation", "ui": {"x": 468, "y": 72},
+                    "body": {"nodes": [
+                        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": [], "priority": 88, "ui": {"x": 500, "y": 210}},
+                        {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99, "ui": {"x": 720, "y": 210}},
+                        {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["A03"], "priority": 97, "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}, "ui": {"x": 500, "y": 330}},
+                    ]},
+                },
+            ]
+        },
+    },
+    {
+        "id": "TPL-DUAL-VERIFY-VOTE",
+        "name": "模板：双核验 Agent 多数投票",
+        "description": "两个独立核验角色并行审查，由可见的内置投票 Agent 按多数规则汇总；任一硬规则阻断仍不可被投票豁免。",
+        "stage": "core",
+        "definition": {
+            "nodes": [
+                {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": [], "priority": 96, "ui": {"x": 32, "y": 72}},
+                {"id": "INVENTORY_CHECK", "type": "tool", "tool_id": "inventory_query", "arguments": {}, "depends_on": ["A01"], "priority": 94, "ui": {"x": 250, "y": 72}},
+                {
+                    "id": "DUAL_VERIFY_LOOP", "type": "loop", "depends_on": ["INVENTORY_CHECK"], "priority": 92,
+                    "max_iterations": 3,
+                    "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+                    "on_exhausted": "human_escalation", "ui": {"x": 468, "y": 72},
+                    "body": {"nodes": [
+                        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": [], "priority": 88, "ui": {"x": 500, "y": 190}},
+                        {"id": "VERIFY_PRIMARY", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99, "ui": {"x": 720, "y": 190}},
+                        {"id": "VERIFY_SECONDARY", "type": "agent", "agent_id": "verifier_secondary", "depends_on": ["A02"], "priority": 98, "ui": {"x": 720, "y": 310}},
+                        {"id": "VOTE", "type": "agent", "agent_id": "verification_vote", "depends_on": ["VERIFY_PRIMARY", "VERIFY_SECONDARY"], "priority": 97, "ui": {"x": 500, "y": 430}},
+                        {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["VOTE"], "priority": 96, "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}, "ui": {"x": 720, "y": 430}},
+                    ]},
+                },
+            ]
+        },
+    },
+    {
+        "id": "TPL-EVIDENCE-DELIVERY",
+        "name": "模板：RAG 证据 + 扩展审查 + 交付",
+        "description": "在主干循环后追加知识检索与扩展审查锚点，适合需要额外证据和交付审核的场景。",
+        "stage": "core",
+        "definition": {
+            "nodes": [
+                {"id": "A01", "type": "agent", "agent_id": "demand_agent", "depends_on": [], "priority": 96, "ui": {"x": 32, "y": 72}},
+                {"id": "KNOWLEDGE_CHECK", "type": "tool", "tool_id": "knowledge_search", "arguments": {"query": "道路封闭 库存 运力 时效 独立核验", "top_k": 4}, "depends_on": ["A01"], "priority": 94, "ui": {"x": 250, "y": 72}},
+                {"id": "INVENTORY_CHECK", "type": "tool", "tool_id": "inventory_query", "arguments": {}, "depends_on": ["KNOWLEDGE_CHECK"], "priority": 93, "ui": {"x": 468, "y": 72}},
+                {
+                    "id": "AUDITED_LOOP", "type": "loop", "depends_on": ["INVENTORY_CHECK"], "priority": 92,
+                    "max_iterations": 3,
+                    "until": {"field": "verification.verdict", "operator": "eq", "value": "pass"},
+                    "on_exhausted": "human_escalation", "ui": {"x": 686, "y": 72},
+                    "body": {"nodes": [
+                        {"id": "A02", "type": "agent", "agent_id": "matching_agent", "depends_on": [], "priority": 88, "ui": {"x": 720, "y": 210}},
+                        {"id": "A03", "type": "agent", "agent_id": "verifier_agent", "depends_on": ["A02"], "priority": 99, "ui": {"x": 500, "y": 330}},
+                        {"id": "REWORK", "type": "agent", "agent_id": "rework_policy", "depends_on": ["A03"], "priority": 97, "when": {"field": "verification.verdict", "operator": "eq", "value": "rework"}, "ui": {"x": 720, "y": 330}},
+                    ]},
+                },
+            ]
+        },
+    },
+]
 
 
 class WorkflowValidationError(ValueError):
@@ -157,7 +233,7 @@ class WorkflowRepository:
 
     def list_workflows(self, stage: str | None = None, enabled_only: bool = False) -> list[dict]:
         sql = "SELECT * FROM workflow_definitions"
-        clauses = []
+        clauses = ["is_template = 0"]
         params: list[Any] = []
         if stage:
             clauses.append("stage = ?")
@@ -174,6 +250,7 @@ class WorkflowRepository:
             item = dict(row)
             item["definition"] = json.loads(item.pop("definition_json") or "{}")
             item["enabled"] = bool(item["enabled"])
+            item["is_template"] = bool(item.get("is_template", 0))
             result.append(item)
         return result
 
@@ -185,6 +262,7 @@ class WorkflowRepository:
         item = dict(row)
         item["definition"] = json.loads(item.pop("definition_json") or "{}")
         item["enabled"] = bool(item["enabled"])
+        item["is_template"] = bool(item.get("is_template", 0))
         return item
 
     def save_workflow(self, workflow_id: str, payload: dict) -> dict:
@@ -213,8 +291,8 @@ class WorkflowRepository:
                 version = 1
                 conn.execute(
                     """INSERT INTO workflow_definitions
-                       (id, name, version, description, stage, definition_json, enabled, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (id, name, version, description, stage, definition_json, enabled, is_template, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         workflow_id,
                         str(payload.get("name") or workflow_id).strip(),
@@ -228,6 +306,62 @@ class WorkflowRepository:
                     ),
                 )
         return self.get_workflow(workflow_id) or {}
+
+    def ensure_template_library(self) -> None:
+        now = now_iso()
+        with self.db.connect() as conn:
+            for template in TEMPLATE_DEFINITIONS:
+                definition = validate_workflow(template["definition"])
+                existing = conn.execute(
+                    "SELECT id FROM workflow_definitions WHERE id = ?", (template["id"],)
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    """INSERT INTO workflow_definitions
+                       (id, name, version, description, stage, definition_json, enabled, is_template, created_at, updated_at)
+                       VALUES (?, ?, 1, ?, ?, ?, 0, 1, ?, ?)""",
+                    (
+                        template["id"], template["name"], template["description"], template["stage"],
+                        json.dumps(definition, ensure_ascii=False), now, now,
+                    ),
+                )
+
+    def list_templates(self) -> list[dict]:
+        self.ensure_template_library()
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM workflow_definitions WHERE is_template = 1 ORDER BY name, id"
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["definition"] = json.loads(item.pop("definition_json") or "{}")
+            item["enabled"] = bool(item["enabled"])
+            item["is_template"] = True
+            result.append(item)
+        return result
+
+    def instantiate_template(self, template_id: str, payload: dict | None = None) -> dict:
+        self.ensure_template_library()
+        template = self.get_workflow(template_id)
+        if not template or not template.get("is_template"):
+            raise WorkflowValidationError("工作流模板不存在")
+        payload = payload or {}
+        base = re.sub(r"[^a-z0-9-]+", "-", template_id.lower()).strip("-")[:34] or "workflow"
+        new_id = str(payload.get("id") or f"{base}-{uuid4().hex[:6]}").strip()
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,79}$", new_id):
+            raise WorkflowValidationError("实例化工作流 ID 格式不正确")
+        with self.db.connect() as conn:
+            if conn.execute("SELECT id FROM workflow_definitions WHERE id = ?", (new_id,)).fetchone():
+                raise WorkflowValidationError("实例化工作流 ID 已存在")
+        return self.save_workflow(new_id, {
+            "name": str(payload.get("name") or f"{template['name']} · 实例").strip()[:120],
+            "description": str(payload.get("description") or template["description"]),
+            "stage": template["stage"],
+            "definition": template["definition"],
+            "enabled": True,
+        })
 
     def delete_workflow(self, workflow_id: str) -> bool:
         with self.db.connect() as conn:

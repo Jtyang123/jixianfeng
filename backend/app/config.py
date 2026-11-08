@@ -55,6 +55,14 @@ AGENTARTS_TIMEOUT = float(os.getenv("AGENTARTS_TIMEOUT", "20"))
 AMAP_WEB_SERVICE_KEY = os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
 OSRM_TIMEOUT = float(os.getenv("OSRM_TIMEOUT", "20"))
+TOOL_ALLOWED_HOSTS = [
+    item.strip().lower()
+    for item in os.getenv("TOOL_ALLOWED_HOSTS", "example.com").split(",")
+    if item.strip()
+]
+TOOL_ALLOW_PRIVATE_HOSTS = os.getenv("TOOL_ALLOW_PRIVATE_HOSTS", "false").strip().lower() == "true"
+TOOL_HTTP_TIMEOUT = float(os.getenv("TOOL_HTTP_TIMEOUT", "20"))
+MCP_PROTOCOL_VERSION = os.getenv("MCP_PROTOCOL_VERSION", "2024-11-05").strip()
 AGENTARTS_SESSION_HEADER = os.getenv("AGENTARTS_SESSION_HEADER", "x-hw-agentarts-session-id").strip()
 
 ALLOWED_ORIGINS = [

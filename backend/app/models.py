@@ -206,6 +206,12 @@ class WorkflowUpsertRequest(BaseModel):
     definition: dict
     enabled: bool = True
 
+
+class WorkflowTemplateInstantiateRequest(BaseModel):
+    id: str | None = Field(default=None, min_length=2, max_length=80)
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
 class ToolRegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     description: str = Field(default="", max_length=500)

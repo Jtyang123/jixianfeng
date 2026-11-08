@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { CheckCircle2, GitBranch, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
+import { CheckCircle2, GitBranch, Layers3, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
 
 const props = defineProps({ user: { type: Object, default: null } })
 const workflows = ref([])
+const templates = ref([])
 const selectedId = ref('post-verification-review')
 const loading = ref(true)
 const saving = ref(false)
@@ -19,6 +20,14 @@ const visualNodes = ref([])
 const visualError = ref('')
 const dragging = ref(null)
 const connecting = ref(null)
+const agents = ref([])
+const tools = ref([])
+const showNodeForm = ref(false)
+const nodeError = ref('')
+const nodeDraft = ref({
+  id: '', type: 'agent', agent_id: '', tool_id: '', workflow_id: '', loop_id: '',
+  condition_field: 'event.ready', condition_value: 'true',
+})
 const testContext = ref(JSON.stringify({
   scenario: { name: '工作流试运行场景' },
   demand: { items: [] },
@@ -40,7 +49,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    workflows.value = await api.workflows()
+    const [workflowRows, agentRows, toolRows, templateRows] = await Promise.all([
+      api.workflows(), api.agents(), api.tools(), api.workflowTemplates(),
+    ])
+    workflows.value = workflowRows
+    agents.value = agentRows
+    tools.value = toolRows
+    templates.value = templateRows
   } catch (exc) {
     error.value = exc.message
   } finally {
@@ -79,26 +94,54 @@ function selectWorkflow(item) {
   error.value = ''
 }
 
+function flattenVisualNodes(nodes, scopePath = '', parentX = 24, parentY = 30) {
+  const flattened = []
+  nodes.forEach((node, index) => {
+    const visualId = scopePath ? `${scopePath}/${node.id}` : node.id
+    const x = Number(node.ui?.x ?? (scopePath ? parentX + 30 + (index % 3) * 220 : 48 + (index % 4) * 230))
+    const y = Number(node.ui?.y ?? (scopePath ? parentY + 130 + Math.floor(index / 3) * 120 : 54 + Math.floor(index / 4) * 130))
+    flattened.push({ ...node, visualId, node_id: node.id, scopePath, parentLoopId: scopePath ? scopePath.split('/').pop() : '', x, y })
+    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) {
+      flattened.push(...flattenVisualNodes(node.body.nodes, visualId, x, y))
+    }
+  })
+  return flattened
+}
+
 const visualEdges = computed(() => {
-  const byId = new Map(visualNodes.value.map((node) => [node.id, node]))
+  const byId = new Map(visualNodes.value.map((node) => [node.visualId, node]))
   const edges = []
   for (const node of visualNodes.value) {
     for (const dependency of node.depends_on || []) {
-      const source = byId.get(dependency)
+      const source = byId.get(node.scopePath ? `${node.scopePath}/${dependency}` : dependency)
       if (!source) continue
       const x1 = source.x + 184
       const y1 = source.y + 42
       const x2 = node.x
       const y2 = node.y + 42
       const bend = Math.max(60, Math.abs(x2 - x1) * 0.45)
-      edges.push({
-        id: `${source.id}-${node.id}`,
-        path: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
-      })
+      edges.push({ id: `${source.visualId}-${node.visualId}`, path: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` })
     }
   }
   return edges
 })
+
+const loopZones = computed(() => visualNodes.value.filter((node) => node.type === 'loop').map((loop) => {
+  const children = visualNodes.value.filter((node) => node.scopePath === loop.visualId)
+  if (!children.length) {
+    return { id: loop.visualId, label: loop.node_id, x: loop.x - 20, y: loop.y + 60, width: 260, height: 130 }
+  }
+  const xs = children.map((node) => node.x)
+  const ys = children.map((node) => node.y)
+  return {
+    id: loop.visualId,
+    label: loop.node_id,
+    x: Math.max(8, Math.min(loop.x + 18, ...xs) - 18),
+    y: Math.max(8, Math.min(loop.y + 105, ...ys) - 24),
+    width: Math.max(260, Math.max(loop.x + 22, ...xs.map((value) => value + 184)) - Math.min(loop.x, ...xs) + 38),
+    height: Math.max(110, Math.max(...ys.map((value) => value + 84)) - Math.min(loop.y + 105, ...ys) + 36),
+  }
+}))
 
 const connectionPath = computed(() => {
   if (!connecting.value) return ''
@@ -115,12 +158,7 @@ function syncVisualNodes(text) {
   try {
     const definition = JSON.parse(text)
     if (!Array.isArray(definition.nodes)) throw new Error('节点列表不存在')
-    visualNodes.value = definition.nodes.map((node, index) => ({
-      ...node,
-      depends_on: Array.isArray(node.depends_on) ? node.depends_on : [],
-      x: Number(node.ui?.x ?? 48 + (index % 4) * 230),
-      y: Number(node.ui?.y ?? 54 + Math.floor(index / 4) * 130),
-    }))
+    visualNodes.value = flattenVisualNodes(definition.nodes)
     visualError.value = ''
   } catch (exc) {
     visualNodes.value = []
@@ -138,28 +176,33 @@ function canvasPoint(event) {
   }
 }
 
-function writeNodePositions() {
-  try {
-    const definition = parseDefinition()
-    const positions = new Map(visualNodes.value.map((node) => [node.id, { x: Math.round(node.x), y: Math.round(node.y) }]))
-    definition.nodes = definition.nodes.map((node) => ({ ...node, ui: positions.get(node.id) || node.ui }))
-    form.value.json = JSON.stringify(definition, null, 2)
-  } catch (exc) {
-    visualError.value = exc.message
+function applyVisualPositions(nodes, scopePath = '') {
+  const positions = new Map(visualNodes.value.map((node) => [node.visualId, { x: Math.round(node.x), y: Math.round(node.y) }]))
+  for (const node of nodes) {
+    const visualId = scopePath ? `${scopePath}/${node.id}` : node.id
+    node.ui = positions.get(visualId) || node.ui
+    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) applyVisualPositions(node.body.nodes, visualId)
   }
 }
 
+function writeNodePositions() {
+  try {
+    const definition = parseDefinition()
+    applyVisualPositions(definition.nodes)
+    form.value.json = JSON.stringify(definition, null, 2)
+  } catch (exc) { visualError.value = exc.message }
+}
 function startNodeDrag(node, event) {
   if (!isAdmin.value || event.button !== 0) return
   const point = canvasPoint(event)
-  dragging.value = { id: node.id, dx: point.x - node.x, dy: point.y - node.y }
+  dragging.value = { visualId: node.visualId, dx: point.x - node.x, dy: point.y - node.y }
   document.addEventListener('pointermove', moveNode)
   document.addEventListener('pointerup', stopNodeDrag, { once: true })
 }
 
 function moveNode(event) {
   if (!dragging.value) return
-  const node = visualNodes.value.find((item) => item.id === dragging.value.id)
+  const node = visualNodes.value.find((item) => item.visualId === dragging.value.visualId)
   if (!node) return
   const point = canvasPoint(event)
   node.x = Math.max(12, Math.min(900, point.x - dragging.value.dx))
@@ -193,22 +236,39 @@ function cancelConnection() {
   connecting.value = null
 }
 
+function findNodeByVisualId(nodes, visualId, scopePath = '') {
+  for (const node of nodes) {
+    const currentId = scopePath ? `${scopePath}/${node.id}` : node.id
+    if (currentId === visualId) return { node, nodes, scopePath }
+    if (node.type === 'loop' && Array.isArray(node.body?.nodes)) {
+      const found = findNodeByVisualId(node.body.nodes, visualId, currentId)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 function finishConnection(target, event) {
   event.preventDefault()
   event.stopPropagation()
-  if (!connecting.value || connecting.value.source.id === target.id) {
+  if (!connecting.value || connecting.value.source.visualId === target.visualId) {
+    cancelConnection()
+    return
+  }
+  if (connecting.value.source.scopePath !== target.scopePath) {
+    visualError.value = '只能在同一层级或同一个循环体内建立依赖'
     cancelConnection()
     return
   }
   try {
     const definition = parseDefinition()
-    const targetNode = definition.nodes.find((node) => node.id === target.id)
-    if (targetNode) {
-      const dependencies = new Set(targetNode.depends_on || [])
-      dependencies.add(connecting.value.source.id)
-      targetNode.depends_on = [...dependencies]
+    const targetEntry = findNodeByVisualId(definition.nodes, target.visualId)
+    if (targetEntry) {
+      const dependencies = new Set(targetEntry.node.depends_on || [])
+      dependencies.add(connecting.value.source.node_id)
+      targetEntry.node.depends_on = [...dependencies]
       form.value.json = JSON.stringify(definition, null, 2)
-      message.value = `已连接 ${connecting.value.source.id} → ${target.id}，请重新校验 DAG`
+      message.value = `已连接 ${connecting.value.source.node_id} → ${target.node_id}，请重新校验 DAG`
     }
   } catch (exc) {
     visualError.value = exc.message
@@ -217,6 +277,78 @@ function finishConnection(target, event) {
   }
 }
 
+const loopOptions = computed(() => visualNodes.value.filter((node) => node.type === 'loop'))
+
+function openNodeForm() {
+  nodeError.value = ''
+  nodeDraft.value = {
+    id: '', type: 'agent', agent_id: agents.value[0]?.id || '', tool_id: tools.value[0]?.id || '',
+    workflow_id: workflows.value[0]?.id || '', loop_id: '', condition_field: 'event.ready', condition_value: 'true',
+  }
+  showNodeForm.value = true
+}
+
+function addNode() {
+  nodeError.value = ''
+  const draft = nodeDraft.value
+  const id = draft.id.trim()
+  if (!/^[A-Za-z0-9_-]{2,40}$/.test(id)) {
+    nodeError.value = '节点 ID 需为 2–40 位字母、数字、下划线或短横线'
+    return
+  }
+  try {
+    const definition = parseDefinition()
+    let nodes = definition.nodes
+    let scopePath = ''
+    if (draft.loop_id) {
+      const loopEntry = findNodeByVisualId(definition.nodes, draft.loop_id)
+      if (!loopEntry || loopEntry.node.type !== 'loop' || !Array.isArray(loopEntry.node.body?.nodes)) {
+        throw new Error('目标循环体不存在')
+      }
+      nodes = loopEntry.node.body.nodes
+      scopePath = draft.loop_id
+    }
+    if (nodes.some((node) => node.id === id)) throw new Error(`当前作用域已经存在节点 ${id}`)
+    const index = nodes.length
+    const loopVisual = draft.loop_id ? visualNodes.value.find((node) => node.visualId === draft.loop_id) : null
+    const node = {
+      id,
+      type: draft.type,
+      depends_on: [],
+      priority: 80,
+      ui: {
+        x: loopVisual ? loopVisual.x + 30 + (index % 3) * 220 : 48 + (index % 4) * 230,
+        y: loopVisual ? loopVisual.y + 140 + Math.floor(index / 3) * 120 : 54 + Math.floor(index / 4) * 130,
+      },
+    }
+    if (draft.type === 'agent') node.agent_id = draft.agent_id
+    if (draft.type === 'tool') {
+      node.tool_id = draft.tool_id
+      node.arguments = {}
+    }
+    if (draft.type === 'subworkflow') node.workflow_id = draft.workflow_id
+    if (draft.type === 'condition') {
+      node.when = {
+        field: draft.condition_field,
+        operator: 'eq',
+        value: draft.condition_value === 'true' ? true : draft.condition_value === 'false' ? false : draft.condition_value,
+      }
+    }
+    if (draft.type === 'loop') {
+      node.max_iterations = 3
+      node.until = { field: 'verification.verdict', operator: 'eq', value: 'pass' }
+      node.on_exhausted = 'human_escalation'
+      node.body = { nodes: [{ id: `${id}_STEP`, type: 'condition', depends_on: [], when: { field: 'event.ready', operator: 'eq', value: true } }] }
+    }
+    nodes.push(node)
+    form.value.json = JSON.stringify(definition, null, 2)
+    showNodeForm.value = false
+    validation.value = null
+    message.value = `已新增节点 ${id}${scopePath ? `（循环 ${scopePath}）` : ''}`
+  } catch (exc) {
+    nodeError.value = exc.message
+  }
+}
 function loadCoreTemplate() {
   form.value.name = '默认主干工作流'
   form.value.description = '需求研判 → 资源匹配 → 独立核验，可替换核验节点或插入扩展节点。'
@@ -240,6 +372,19 @@ function loadCoreTemplate() {
   validation.value = null
   runResult.value = null
   message.value = '已载入主干模板，可拖动节点或从输出口拖线到另一节点输入口'
+}
+async function useTemplate(template) {
+  if (!isAdmin.value) return
+  const requestedName = window.prompt('实例化后的工作流名称', `${template.name} · 实例`)
+  if (requestedName === null) return
+  try {
+    const created = await api.instantiateWorkflowTemplate(template.id, { name: requestedName || undefined })
+    await load()
+    selectWorkflow(created)
+    message.value = `模板已实例化为 ${created.id}，可继续修改并发布`
+  } catch (exc) {
+    error.value = exc.message
+  }
 }
 function parseDefinition() {
   try {
@@ -329,8 +474,8 @@ onMounted(load)
   <div class="workflow-designer-page">
     <section class="content-card workflow-designer-head">
       <div>
-        <div class="eyebrow">CODE-BASED WORKFLOW DESIGN</div>
-        <h2>代码化工作流设计器</h2>
+        <div class="eyebrow">VISUAL + CODE WORKFLOW DESIGN</div>
+        <h2>可视化与代码化工作流设计器</h2>
         <p>通过节点画布或 JSON 定义 Agent、工具、条件、循环、并行与子工作流。主干和扩展工作流都可在同一引擎中试运行。</p>
       </div>
       <div class="workflow-designer-actions">
@@ -344,7 +489,16 @@ onMounted(load)
 
     <div class="workflow-designer-grid">
       <section class="content-card workflow-list-card">
-        <div class="workflow-head"><div><div class="eyebrow">WORKFLOW VERSIONS</div><h2>已发布工作流</h2></div><GitBranch :size="18" /></div>
+        <div class="workflow-head"><div><div class="eyebrow">REUSABLE TEMPLATES</div><h2>可复用模板库</h2><p>模板为只读种子，实例化后生成可编辑、可发布的工作流。</p></div><Layers3 :size="18" /></div>
+        <div v-if="templates.length" class="workflow-template-list">
+          <article v-for="template in templates" :key="template.id">
+            <div><strong>{{ template.name }}</strong><small>{{ template.id }} · {{ template.stage }}</small></div>
+            <p>{{ template.description }}</p>
+            <button class="secondary-action" :disabled="!isAdmin" @click="useTemplate(template)"><Plus :size="12" />实例化</button>
+          </article>
+        </div>
+        <div v-else class="empty-table"><Layers3 :size="24" /><strong>暂无模板</strong><span>管理员初始化后将显示内置模板。</span></div>
+        <div class="workflow-head workflow-list-divider"><div><div class="eyebrow">WORKFLOW VERSIONS</div><h2>已发布工作流</h2></div><GitBranch :size="18" /></div>
         <div v-if="loading" class="loading-panel"><div class="loading-orbit" /><strong>正在加载工作流</strong></div>
         <div v-else class="workflow-definition-list">
           <button v-for="item in workflows" :key="item.id" :class="{ active: selectedId === item.id }" @click="selectWorkflow(item)">
@@ -364,18 +518,30 @@ onMounted(load)
           <label class="full-span"><span>说明</span><input v-model="form.description" :disabled="!isAdmin" /></label>
         </div>
         <div class="workflow-canvas-shell">
-          <div class="workflow-canvas-toolbar"><span>节点画布</span><small>拖动卡片调整位置；从右侧输出口拖到另一节点左侧输入口建立依赖</small></div>
+          <div class="workflow-canvas-toolbar"><span>节点画布</span><small>循环体已展开；拖动节点调整位置，从输出口拖线到输入口建立依赖</small><button v-if="isAdmin" class="secondary-action" @click="openNodeForm"><Plus :size="13" />新增节点</button></div>
+          <div v-if="showNodeForm" class="workflow-node-form">
+            <label><span>节点 ID</span><input v-model="nodeDraft.id" placeholder="A06" /></label>
+            <label><span>类型</span><select v-model="nodeDraft.type"><option value="agent">Agent</option><option value="tool">工具</option><option value="condition">条件</option><option value="subworkflow">子工作流</option><option value="loop">循环</option></select></label>
+            <label><span>加入位置</span><select v-model="nodeDraft.loop_id"><option value="">主工作流</option><option v-for="loop in loopOptions" :key="loop.visualId" :value="loop.visualId">循环体 {{ loop.visualId }}</option></select></label>
+            <label v-if="nodeDraft.type === 'agent'"><span>Agent</span><select v-model="nodeDraft.agent_id"><option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }} · {{ agent.id }}</option></select></label>
+            <label v-if="nodeDraft.type === 'tool'"><span>工具</span><select v-model="nodeDraft.tool_id"><option v-for="tool in tools" :key="tool.id" :value="tool.id">{{ tool.name }} · {{ tool.id }}</option></select></label>
+            <label v-if="nodeDraft.type === 'subworkflow'"><span>工作流</span><select v-model="nodeDraft.workflow_id"><option v-for="workflow in workflows" :key="workflow.id" :value="workflow.id">{{ workflow.name }}</option></select></label>
+            <label v-if="nodeDraft.type === 'condition'"><span>条件字段</span><input v-model="nodeDraft.condition_field" placeholder="verification.verdict" /></label>
+            <label v-if="nodeDraft.type === 'condition'"><span>等于值</span><input v-model="nodeDraft.condition_value" placeholder="pass" /></label>
+            <div class="workflow-node-form-actions"><span v-if="nodeError" class="tool-form-error">{{ nodeError }}</span><button class="secondary-action" @click="showNodeForm = false">取消</button><button class="primary-action" @click="addNode">添加节点</button></div>
+          </div>
           <div ref="canvasRef" class="workflow-canvas">
+            <div v-for="zone in loopZones" :key="zone.id" class="workflow-loop-zone" :style="{ left: `${zone.x}px`, top: `${zone.y}px`, width: `${zone.width}px`, height: `${zone.height}px` }"><span>LOOP · {{ zone.label }}</span></div>
             <svg class="workflow-canvas-edges" viewBox="0 0 960 520" preserveAspectRatio="none">
               <defs><marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker></defs>
               <path v-for="edge in visualEdges" :key="edge.id" :d="edge.path" class="workflow-edge" marker-end="url(#workflow-arrow)" />
               <path v-if="connectionPath" :d="connectionPath" class="workflow-edge workflow-edge--active" />
             </svg>
-            <div v-for="node in visualNodes" :key="node.id" class="workflow-node-card" :class="{ 'workflow-node-card--dragging': dragging?.id === node.id }" :style="{ left: `${node.x}px`, top: `${node.y}px` }" @pointerdown.stop="startNodeDrag(node, $event)">
+            <div v-for="node in visualNodes" :key="node.visualId" class="workflow-node-card" :class="{ 'workflow-node-card--dragging': dragging?.visualId === node.visualId, 'workflow-node-card--loop-child': node.scopePath }" :style="{ left: `${node.x}px`, top: `${node.y}px` }" @pointerdown.stop="startNodeDrag(node, $event)">
               <span class="workflow-node-port workflow-node-port--input" title="输入依赖" @pointerup.stop="finishConnection(node, $event)" />
-              <div class="workflow-node-type">{{ node.type }}</div>
-              <strong>{{ node.id }}</strong>
-              <small>{{ node.agent_id || node.workflow_id || '条件节点' }}</small>
+              <div class="workflow-node-type">{{ node.type }}<em v-if="node.scopePath"> · 循环内</em></div>
+              <strong>{{ node.node_id }}</strong>
+              <small>{{ node.agent_id || node.tool_id || node.workflow_id || node.until?.field || '条件节点' }}</small>
               <span class="workflow-node-port workflow-node-port--output" title="拖拽建立依赖" @pointerdown.stop="startConnection(node, $event)" />
             </div>
           </div>

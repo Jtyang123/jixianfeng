@@ -39,12 +39,21 @@ def build_demand_plan(request: dict, materials: list[dict], destination_rows: li
     total_population = sum(max(1, int(dest["population"])) for dest in destination_rows)
     demand_items: list[dict] = []
     assumptions: list[str] = []
+    requested_rows = list(request.get("demand_items") or [])
+    mapped_rows = 0
+    valid_quantity_rows = 0
+    valid_deadline_rows = 0
 
-    for raw in request["demand_items"]:
+    for raw in requested_rows:
         material = material_map.get(int(raw["material_id"]))
         if not material:
             continue
+        mapped_rows += 1
         total_quantity = _num(raw["quantity"])
+        if total_quantity > 0:
+            valid_quantity_rows += 1
+        if _num(raw.get("deadline_hours"), 12) > 0:
+            valid_deadline_rows += 1
         remaining = total_quantity
         for index, dest in enumerate(destination_rows):
             if index == len(destination_rows) - 1:
@@ -70,13 +79,35 @@ def build_demand_plan(request: dict, materials: list[dict], destination_rows: li
     for dest in destination_rows:
         assumptions.append(f"{dest['name']}按安置人口 {dest['population']} 人分配需求。")
     assumptions.append("需求数量已标准化为物资基本单位，库存与方案使用同一口径。")
+    requested_count = max(len(requested_rows), 1)
+    destination_count = max(len(destination_rows), 1)
+    factors = {
+        "material_mapping_rate": round(mapped_rows / requested_count, 4),
+        "valid_quantity_rate": round(valid_quantity_rows / requested_count, 4),
+        "valid_deadline_rate": round(valid_deadline_rows / requested_count, 4),
+        "population_completeness": round(sum(1 for dest in destination_rows if int(dest.get("population") or 0) > 0) / destination_count, 4),
+        "coordinate_completeness": round(sum(1 for dest in destination_rows if dest.get("lat") is not None and dest.get("lng") is not None) / destination_count, 4),
+    }
+    confidence = (
+        0.50
+        + factors["material_mapping_rate"] * 0.18
+        + factors["valid_quantity_rate"] * 0.10
+        + factors["valid_deadline_rate"] * 0.08
+        + factors["population_completeness"] * 0.07
+        + factors["coordinate_completeness"] * 0.07
+    )
+    if not requested_rows:
+        confidence = 0.35
+    confidence = round(max(0.35, min(0.98, confidence)), 2)
     return {
         "agent": "demand_agent",
-        "summary": f"已将 {len(request['demand_items'])} 类物资拆分为 {len(demand_items)} 条安置点需求。",
+        "summary": f"已将 {len(requested_rows)} 类物资拆分为 {len(demand_items)} 条安置点需求。",
         "items": demand_items,
         "assumptions": assumptions,
         "evidence_refs": ["需求分配规则：按安置人口比例", "物资主数据：单位与单件重量"],
-        "confidence": 0.92,
+        "confidence": confidence,
+        "confidence_factors": factors,
+        "confidence_method": "0.50 + 物资映射18% + 数量有效10% + 时限有效8% + 人口完整7% + 坐标完整7%，上限0.98",
     }
 
 
@@ -115,6 +146,30 @@ def allowed_rework_policies(verification: dict) -> list[dict]:
         policies.append({"id": "review_data_quality", "name": "人工数据复核", "description": "当前问题无法安全自动修复"})
     policies.append({"id": "escalate_human", "name": "转人工研判", "description": "停止自动循环并交由值班人员处理"})
     return policies
+
+def build_prompt_adaptation(verification: dict, directive: dict) -> dict:
+    categories = set(directive.get("categories") or [])
+    instructions = []
+    if "道路通行" in categories:
+        instructions.append("下一轮必须先排除事件封闭路线，比较主备通道 ETA 与风险，不得再次采用封闭路线。")
+    if "库存与覆盖" in categories:
+        instructions.append("下一轮必须检查总库存和分仓可用量，优先跨仓拆分并明确不可满足缺口。")
+    if "运力" in categories:
+        instructions.append("下一轮必须按仓库可用车辆与载重计算趟次，禁止虚构默认运力。")
+    if "时效" in categories:
+        instructions.append("下一轮必须提高截止时间惩罚，优先满足 P0 时限并报告预计超时。")
+    if "数据质量" in categories:
+        instructions.append("下一轮必须停止自动规划，输出需要修复的数据字段和人工复核要求。")
+    attempt = int(directive.get("attempt") or 1)
+    return {
+        "agent_id": "matching_agent",
+        "base_version": "v1.4",
+        "active_version": f"v1.4+adaptive.r{attempt}",
+        "selection_policy": directive.get("selected_policy", ""),
+        "instructions": instructions,
+        "source_issue_codes": directive.get("issue_codes", []),
+        "scope": "当前运行的下一次匹配调用",
+    }
 
 def build_rework_directive(verification: dict, next_attempt: int, selected_policy: str = "") -> dict:
     warning_codes = sorted({

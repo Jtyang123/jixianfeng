@@ -23,6 +23,10 @@ def test_two_round_verification_loop(tmp_path: Path):
     }
     inventory = db.inventory_rows(db.latest_snapshot()["id"])
     demand = build_demand_plan(request, materials, db.destination_rows())
+    assert demand["confidence"] == 0.98
+    assert demand["confidence"] != 0.92
+    assert demand["confidence_factors"]["material_mapping_rate"] == 1.0
+    assert demand["confidence_factors"]["coordinate_completeness"] == 1.0
     warehouses = db.warehouse_rows()
     routes = db.route_rows()
     vehicles = db.vehicle_rows()

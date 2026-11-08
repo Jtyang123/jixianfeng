@@ -381,6 +381,20 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, status);
+
+                CREATE TABLE IF NOT EXISTS agent_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    memory_key TEXT NOT NULL,
+                    value_json TEXT NOT NULL DEFAULT '{}',
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_run_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(agent_id, memory_key)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_memory_agent ON agent_memory(agent_id, updated_at DESC);
                 CREATE TABLE IF NOT EXISTS knowledge_documents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -410,6 +424,7 @@ class Database:
                     stage TEXT NOT NULL DEFAULT 'post_verification',
                     definition_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    is_template INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -494,10 +509,12 @@ class Database:
             self._ensure_event_columns(conn)
             self._ensure_route_columns(conn)
             self._ensure_knowledge_columns(conn)
+            self._ensure_workflow_columns(conn)
 
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
+                "agent_memory",
                 "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
@@ -542,6 +559,18 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
         if "embedding_json" not in columns:
             conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding_json TEXT NOT NULL DEFAULT '[]'")
+
+    def _ensure_workflow_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("workflow_definitions",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(workflow_definitions)").fetchall()}
+        if "is_template" not in columns:
+            conn.execute("ALTER TABLE workflow_definitions ADD COLUMN is_template INTEGER NOT NULL DEFAULT 0")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_definitions_template ON workflow_definitions(is_template, stage)")
+
     def _ensure_scenario_columns(self, conn) -> None:
         if self.engine == "postgresql":
             columns = {row["column_name"] for row in conn.execute(

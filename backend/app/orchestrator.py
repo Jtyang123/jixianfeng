@@ -8,13 +8,14 @@ from uuid import uuid4
 import httpx
 
 from .agentarts import AgentArtsBridge
-from .agents import allowed_rework_policies, build_delivery_package, build_demand_plan, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
+from .agents import allowed_rework_policies, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, verify_plans
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR
 from .database import Database
 from .knowledge import retrieve
 from .knowledge_base import KnowledgeRepository
 from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
+from .memory import MemoryRepository
 from .registry import AgentRegistryService, apply_agent_load
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
 from .tools import ToolError, ToolService
@@ -27,6 +28,9 @@ AGENT_NAMES = {
     "demand_agent": "需求研判智能体",
     "matching_agent": "资源匹配智能体",
     "verifier_agent": "独立核验智能体",
+    "verifier_secondary": "第二核验智能体",
+    "verification_vote": "多核验投票汇总智能体",
+    "rework_policy": "自适应修复策略智能体",
     "delivery_agent": "方案交付智能体",
 }
 
@@ -72,6 +76,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic",
             "boundary": "物资数量、单位和安置点分配仍由确定性工具计算",
             "fallback": "本地需求拆分与主数据校验",
+            "local_equivalent": "确定性需求拆分、主数据映射、人口分配与置信度因子计算",
         },
         {
             "id": "D2", "decision": "修复策略优先级选择", "level": "AI 决策",
@@ -80,6 +85,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": rework_trace.get("mode", "deterministic-fallback") if isinstance(rework_trace, dict) else "deterministic-fallback",
             "boundary": "只能选择 allowed_policies，硬修复项仍由规则层强制执行",
             "fallback": "按道路、库存、运力、时效问题代码选择默认策略",
+            "local_equivalent": "问题代码到允许策略的确定性映射；历史成功策略仅在允许集合内做 tie-break",
         },
         {
             "id": "D3", "decision": "已核验方案推荐", "level": "AI 决策",
@@ -88,6 +94,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": agent_decision.get("source", "deterministic-fallback"),
             "boundary": "只能从已通过独立核验的方案集合中选择",
             "fallback": "按速度、成本和风险权重排序",
+            "local_equivalent": "对已核验方案按速度、成本、风险权重确定性排序",
         },
         {
             "id": "D4", "decision": "核验解释与风险归纳", "level": "AI 辅助",
@@ -96,6 +103,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": verifier_trace.get("mode", "deterministic-rules") if isinstance(verifier_trace, dict) else "deterministic-rules",
             "boundary": "硬规则结论不可被模型覆盖",
             "fallback": "确定性规则引擎给出最终 verdict",
+            "local_equivalent": "库存、道路、载重、时效和覆盖硬规则引擎",
         },
         {
             "id": "D5", "decision": "扩展 Agent 风险合成", "level": "AI 辅助",
@@ -104,6 +112,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": "registered-extension-agents" if extension_reviews else "none",
             "boundary": "扩展意见只追加风险，不能删除或修改主方案数字",
             "fallback": "跳过扩展审查，保留确定性风险清单",
+            "local_equivalent": "无扩展 Agent 时跳过该层，不伪造扩展结论",
         },
         {
             "id": "D6", "decision": "交付摘要组织", "level": "AI 生成",
@@ -112,6 +121,7 @@ def build_ai_decision_matrix(agent_decision: dict, traces: dict, verification: d
             "source": delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template",
             "boundary": "仅使用已核验数字和事实",
             "fallback": "本地交付模板与证据链",
+            "local_equivalent": "确定性交付模板、方案对比、执行清单、风险提示与证据引用",
         },
     ]
 
@@ -146,6 +156,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     agentarts = AgentArtsBridge()
     http_client = httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) if agentarts.enabled else None
     registry = AgentRegistryService(db)
+    memory_repo = MemoryRepository(db)
+    memory_context: dict[str, dict[str, dict]] = {}
+    memory_writes: list[dict] = []
     for agent_id, endpoint in registry.active_endpoints().items():
         agentarts.override_endpoint(agent_id, endpoint)
     runtime_metrics = registry.runtime_metrics()
@@ -235,18 +248,40 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         except ToolError as exc:
             emit(db, run_id, "tool.failed", "tool_runtime", f"工具失败 · {tool_id}", str(exc), {"arguments": arguments})
             raise
+        tool_result = call.get("result") or {}
+        if tool_id == "inventory_query" and isinstance(tool_result.get("items"), list):
+            pipeline_state["execution_inventory"] = tool_result["items"]
+            pipeline_state["inventory_source"] = "inventory_query tool"
+            emit(
+                db, run_id, "tool.consumed", "matching_agent", "库存工具结果已进入方案计算",
+                f"资源匹配将使用工具返回的 {len(tool_result['items'])} 条库存记录，而不是再次直接读取数据库。",
+                {"tool_id": tool_id, "inventory_rows": len(tool_result["items"])},
+            )
         emit(db, run_id, "tool.completed", "tool_runtime", f"工具完成 · {tool_id}", "工具结果已写入工作流上下文。", call.get("audit") or {})
-        return {"tool_id": tool_id, "result": call.get("result"), "audit": call.get("audit"), "mode": "tool"}
+        return {"tool_id": tool_id, "result": tool_result, "inventory_tool_result": tool_result, "audit": call.get("audit"), "mode": "tool"}
     async def select_rework_policy(verification: dict, next_attempt: int) -> dict:
         allowed = allowed_rework_policies(verification)
         allowed_ids = {item["id"] for item in allowed}
         default_policy = next((item["id"] for item in allowed if item["id"] != "escalate_human"), "escalate_human")
+        remembered = (
+            memory_context.get("matching_agent", {})
+            .get("successful_repair_policy", {})
+            .get("value", {})
+        )
+        remembered_policy = str(remembered.get("policy") or "") if isinstance(remembered, dict) else ""
+        memory_selected = remembered_policy if remembered_policy in allowed_ids else ""
         if not agentarts.enabled:
+            selected = memory_selected or default_policy
             return {
-                "selected_policy": default_policy,
+                "selected_policy": selected,
                 "allowed_policies": allowed,
-                "source": "deterministic-fallback",
-                "rationale": "AgentArts 未启用，使用规则匹配选择修复策略。",
+                "source": "memory-assisted-deterministic" if memory_selected else "deterministic-fallback",
+                "memory_key": "successful_repair_policy" if memory_selected else "",
+                "rationale": (
+                    f"AgentArts 未启用；历史成功策略 {memory_selected} 在当前允许集合内，仅作为安全 tie-break 使用。"
+                    if memory_selected
+                    else "AgentArts 未启用，使用规则匹配选择修复策略。"
+                ),
             }
         response = await call_agentarts("matching_agent", {
             "task_type": "rework_strategy",
@@ -254,6 +289,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "issue_codes": verification.get("blocker_summary", []),
             "required_fixes": verification.get("required_fixes", [])[:5],
             "allowed_policies": allowed,
+            "runtime_prompt": pipeline_state.get("active_prompt_versions", {}).get("matching_agent", "v1.4"),
+            "memory": memory_context.get("matching_agent", {}),
             "constraints": [
                 "只能从 allowed_policies 中选择一个 id",
                 "不得选择不存在或不允许的策略",
@@ -355,6 +392,11 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         evidence = retrieve(query, top_k=4)
         uploaded_evidence = KnowledgeRepository(db).search(query, top_k=3)
         evidence = sorted(evidence + uploaded_evidence, key=lambda item: float(item.get("score", 0)), reverse=True)[:7]
+        memory_context = memory_repo.summary(["demand_agent", "matching_agent", "verifier_agent", "delivery_agent"])
+        emit(db, run_id, "memory.loaded", "orchestrator", "跨运行记忆已加载", f"加载 {sum(len(items) for items in memory_context.values())} 条可审计记忆。", {
+            "agents": {agent_id: list(items) for agent_id, items in memory_context.items()},
+            "scope": "仅作上下文与安全 tie-break，不覆盖硬规则",
+        })
         schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics)
         agent_executor = AsyncPriorityExecutor(
             {item["agent_id"]: int(item["priority"]) for item in schedule["dispatch"]},
@@ -378,7 +420,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         await pace(0.25)
 
-        pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False}
+        pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False, "execution_inventory": None, "inventory_source": "database snapshot", "prompt_adaptations": [], "active_prompt_versions": {"demand_agent": "v1.3", "matching_agent": "v1.4", "verifier_agent": "v1.5", "delivery_agent": "v1.2"}}
         core_runs: list[dict] = []
         rounds: list[dict] = []
         rework_directives: list[dict] = []
@@ -419,7 +461,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 emit(db, run_id, "agent.started", "matching_agent", "资源匹配智能体开始计算", f"第 {attempt} 轮基于物资库、库存、车辆与路网生成候选方案。")
                 await pace(0.45)
                 plans = generate_plans(
-                    pipeline_state["demand"], inventory, warehouses, routes, vehicles,
+                    pipeline_state["demand"], pipeline_state.get("execution_inventory") or inventory, warehouses, routes, vehicles,
                     attempt=attempt, closed_routes=closed_routes, rework_directive=directive,
                 )
                 pipeline_state["plans"] = plans
@@ -430,6 +472,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                         "summary": f"第 {attempt} 轮已生成多目标候选方案。",
                         "plans": [{"name": plan["name"], "metrics": plan["metrics"]} for plan in plans],
                         "rework_directive": directive,
+                        "prompt_adaptations": pipeline_state.get("prompt_adaptations", []),
+                        "active_prompt_versions": pipeline_state.get("active_prompt_versions", {}),
                         "scheduler": schedule,
                     },
                     evidence,
@@ -448,7 +492,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 emit(db, run_id, "agent.started", "verifier_agent", "独立核验智能体开始审查", f"第 {attempt} 轮核验道路、库存、运力与时效约束。")
                 await pace(0.5)
                 verification = verify_plans(
-                    pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes
+                    pipeline_state["plans"], pipeline_state["demand"], pipeline_state.get("execution_inventory") or inventory, routes, vehicles, closed_routes
                 )
                 pipeline_state["verification"] = verification
                 emit(db, run_id, "agent.completed", "verifier_agent", f"第 {attempt} 轮核验完成", f"核验结论：{verification['verdict']}。")
@@ -477,7 +521,11 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 directive = build_rework_directive(
                     verification, next_attempt, selected_policy=policy_selection["selected_policy"]
                 )
+                prompt_adaptation = build_prompt_adaptation(verification, directive)
+                pipeline_state["prompt_adaptations"].append(prompt_adaptation)
+                pipeline_state["active_prompt_versions"]["matching_agent"] = prompt_adaptation["active_version"]
                 directive["policy_selection"] = policy_selection
+                directive["prompt_adaptation"] = prompt_adaptation
                 emit(db, run_id, "rework.requested", "rework_policy", f"生成第 {next_attempt} 轮修复指令", directive["reason"], {
                     "attempt": next_attempt,
                     "policy_selection": policy_selection,
@@ -491,15 +539,20 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "mode": "ai-policy-selection",
                 }
             if agent_id == "verification_vote":
-                base = verify_plans(pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                base = verify_plans(pipeline_state["plans"], pipeline_state["demand"], pipeline_state.get("execution_inventory") or inventory, routes, vehicles, closed_routes)
                 votes = []
                 for output in workflow_state.get("node_outputs", {}).values():
                     if not isinstance(output, dict):
                         continue
                     parsed = output.get("parsed") if isinstance(output.get("parsed"), dict) else {}
-                    verdict = output.get("verdict") or parsed.get("verdict")
+                    raw_verification = output.get("verification") if isinstance(output.get("verification"), dict) else {}
+                    verdict = output.get("verdict") or parsed.get("verdict") or raw_verification.get("verdict")
                     if verdict:
-                        votes.append({"agent_id": output.get("agent_id", ""), "verdict": str(verdict), "score": parsed.get("score")})
+                        votes.append({
+                            "agent_id": output.get("agent_id", ""),
+                            "verdict": str(verdict),
+                            "score": parsed.get("score") if parsed.get("score") is not None else raw_verification.get("score"),
+                        })
                 pass_votes = sum(1 for item in votes if item["verdict"] == "pass")
                 if votes and pass_votes <= len(votes) / 2:
                     base["verdict"] = "rework"
@@ -516,7 +569,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             candidate_verification = None
             if pipeline_state.get("plans"):
                 candidate_verification = verify_plans(
-                    pipeline_state["plans"], pipeline_state["demand"], inventory, routes, vehicles, closed_routes
+                    pipeline_state["plans"], pipeline_state["demand"], pipeline_state.get("execution_inventory") or inventory, routes, vehicles, closed_routes
                 )
                 pipeline_state["verification"] = candidate_verification
             response = await invoke_extension_agent(agent_id, {
@@ -610,7 +663,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 if plans is None:
                     raise ValueError("主干工作流没有生成候选方案")
                 if verification is None:
-                    verification = verify_plans(plans, pipeline_state["demand"], inventory, routes, vehicles, closed_routes)
+                    verification = verify_plans(plans, pipeline_state["demand"], pipeline_state.get("execution_inventory") or inventory, routes, vehicles, closed_routes)
                     emit(db, run_id, "verification.safety_fallback", "orchestrator", "主干缺少核验输出", "已自动执行内置安全核验，禁止绕过硬规则。")
                     pipeline_state["verification"] = verification
                 rounds.append({
@@ -625,7 +678,11 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 next_directive = build_rework_directive(
                     verification, next_attempt, selected_policy=policy_selection["selected_policy"]
                 )
+                prompt_adaptation = build_prompt_adaptation(verification, next_directive)
+                pipeline_state["prompt_adaptations"].append(prompt_adaptation)
+                pipeline_state["active_prompt_versions"]["matching_agent"] = prompt_adaptation["active_version"]
                 next_directive["policy_selection"] = policy_selection
+                next_directive["prompt_adaptation"] = prompt_adaptation
                 if not next_directive["can_retry"] or next_attempt > max_solution_attempts:
                     emit(db, run_id, "rework.escalated", "orchestrator", "资源约束无法自动修复", next_directive["reason"], {
                         "attempt": next_attempt,
@@ -656,12 +713,15 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "summary": "已完成多目标候选方案生成与约束修正。",
             "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
             "closed_routes": closed_routes,
+            "active_prompt_version": pipeline_state.get("active_prompt_versions", {}).get("matching_agent", "v1.4"),
+            "prompt_adaptations": pipeline_state.get("prompt_adaptations", []),
         }
         verifier_payload = {
             "verdict": final_verification["verdict"],
             "score": final_verification["score"],
             "blocker_summary": final_verification["blocker_summary"],
             "required_fixes": final_verification["required_fixes"],
+            "active_prompt_version": pipeline_state.get("active_prompt_versions", {}).get("verifier_agent", "v1.5"),
         }
 
         async def run_verifier_review() -> dict:
@@ -776,6 +836,49 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         scheduler_metrics = agent_executor.metrics() if agent_executor else {}
         schedule["runtime_metrics"] = scheduler_metrics
 
+        memory_writes.append(memory_repo.remember(
+            "demand_agent", "last_confidence",
+            {"confidence": demand_plan.get("confidence"), "factors": demand_plan.get("confidence_factors", {})},
+            float(demand_plan.get("confidence") or 0.5), run_id,
+        ))
+        previous_blockers = (
+            memory_context.get("verifier_agent", {})
+            .get("blocker_history", {})
+            .get("value", {})
+        )
+        blocker_history = dict(previous_blockers) if isinstance(previous_blockers, dict) else {}
+        for code in round1_verification.get("blocker_summary", []):
+            blocker_history[code] = int(blocker_history.get(code, 0)) + 1
+        memory_writes.append(memory_repo.remember(
+            "verifier_agent", "blocker_history", blocker_history, 0.9, run_id,
+        ))
+        if final_verification.get("verdict") == "pass" and rework_directives:
+            selected_policy = str(rework_directives[-1].get("selected_policy") or "")
+            if selected_policy:
+                memory_writes.append(memory_repo.remember(
+                    "matching_agent", "successful_repair_policy",
+                    {
+                        "policy": selected_policy,
+                        "issue_codes": rework_directives[-1].get("issue_codes", []),
+                        "scenario_id": scenario["id"],
+                    },
+                    0.8, run_id,
+                ))
+        recommended = delivery.get("recommended_plan") or {}
+        if delivery.get("status") == "ready" and recommended:
+            memory_writes.append(memory_repo.remember(
+                "delivery_agent", "last_recommended_plan",
+                {
+                    "plan_id": recommended.get("plan_id", ""),
+                    "plan_name": recommended.get("name", ""),
+                    "score": recommended.get("score"),
+                },
+                0.85, run_id,
+            ))
+        emit(db, run_id, "memory.saved", "orchestrator", "运行记忆已更新", f"写入 {len(memory_writes)} 条跨运行记忆。", {
+            "keys": [{"agent_id": item["agent_id"], "memory_key": item["memory_key"]} for item in memory_writes],
+        })
+
         result = {
             "run_id": run_id,
             "runtime": AGENT_RUNTIME,
@@ -784,6 +887,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "event": request["event"],
             "weights": request.get("weights", {}),
             "snapshot": snapshot,
+            "inventory_source": pipeline_state.get("inventory_source", "database snapshot"),
+            "execution_inventory_rows": len(pipeline_state.get("execution_inventory") or inventory),
             "demand": demand_plan,
             "core_workflow": core_workflow,
             "core_workflow_runs": core_runs,
@@ -803,6 +908,13 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "agentarts_status": agentarts.status,
             "llm_status": llm_service.status,
             "rework_directives": rework_directives,
+            "prompt_adaptations": pipeline_state.get("prompt_adaptations", []),
+            "active_prompt_versions": pipeline_state.get("active_prompt_versions", {}),
+            "memory_context": memory_context,
+            "memory_writes": [
+                {"agent_id": item["agent_id"], "memory_key": item["memory_key"], "confidence": item["confidence"]}
+                for item in memory_writes
+            ],
             "loop_metrics": {
                 "attempts": len(rounds),
                 "max_attempts": max_solution_attempts,
