@@ -147,7 +147,7 @@ def run_benchmark(db: Database, repetitions: int = 20) -> dict:
             final_coverage = max(
                 (report["metrics"]["coverage"] for report in verification["reports"]), default=0.0
             )
-            baseline_unsafe_this = baseline_truth["verdict"] != "pass" and context["feasible"]
+            baseline_unsafe_this = baseline_truth["verdict"] != "pass"
             if baseline_unsafe_this:
                 baseline_unsafe += 1
             feasible_count += 1 if context["feasible"] else 0
