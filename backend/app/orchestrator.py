@@ -12,7 +12,7 @@ from .agents import allowed_rework_policies, apply_llm_priority_adjustments, bui
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
 from .database import Database
 from .knowledge import retrieve
-from .knowledge_base import KnowledgeRepository
+from .knowledge_base import KnowledgeRepository, sanitize_agent_payload
 from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
 from .memory import MemoryRepository
@@ -203,6 +203,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     async def call_agentarts(agent_id: str, payload: dict, trace_id: str | None = None) -> dict:
         if not agentarts.enabled:
             return {"mode": "local-fallback", "reason": "AgentArts 未配置"}
+        safe_payload = sanitize_agent_payload(payload)
         try:
             endpoint = agentarts.endpoint_for(agent_id)
             emit(db, run_id, "agentarts.called", agent_id, f"调用 AgentArts · {AGENT_NAMES.get(agent_id, agent_id)}", "已向华为云 AgentArts Runtime 提交结构化任务。", {
@@ -210,7 +211,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             async def invoke_and_wait() -> dict:
                 task = asyncio.create_task(
-                    agentarts.invoke(agent_id, payload, session_id=run_id, client=http_client)
+                    agentarts.invoke(agent_id, safe_payload, session_id=run_id, client=http_client)
                 )
                 waited = 0
                 while True:
@@ -239,7 +240,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             fallback = {"mode": "local-fallback-after-agentarts-error", "error": str(exc)[:240]}
             agentarts_trace[trace_id or agent_id] = fallback
             RetryQueueRepository(db).enqueue(
-                "agentarts", {"agent_id": agent_id, "payload": payload, "session_id": run_id},
+                "agentarts", {"agent_id": agent_id, "payload": safe_payload, "session_id": run_id},
                 str(exc), run_id=run_id, max_attempts=RETRY_MAX_ATTEMPTS,
             )
             emit(db, run_id, "agentarts.fallback", agent_id, "AgentArts 调用回退", "云端调用失败，已使用本地确定性结果继续运行；失败请求已写入持久化重试队列。", fallback)

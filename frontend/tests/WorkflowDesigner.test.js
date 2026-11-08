@@ -41,6 +41,7 @@ describe('WorkflowDesigner template interaction', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(WorkflowDesigner, { props: { user: { role: 'admin' } } })
     await flushPromises()
+    expect(wrapper.html()).toMatchSnapshot('admin-workflow-designer')
 
     const instantiate = wrapper.findAll('button').find((button) => button.text().includes('实例化'))
     expect(instantiate).toBeTruthy()
@@ -67,5 +68,14 @@ describe('WorkflowDesigner template interaction', () => {
     await flushPromises()
     expect(api.runWorkflow).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('试运行完成')
+  })
+
+  it('renders read-only mode without admin mutation controls', async () => {
+    const wrapper = mount(WorkflowDesigner, { props: { user: { role: 'viewer' } } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('新增节点')
+    expect(wrapper.text()).not.toContain('保存并发布')
+    expect(wrapper.text()).not.toContain('保存并试运行')
+    expect(wrapper.find('.workflow-json-label textarea').attributes('readonly')).toBeDefined()
   })
 })

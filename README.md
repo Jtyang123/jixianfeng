@@ -38,7 +38,7 @@
 
 ## 技术栈
 
-- 后端：FastAPI、Pydantic、PostgreSQL 18（SQLite 离线回退）
+- 后端：FastAPI、Pydantic、PostgreSQL 18（SQLite 离线回退；CI 使用真实 PostgreSQL service 执行迁移、`SKIP LOCKED` 和并发预留守恒测试）
 - 前端：Vue 3、Vite、Leaflet、高德兼容真实地图瓦片
 - 智能体：四个核心 Agent 契约 + 双核验支持 Agent + 本地执行器 + 华为云 AgentArts SDK `/invocations` 适配
 - 实时通信：Server-Sent Events
@@ -254,7 +254,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。当前结果：`61 passed`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 1 项 Vue 组件交互测试，`5 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。当前结果：`65 passed`（含真实 PostgreSQL 18 集成测试），1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 4 项组件/重连测试，`8 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

@@ -187,7 +187,6 @@ class Database:
                     created_at TEXT NOT NULL,
                     released_at TEXT,
                     UNIQUE(run_id, inventory_id),
-                    FOREIGN KEY (run_id) REFERENCES runs(id),
                     FOREIGN KEY (inventory_id) REFERENCES inventory(id)
                 );
 
@@ -330,8 +329,7 @@ class Database:
                     due_at TEXT,
                     payload_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (run_id) REFERENCES runs(id)
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_vehicle_positions_vehicle_time
@@ -435,6 +433,7 @@ class Database:
                     category TEXT NOT NULL DEFAULT '其他',
                     source TEXT NOT NULL DEFAULT 'upload',
                     status TEXT NOT NULL DEFAULT 'active',
+                    content_hash TEXT NOT NULL DEFAULT '',
                     chunk_count INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
@@ -454,6 +453,7 @@ class Database:
                     section TEXT NOT NULL DEFAULT '',
                     char_start INTEGER NOT NULL DEFAULT 0,
                     char_end INTEGER NOT NULL DEFAULT 0,
+                    security_flags_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
 
@@ -568,6 +568,7 @@ class Database:
             self._ensure_event_columns(conn)
             self._ensure_route_columns(conn)
             self._ensure_knowledge_columns(conn)
+            self._ensure_document_columns(conn)
             self._ensure_workflow_columns(conn)
             self._ensure_run_columns(conn)
 
@@ -619,6 +620,7 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
         additions = {
             "embedding_json": "TEXT NOT NULL DEFAULT '[]'",
+            "security_flags_json": "TEXT NOT NULL DEFAULT '[]'",
             "embedding_provider": "TEXT NOT NULL DEFAULT 'hash'",
             "embedding_model": "TEXT NOT NULL DEFAULT 'domain-hash-v1'",
             "embedding_dim": "INTEGER NOT NULL DEFAULT 256",
@@ -658,6 +660,17 @@ class Database:
         conn.execute("UPDATE runs SET queued_at = created_at WHERE queued_at IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, priority_score DESC, queued_at)")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency ON runs(idempotency_key) WHERE idempotency_key <> ''")
+
+    def _ensure_document_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("knowledge_documents",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_documents)").fetchall()}
+        if "content_hash" not in columns:
+            conn.execute("ALTER TABLE knowledge_documents ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_documents_hash ON knowledge_documents(content_hash) WHERE content_hash <> ''")
 
     def _ensure_workflow_columns(self, conn) -> None:
         if self.engine == "postgresql":

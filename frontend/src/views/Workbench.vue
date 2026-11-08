@@ -8,6 +8,7 @@ import {
 import AgentRail from '../components/AgentRail.vue'
 import MapCanvas from '../components/MapCanvas.vue'
 import { api, formatNumber } from '../api'
+import { mergeRunEvent, runEventsUrl } from '../utils/runEvents.js'
 
 defineProps({ dashboard: { type: Object, default: () => ({}) } })
 const emit = defineEmits(['refresh-dashboard', 'navigate'])
@@ -280,11 +281,10 @@ async function loadData() {
 
 function connectEvents(id) {
   if (eventSource) eventSource.close()
-  const after = events.value.reduce((max, item) => Math.max(max, Number(item.seq || 0)), 0)
-  eventSource = new EventSource(`/api/runs/${id}/events?after=${after}`)
+  eventSource = new EventSource(runEventsUrl(id, events.value))
   eventSource.onmessage = (message) => {
     const event = JSON.parse(message.data)
-    if (!events.value.some((item) => item.seq === event.seq)) events.value.push(event)
+    events.value = mergeRunEvent(events.value, event)
     if (['awaiting.approval', 'human.escalation', 'run.failed'].includes(event.type)) {
       setTimeout(() => finishRun(id), 350)
     }
