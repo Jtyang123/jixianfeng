@@ -195,10 +195,10 @@ function draw() {
 
   if (eventPoint.value) {
     L.marker(eventPoint.value, {
-      icon: makeIcon('event', props.eventLocation.title || '事件位置', `当前事件 · ${props.eventLocation.title || '事件位置'}`),
+      icon: makeIcon('event', props.eventLocation.title || props.eventLocation.name || '事件位置', `当前事件 · ${props.eventLocation.title || props.eventLocation.name || '事件位置'}`),
       zIndexOffset: 700,
     }).addTo(layerGroup).bindPopup(
-      `<strong>${escapeHtml(props.eventLocation.title || '事件位置')}</strong><br>${escapeHtml(props.eventLocation.location || '')}<br>事件等级：${escapeHtml(props.eventLocation.severity || '')}`
+      `<strong>${escapeHtml(props.eventLocation.title || props.eventLocation.name || '事件位置')}</strong><br>${escapeHtml(props.eventLocation.location || '')}<br>事件等级：${escapeHtml(props.eventLocation.severity || '')}`
     )
     points.push(eventPoint.value)
   }

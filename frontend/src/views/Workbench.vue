@@ -47,6 +47,8 @@ const selectedScenario = computed(() => {
       event_type: event.event_type,
       severity: event.severity,
       location: event.location,
+      lat: event.lat,
+      lng: event.lng,
       affected_population: event.affected_population,
       closed_routes: event.closed_routes || [],
       risk_notes: event.description || '',
@@ -408,7 +410,7 @@ onBeforeUnmount(() => eventSource?.close())
         </section>
 
         <div class="center-stack">
-          <MapCanvas :network="network" :plan="selectedPlan" :closed-routes="closedRoutes" :running="running" :event-location="runSource === 'event' ? selectedOperationalEvent : null" :inventory="inventoryData.items || []" />
+          <MapCanvas :network="network" :plan="selectedPlan" :closed-routes="closedRoutes" :running="running" :event-location="runSource === 'event' ? selectedOperationalEvent : selectedScenario" :inventory="inventoryData.items || []" />
           <div class="map-status-strip">
             <div class="status-main">
               <span class="status-pulse" :class="{ 'status-pulse--live': running }" />

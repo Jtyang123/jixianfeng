@@ -214,6 +214,8 @@ class Database:
                     event_type TEXT NOT NULL,
                     severity TEXT NOT NULL,
                     location TEXT NOT NULL,
+                    lat REAL,
+                    lng REAL,
                     affected_population INTEGER NOT NULL,
                     closed_routes TEXT NOT NULL DEFAULT '[]',
                     default_demand TEXT NOT NULL DEFAULT '[]',
@@ -488,6 +490,7 @@ class Database:
             if material_count == 0 and SEED_DEMO:
                 self._seed(conn)
             self._ensure_vehicle_columns(conn)
+            self._ensure_scenario_columns(conn)
             self._ensure_event_columns(conn)
             self._ensure_route_columns(conn)
             self._ensure_knowledge_columns(conn)
@@ -539,6 +542,19 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
         if "embedding_json" not in columns:
             conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding_json TEXT NOT NULL DEFAULT '[]'")
+    def _ensure_scenario_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("scenarios",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(scenarios)").fetchall()}
+        if "lat" not in columns:
+            conn.execute("ALTER TABLE scenarios ADD COLUMN lat REAL")
+        if "lng" not in columns:
+            conn.execute("ALTER TABLE scenarios ADD COLUMN lng REAL")
+        conn.execute("UPDATE scenarios SET lat = 30.5960, lng = 114.3100 WHERE id = 'rainstorm-ii' AND (lat IS NULL OR lng IS NULL)")
+        conn.execute("UPDATE scenarios SET lat = 30.5500, lng = 114.3050 WHERE id = 'heatwave-iii' AND (lat IS NULL OR lng IS NULL)")
     def _ensure_event_columns(self, conn) -> None:
         if self.engine == "postgresql":
             columns = {row["column_name"] for row in conn.execute(
@@ -725,23 +741,23 @@ class Database:
             (
                 "rainstorm-ii", "武汉暴雨洪涝应急演练",
                 "主通道多处积水封闭，检验多仓协同、独立核验和自动重规划能力。",
-                "暴雨洪涝", "II级", "武汉市·模拟沿江区", 12000,
+                "暴雨洪涝", "II级", "武汉市·模拟沿江区", 30.5960, 114.3100, 12000,
                 _json(primary_closures), _json(rain_demand),
                 "本场景为主通道全部封闭的压力测试，第一轮方案应被独立核验智能体退回。",
             ),
             (
                 "heatwave-iii", "持续高温生活保障推演",
                 "道路正常，重点检验时效和成本多目标权衡。",
-                "高温热浪", "III级", "武汉市·模拟中心城区", 9000,
+                "高温热浪", "III级", "武汉市·模拟中心城区", 30.5500, 114.3050, 9000,
                 "[]", _json(heat_demand), "适合展示正常条件下的多方案对比。",
             ),
         ]
         conn.executemany(
             """
             INSERT INTO scenarios
-            (id, name, description, event_type, severity, location,
+            (id, name, description, event_type, severity, location, lat, lng,
              affected_population, closed_routes, default_demand, risk_notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             scenarios,
         )

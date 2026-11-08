@@ -23,6 +23,8 @@ def test_api_run_flow(tmp_path: Path):
     assert materials and scenarios
 
     scenario = next(item for item in scenarios if item['id'] == 'rainstorm-ii')
+    assert scenario["lat"] is not None
+    assert scenario["lng"] is not None
     material_ids = {item["code"]: item["id"] for item in materials}
     payload = {
         "scenario_id": scenario["id"],
