@@ -36,6 +36,7 @@ const approved = ref(false)
 const dispatchTasks = ref([])
 const materialToAdd = ref('')
 let eventSource = null
+let statusPoller = null
 let loadedOnce = false
 
 const selectedOperationalEvent = computed(() => operationalEvents.value.find((item) => item.id === selectedEventId.value))
@@ -117,7 +118,7 @@ const workflowSteps = [
 const statusText = computed(() => {
   if (running.value) return `推演进行中 · ${events.value.length} 个事件`
   if (runResult.value?.delivery?.status === 'ready') return approved.value ? '人工审批已通过' : '方案已生成，等待人工审批'
-  if (runResult.value?.delivery?.status === 'human_escalation') return '两轮未通过，已转人工研判'
+  if (runResult.value?.delivery?.status === 'human_escalation') return '核验未通过，已转人工研判'
   return '等待启动推演'
 })
 
@@ -291,8 +292,16 @@ async function loadData() {
   }
 }
 
+function stopStatusPolling() {
+  if (statusPoller) {
+    clearInterval(statusPoller)
+    statusPoller = null
+  }
+}
+
 function connectEvents(id) {
   if (eventSource) eventSource.close()
+  stopStatusPolling()
   eventSource = new EventSource(runEventsUrl(id, events.value))
   eventSource.onmessage = (message) => {
     const event = JSON.parse(message.data)
@@ -304,6 +313,15 @@ function connectEvents(id) {
   eventSource.onerror = () => {
     if (!running.value) eventSource?.close()
   }
+  statusPoller = setInterval(async () => {
+    if (!running.value) return
+    try {
+      const latest = await api.getRun(id)
+      if (['awaiting_approval', 'approved', 'needs_human', 'failed', 'rejected'].includes(latest.status)) {
+        await finishRun(id)
+      }
+    } catch (_) {}
+  }, 2000)
 }
 
 async function finishRun(id) {
@@ -321,6 +339,7 @@ async function finishRun(id) {
     error.value = exc.message
     running.value = false
   } finally {
+    stopStatusPolling()
     eventSource?.close()
   }
 }
@@ -394,6 +413,7 @@ onActivated(async () => {
   if (loadedOnce) await Promise.all([refreshOperationalEvents(), refreshResourceData()])
 })
 onBeforeUnmount(() => {
+  stopStatusPolling()
   eventSource?.close()
   window.removeEventListener('farmmatch:events-changed', handleEventsChanged)
   window.removeEventListener('keydown', handleRunShortcut)
@@ -547,7 +567,7 @@ onBeforeUnmount(() => {
             <div class="status-metrics">
               <span><PackageOpen :size="15" />{{ demandItems.length }} 类物资</span>
               <span><Truck :size="15" />{{ formatNumber(totalWeight, 1) }} kg</span>
-              <span><Clock3 :size="15" />预计 20–40 秒</span>
+              <span><Clock3 :size="15" />云端推理通常 45–90 秒</span>
             </div>
           </div>
         </div>

@@ -1485,7 +1485,7 @@ async def run_events(
             events = db.events_after(run_id, cursor)
             for event in events:
                 cursor = max(cursor, event["seq"])
-                yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield f"id: {event['seq']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
             run = db.get_run(run_id)
             if run and run["status"] in terminal:
                 idle_after_terminal += 1
