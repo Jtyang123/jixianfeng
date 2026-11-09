@@ -453,6 +453,24 @@ class KnowledgeRepository:
         self._corpus_cache.clear()
         return self.get_document(document_id) or {}
 
+    def ensure_seed_documents(self) -> int:
+        from .knowledge import catalog
+        existing = {item["name"] for item in self.list_documents()}
+        inserted = 0
+        for doc in catalog():
+            if doc["title"] in existing:
+                continue
+            content = str(doc.get("content") or "")
+            self.insert_document(
+                doc["title"], doc.get("category") or "??", doc.get("source") or "?????",
+                [{
+                    "text": content, "page_no": None, "section": doc["title"],
+                    "char_start": 0, "char_end": len(content),
+                }],
+            )
+            inserted += 1
+        return inserted
+
     def list_documents(self) -> list[dict]:
         with self.db.connect() as conn:
             rows = conn.execute("SELECT * FROM knowledge_documents ORDER BY created_at DESC, id DESC").fetchall()

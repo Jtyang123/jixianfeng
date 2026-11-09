@@ -1,6 +1,7 @@
 import asyncio
 
-from app.scheduler import AsyncPriorityExecutor
+from app.registry import apply_agent_load
+from app.scheduler import AsyncPriorityExecutor, build_dynamic_schedule
 
 
 def test_async_priority_executor_runs_higher_priority_first_and_records_metrics():
@@ -55,3 +56,23 @@ def test_async_priority_executor_limits_parallelism():
     assert peak == 2
     assert metrics["peak_concurrency"] == 2
     assert metrics["total_tasks"] == 3
+def test_scheduler_uses_latency_failure_and_backlog_feedback():
+    schedule = build_dynamic_schedule(
+        {"event": {"severity": "II级", "affected_population": 12000}}, [], 6
+    )
+    loaded = apply_agent_load(schedule, {
+        "matching_agent": {
+            "average_latency_ms": 4000,
+            "failure_rate": 0.5,
+            "pending_calls": 3,
+            "load_score": 95,
+            "success_rate": 0.5,
+        }
+    })
+    item = next(row for row in loaded["dispatch"] if row["agent_id"] == "matching_agent")
+    assert item["base_priority"] > item["effective_priority"]
+    assert item["latency_penalty"] > 0
+    assert item["failure_penalty"] > 0
+    assert item["backlog_penalty"] > 0
+    assert item["historical_success_rate"] == 0.5
+    assert loaded["priority_formula"] == "base_priority - latency_penalty - failure_penalty - backlog_penalty"

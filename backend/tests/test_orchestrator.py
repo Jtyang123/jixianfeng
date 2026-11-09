@@ -215,6 +215,10 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert decisions["D3"]["applied"] is True
     assert run["result"]["prompt_adaptations"]
     assert run["result"]["prompt_adaptations"][0]["active_version"].startswith("v1.4+adaptive")
+    assert run["result"]["loop_metrics"]["adaptive_prompt_versions"]
+    assert run["result"]["loop_metrics"]["adaptive_tool_overrides"]
+    assert all(run["result"]["loop_metrics"]["workflow_paths"])
+    assert all("citation" in item for item in run["result"]["retrieval"])
     assert run["result"]["active_prompt_versions"]["matching_agent"].startswith("v1.4+adaptive")
     assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension", "demand_extension"}
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}

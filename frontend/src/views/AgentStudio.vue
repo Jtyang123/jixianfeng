@@ -5,6 +5,7 @@ import {
   Layers3, Network, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Trash2, Wrench,
 } from '@lucide/vue'
 import { api } from '../api'
+import WorkflowDesigner from './WorkflowDesigner.vue'
 
 const props = defineProps({ user: { type: Object, default: null } })
 
@@ -151,41 +152,11 @@ onMounted(load)
 
       <section class="content-card workflow-card">
         <div class="workflow-head">
-          <div><div class="eyebrow">WORKFLOW GRAPH</div><h2>可视化工作流与反馈回路</h2><p>主链路顺序执行，需求与 RAG 检索并行，核验条件分支驱动退回复算。</p></div>
-          <div class="workflow-actions"><span class="workflow-chip"><GitBranch :size="14" />CONDITION + LOOP</span><button class="secondary-action" :disabled="checking" @click="checkConnection"><RefreshCw :size="14" :class="{ spin: checking }" />检测 AgentArts</button></div>
-        </div>
-        <div class="workflow-canvas">
-          <div class="workflow-row">
-            <div class="flow-node flow-node--trigger"><span>TRIGGER</span><strong>事件确认</strong></div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-parallel">
-              <div class="flow-node flow-node--agent"><span>A01</span><strong>需求研判</strong></div>
-              <div class="flow-node flow-node--tool"><span>RAG</span><strong>规则检索</strong></div>
-            </div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-node flow-node--agent"><span>A02</span><strong>资源匹配</strong></div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-node flow-node--verify"><span>A03</span><strong>独立核验</strong></div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-node flow-node--dynamic"><span>A05+</span><strong>扩展审查</strong></div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-node flow-node--decision"><span>GATE</span><strong>通过？</strong></div>
-          </div>
-          <div class="loop-branch">
-            <div class="loop-line loop-line--fail"><span>FAIL → 结构化反馈</span></div>
-            <div class="flow-node flow-node--loop"><RotateCcw :size="15" /><strong>退回重算</strong><small>最多 2 轮</small></div>
-            <div class="loop-line loop-line--return"><span>RETURN TO A02</span></div>
-          </div>
-          <div class="pass-branch">
-            <div class="flow-line" />
-            <span class="flow-pass-label">PASS</span>
-            <div class="flow-node flow-node--human"><span>HUMAN</span><strong>人工审批</strong></div>
-            <div class="flow-arrow">→</div>
-            <div class="flow-node flow-node--delivery"><span>A04</span><strong>方案交付</strong></div>
-          </div>
+          <div><div class="eyebrow">VISUAL WORKFLOW DESIGNER</div><h2>工作流可视化编排</h2><p>支持模板实例化、节点新增、拖拽定位、依赖连线、条件节点、循环节点、子工作流嵌套、版本发布和试运行。</p></div>
+          <div class="workflow-actions"><span class="workflow-chip"><GitBranch :size="14" />EDITABLE DAG</span><button class="secondary-action" :disabled="checking" @click="checkConnection"><RefreshCw :size="14" :class="{ spin: checking }" />检测 AgentArts</button></div>
         </div>
       </section>
-      <div v-if="checkResult" class="agentarts-check" :class="{ 'agentarts-check--warn': checkResult.status !== 'ok' }">
+      <WorkflowDesigner :user="user" />      <div v-if="checkResult" class="agentarts-check" :class="{ 'agentarts-check--warn': checkResult.status !== 'ok' }">
         <strong>AgentArts 连接检测：{{ checkResult.status }}</strong>
         <span>{{ checkResult.enabled ? '端点已配置，可执行 /invocations 调用' : '尚未配置 AGENTARTS_BASE_URL / API_KEY，当前使用本地确定性回退' }}</span>
       </div>
@@ -216,6 +187,8 @@ onMounted(load)
           <div class="guardrail-box"><ShieldCheck :size="14" /><span v-for="rule in agent.guardrails" :key="rule">{{ rule }}</span></div>
         </article>
       </section>
+
+      <div class="benchmark-note agent-registry-shortcut"><Network :size="14" /><span>动态注册、发现、负载与版本切换请使用顶部“Agent 注册与版本”页签。</span></div>
 
       <div class="studio-lower-grid">
         <section class="content-card registry-card">

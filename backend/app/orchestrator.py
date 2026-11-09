@@ -12,7 +12,6 @@ from .agentarts import AgentArtsBridge
 from .agents import allowed_rework_policies, apply_llm_priority_adjustments, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, normalize_llm_weight_profile, verify_plans
 from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
 from .database import Database
-from .knowledge import retrieve
 from .knowledge_base import KnowledgeRepository, sanitize_agent_payload
 from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
@@ -477,10 +476,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "道路封闭 库存 运力 时效 独立核验 反馈循环",
             " ".join(item["name"] for item in selected_materials),
         ])
-        evidence = retrieve(query, top_k=4)
-        uploaded_evidence = KnowledgeRepository(db).search(query, top_k=3)
-        evidence = sorted(evidence + uploaded_evidence, key=lambda item: float(item.get("score", 0)), reverse=True)[:7]
-        memory_context = memory_repo.summary(["demand_agent", "matching_agent", "verifier_agent", "delivery_agent"])
+        knowledge_repo = KnowledgeRepository(db)
+        knowledge_repo.ensure_seed_documents()
+        evidence = knowledge_repo.search(query, top_k=7)
+        memory_context = memory_repo.summary(["demand_agent", "matching_agent", "verifier_agent", "delivery_agent"], query=query)
         emit(db, run_id, "memory.loaded", "orchestrator", "跨运行记忆已加载", f"加载 {sum(len(items) for items in memory_context.values())} 条可审计记忆。", {
             "agents": {agent_id: list(items) for agent_id, items in memory_context.items()},
             "scope": "仅作上下文与安全 tie-break，不覆盖硬规则",
@@ -1071,6 +1070,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 "final_blockers": len(final_verification["blocker_summary"]),
                 "closed_routes_excluded": len(closed_routes) if len(rounds) > 1 else 0,
                 "adaptive_categories": sorted({category for item in rework_directives for category in item["categories"]}),
+                "adaptive_prompt_versions": [item["active_version"] for item in pipeline_state.get("prompt_adaptations", [])],
+                "adaptive_tool_overrides": list(dict.fromkeys(override for item in rework_directives for override in item.get("tool_overrides", []))),
+                "workflow_paths": [item.get("mode", "") for item in rounds],
+                "selected_repair_policies": [item.get("selected_policy", "") for item in rework_directives],
                 "rework_rounds": len(rework_directives),
                 "exhausted": final_verification["verdict"] != "pass" and len(rounds) >= max_solution_attempts,
                 "converged": final_verification["verdict"] == "pass",

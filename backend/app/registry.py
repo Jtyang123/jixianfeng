@@ -318,15 +318,24 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict]) -> dict:
     for item in schedule.get("dispatch", []):
         copy = dict(item)
         load = metrics.get(copy["agent_id"], {})
-        penalty = min(25, round(float(load.get("average_latency_ms", 0)) / 800 + float(load.get("failure_rate", 0)) * 20 + float(load.get("pending_calls", 0)) * 5))
+        latency_penalty = min(12, round(float(load.get("average_latency_ms", 0)) / 1200))
+        failure_penalty = min(15, round(float(load.get("failure_rate", 0)) * 30))
+        backlog_penalty = min(20, int(load.get("pending_calls", 0)) * 5)
+        penalty = latency_penalty + failure_penalty + backlog_penalty
         copy["base_priority"] = copy.get("priority", 0)
+        copy["latency_penalty"] = latency_penalty
+        copy["failure_penalty"] = failure_penalty
+        copy["backlog_penalty"] = backlog_penalty
         copy["load_penalty"] = penalty
         copy["effective_priority"] = max(1, copy["base_priority"] - penalty)
         copy["load_score"] = load.get("load_score", 0)
+        copy["historical_success_rate"] = load.get("success_rate", None)
+        copy["average_latency_ms"] = load.get("average_latency_ms", 0)
         dispatch.append(copy)
     dispatch.sort(key=lambda item: item["effective_priority"], reverse=True)
     enriched = dict(schedule)
     enriched["dispatch"] = dispatch
     enriched["engine"] = "load-aware capability-weighted DAG scheduler"
+    enriched["priority_formula"] = "base_priority - latency_penalty - failure_penalty - backlog_penalty"
     enriched["agent_load"] = metrics
     return enriched

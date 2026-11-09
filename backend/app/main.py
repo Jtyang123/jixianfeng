@@ -15,6 +15,7 @@ from . import api as api_module
 from .api import auth_service, db, router
 from .agentarts import AgentArtsBridge
 from .config import ALLOWED_ORIGINS, AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, PROJECT_DIR
+from .knowledge_base import KnowledgeRepository
 from .scheduler import AGENTS
 from .workflow_engine import WorkflowRepository
 
@@ -23,6 +24,7 @@ if AUTH_REQUIRED:
     auth_service.ensure_bootstrap_admin()
 api_module.registry_service.sync_builtin_agents(AGENTS, AgentArtsBridge().endpoints)
 WorkflowRepository(db).ensure_template_library()
+KnowledgeRepository(db).ensure_seed_documents()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):

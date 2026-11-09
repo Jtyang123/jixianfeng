@@ -311,8 +311,9 @@ def platform_manifest() -> dict[str, Any]:
             "double_commit_prevention": True,
         },
         "memory": {
-            "type": "跨运行记忆 + 运行内黑板",
+            "type": "跨运行长期记忆 + 运行内黑板",
             "persistence": "PostgreSQL/SQLite agent_memory + agent_events + run artifacts",
+            "retrieval": "query relevance + confidence importance + 30-day exponential recency decay",
             "replay_supported": True,
             "decision_boundary": "仅作上下文与允许策略集合内的 tie-break，不覆盖硬规则",
         },
