@@ -1456,3 +1456,7 @@ input[type="checkbox"], input[type="radio"] {
 .task-tracking-hint span { flex: 1; color: var(--muted); }
 
 .history-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+
+.view-result-action { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; color: var(--teal); background: var(--teal-soft); border: 1px solid #c9e1d9; border-radius: 8px; font-size: 10px; font-weight: 700; }
+.view-result-action:hover { background: #dff1eb; border-color: #a9d2c7; }
+.result-section { scroll-margin-top: 86px; }

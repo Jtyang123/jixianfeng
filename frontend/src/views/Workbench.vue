@@ -33,6 +33,7 @@ const selectedPlanId = ref('')
 const assignmentMaterialFilter = ref('all')
 const resultTab = ref('detail')
 const detailShellRef = ref(null)
+const resultSectionRef = ref(null)
 const error = ref('')
 const approved = ref(false)
 const dispatchTasks = ref([])
@@ -329,6 +330,11 @@ function connectEvents(id) {
   }, 2000)
 }
 
+async function scrollToResult() {
+  await nextTick()
+  resultSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function finishRun(id) {
   if (!running.value) return
   try {
@@ -336,9 +342,10 @@ async function finishRun(id) {
     runResult.value = run.result
     dispatchTasks.value = taskRows
     running.value = false
-    approved.value = false
+    approved.value = run.approved === 1 || run.status === 'approved'
     const recommended = run.result?.delivery?.recommended_plan?.plan_id
     selectedPlanId.value = recommended || run.result?.final_verification?.reports?.[0]?.plan_id || ''
+    await scrollToResult()
     emit('refresh-dashboard')
   } catch (exc) {
     error.value = exc.message
@@ -419,6 +426,7 @@ async function restoreRunFromQuery() {
     const recommended = run.result?.delivery?.recommended_plan?.plan_id
     selectedPlanId.value = recommended || run.result?.final_verification?.reports?.[0]?.plan_id || ''
     resultTab.value = approved.value ? 'tasks' : 'detail'
+    await scrollToResult()
     if (running.value) connectEvents(requestedRunId)
   } catch (exc) {
     error.value = exc.message
@@ -599,6 +607,7 @@ onBeforeUnmount(() => {
               <span><PackageOpen :size="15" />{{ demandItems.length }} 类物资</span>
               <span><Truck :size="15" />{{ formatNumber(totalWeight, 1) }} kg</span>
               <span><Clock3 :size="15" />云端推理通常 45–90 秒</span>
+              <button v-if="runResult" class="view-result-action" @click="scrollToResult">查看结果 <ChevronDown :size="14" /></button>
             </div>
           </div>
         </div>
@@ -606,7 +615,7 @@ onBeforeUnmount(() => {
         <AgentRail :events="events" :running="running" />
       </div>
 
-      <section v-if="runResult" class="result-section">
+      <section v-if="runResult" ref="resultSectionRef" class="result-section">
         <div class="result-header">
           <div>
             <div class="eyebrow">MULTI-AGENT OUTPUT</div>
