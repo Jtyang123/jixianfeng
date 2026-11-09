@@ -81,30 +81,34 @@ class InventoryReservationService:
                 "UPDATE runs SET approved=0, approved_at=NULL, reserved_at=NULL, status=?, result_json=? WHERE id=?",
                 (next_status, json.dumps(result, ensure_ascii=False), run_id),
             )
+            count = sum(1 for item in released if item["run_id"] == run_id)
+            seq = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM agent_events WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()["seq"]
+            self.db._insert_id(
+                conn,
+                """INSERT INTO agent_events
+                   (run_id, seq, type, agent_id, agent_name, title, detail, payload_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id, seq, "inventory.reservation_expired", "orchestrator", "\u5e93\u5b58\u9884\u7559",
+                    "\u5e93\u5b58\u9884\u7559\u5df2\u8fc7\u671f\u91ca\u653e", f"\u91ca\u653e {count} \u6761\u5e93\u5b58\u9884\u7559\u3002",
+                    json.dumps({"released_count": count}, ensure_ascii=False), now_iso(),
+                ),
+            )
         return released, invalid_expiry
 
     def cleanup_expired(self) -> dict:
         with self.db.connect() as conn:
             released, invalid_expiry = self._release_expired(conn)
         runs = sorted({item["run_id"] for item in released})
-        event_errors: list[dict] = []
-        for run_id in runs:
-            count = sum(1 for item in released if item["run_id"] == run_id)
-            try:
-                self.db.add_event(
-                    run_id, "inventory.reservation_expired", "orchestrator", "\u5e93\u5b58\u9884\u7559",
-                    "\u5e93\u5b58\u9884\u7559\u5df2\u8fc7\u671f\u91ca\u653e", f"\u91ca\u653e {count} \u6761\u5e93\u5b58\u9884\u7559\u3002",
-                    {"released_count": count},
-                )
-            except Exception as exc:
-                logger.exception("Failed to record reservation cleanup event for %s", run_id)
-                event_errors.append({"run_id": run_id, "error": str(exc)[:240]})
         if invalid_expiry:
             logger.warning("Skipped reservations with missing or invalid expires_at: %s", invalid_expiry)
         return {
             "released_count": len(released), "runs": runs, "items": released,
             "invalid_expiry_count": len(invalid_expiry), "invalid_expiry_ids": invalid_expiry,
-            "event_errors": event_errors,
+            "event_errors": [],
         }
 
     def active_for_run(self, run_id: str) -> list[dict]:
