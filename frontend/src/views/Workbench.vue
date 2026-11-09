@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, Clock3, FileDown,
   Gauge, MapPinned, PackageOpen, Play, Plus, RotateCcw, Route,
@@ -32,6 +32,7 @@ const runResult = ref(null)
 const selectedPlanId = ref('')
 const assignmentMaterialFilter = ref('all')
 const resultTab = ref('detail')
+const detailShellRef = ref(null)
 const error = ref('')
 const approved = ref(false)
 const dispatchTasks = ref([])
@@ -287,6 +288,7 @@ async function loadData() {
     } else {
       applyScenario(scenarioRows.find((item) => item.id === 'rainstorm-ii')?.id || scenarioRows[0]?.id || 'rainstorm-ii')
     }
+    await restoreRunFromQuery()
   } catch (exc) {
     error.value = exc.message
   } finally {
@@ -385,6 +387,9 @@ async function approveRun() {
     const result = await api.approveRun(runId.value, '现场值班负责人确认调度方案')
     approved.value = true
     dispatchTasks.value = result.tasks || []
+    resultTab.value = 'tasks'
+    await nextTick()
+    detailShellRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (exc) { error.value = exc.message }
 }
 
@@ -400,6 +405,26 @@ function openReport() {
   if (runId.value) window.open(`/api/runs/${runId.value}/report`, '_blank')
 }
 
+async function restoreRunFromQuery() {
+  const requestedRunId = new URLSearchParams(window.location.search).get('run_id')
+  if (!requestedRunId) return
+  try {
+    const [run, taskRows] = await Promise.all([api.getRun(requestedRunId), api.tasks(requestedRunId)])
+    if (!run.result) return
+    runId.value = requestedRunId
+    runResult.value = run.result
+    approved.value = Boolean(run.approved)
+    dispatchTasks.value = taskRows
+    running.value = ['queued', 'running'].includes(run.status)
+    const recommended = run.result?.delivery?.recommended_plan?.plan_id
+    selectedPlanId.value = recommended || run.result?.final_verification?.reports?.[0]?.plan_id || ''
+    resultTab.value = approved.value ? 'tasks' : 'detail'
+    if (running.value) connectEvents(requestedRunId)
+  } catch (exc) {
+    error.value = exc.message
+  }
+}
+
 function handleRunShortcut(event) {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canRun.value) {
     event.preventDefault()
@@ -413,7 +438,10 @@ onMounted(() => {
   loadData()
 })
 onActivated(async () => {
-  if (loadedOnce) await Promise.all([refreshOperationalEvents(), refreshResourceData()])
+  if (loadedOnce) {
+    await Promise.all([refreshOperationalEvents(), refreshResourceData()])
+    await restoreRunFromQuery()
+  }
 })
 onBeforeUnmount(() => {
   stopStatusPolling()
@@ -658,11 +686,12 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="detail-shell" v-if="selectedReport">
+        <div ref="detailShellRef" class="detail-shell" v-if="selectedReport">
           <div class="detail-tabs">
             <button :class="{ active: resultTab === 'detail' }" @click="resultTab = 'detail'">调拨明细</button>
             <button :class="{ active: resultTab === 'verify' }" @click="resultTab = 'verify'">核验记录</button>
             <button :class="{ active: resultTab === 'delivery' }" @click="resultTab = 'delivery'">交付包</button>
+            <button v-if="approved || dispatchTasks.length" :class="{ active: resultTab === 'tasks' }" @click="resultTab = 'tasks'">执行任务 <span class="tab-count">{{ dispatchTasks.length }}</span></button>
             <span class="detail-id mono">{{ selectedReport.plan_id }}</span>
           </div>
 
@@ -722,6 +751,21 @@ onBeforeUnmount(() => {
             <div class="evidence-line"><span>证据链</span><em v-for="ref in runResult.final_verification.evidence_refs" :key="ref">{{ ref }}</em></div>
           </div>
 
+          <div v-if="resultTab === 'tasks'" class="detail-content task-tracking-content">
+            <div class="task-tracking-head"><div><div class="eyebrow">DISPATCH EXECUTION</div><h3>执行任务跟踪</h3><p>更新任务状态后，系统会记录负责人和最后更新时间。</p></div><span class="workflow-chip">{{ dispatchTasks.length }} 条任务</span></div>
+            <div v-if="dispatchTasks.length" class="dispatch-task-block dispatch-task-block--page">
+              <div v-for="task in dispatchTasks" :key="task.id" class="dispatch-task-row">
+                <div><strong>{{ task.title }}</strong><span>{{ task.assignee || '待分配' }} · {{ task.payload.route_name || '' }} · {{ task.payload.vehicle_trips || 0 }} 趟</span></div>
+                <select :value="task.status" @change="updateTaskStatus(task, $event.target.value)">
+                  <option value="pending">待执行</option><option value="assigned">已分配</option>
+                  <option value="in_progress">执行中</option><option value="completed">已完成</option>
+                  <option value="failed">异常</option><option value="cancelled">取消</option>
+                </select>
+              </div>
+            </div>
+            <div v-else class="empty-table"><Truck :size="28" /><strong>暂无执行任务</strong><span>审批通过后，系统会自动生成运输任务。</span></div>
+          </div>
+
           <div v-if="resultTab === 'delivery' && runResult.delivery.status === 'ready'" class="detail-content delivery-content">
             <div class="delivery-summary">
               <ShieldCheck :size="22" />
@@ -775,17 +819,7 @@ onBeforeUnmount(() => {
                 <ol><li v-for="action in runResult.delivery.actions" :key="action">{{ action }}</li></ol>
               </div>
             </div>
-            <div v-if="dispatchTasks.length" class="dispatch-task-block">
-              <h4>执行任务跟踪</h4>
-              <div v-for="task in dispatchTasks" :key="task.id" class="dispatch-task-row">
-                <div><strong>{{ task.title }}</strong><span>{{ task.assignee || '待分配' }} · {{ task.payload.route_name || '' }}</span></div>
-                <select :value="task.status" @change="updateTaskStatus(task, $event.target.value)">
-                  <option value="pending">待执行</option><option value="assigned">已分配</option>
-                  <option value="in_progress">执行中</option><option value="completed">已完成</option>
-                  <option value="failed">异常</option><option value="cancelled">取消</option>
-                </select>
-              </div>
-            </div>
+            <div class="task-tracking-hint"><strong>审批已完成</strong><span>运输任务、库存预留和签收状态在“执行任务”页签中跟踪。</span><button class="text-action" @click="resultTab = 'tasks'">前往执行任务</button></div>
             <div class="timeline-table">
               <div v-for="item in runResult.delivery.timeline.slice(0, 6)" :key="`${item.warehouse}-${item.destination}`" class="timeline-row">
                 <span class="timeline-time">{{ item.departure.slice(11, 16) }}</span>

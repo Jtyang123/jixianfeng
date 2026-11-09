@@ -1445,3 +1445,14 @@ input[type="checkbox"], input[type="radio"] {
     min-height: 560px;
   }
 }
+
+.tab-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 4px; padding: 0 5px; color: var(--teal); background: var(--teal-soft); border-radius: 999px; font: 600 9px 'DM Mono', monospace; }
+.task-tracking-content { display: flex; flex-direction: column; gap: 12px; }
+.task-tracking-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.task-tracking-head h3 { margin-top: 4px; font-size: 16px; }
+.task-tracking-head p { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.dispatch-task-block--page { margin-top: 0; padding: 4px 0; }
+.task-tracking-hint { display: flex; align-items: center; gap: 8px; margin: 12px 0; padding: 10px 12px; color: var(--ink-2); background: #eef7f3; border: 1px solid #d1e6de; border-radius: 9px; font-size: 10px; }
+.task-tracking-hint span { flex: 1; color: var(--muted); }
+
+.history-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }

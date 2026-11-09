@@ -21,6 +21,7 @@ async function load() {
   try { runs.value = await api.listRuns() } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
 function openReport(id) { window.open(`/api/runs/${id}/report`, '_blank') }
+function openResult(id) { window.location.href = `/?page=workbench&run_id=${encodeURIComponent(id)}` }
 onMounted(load)
 </script>
 
@@ -51,7 +52,7 @@ onMounted(load)
               <td><span class="mono">P{{ Number(run.priority_score || 0).toFixed(1) }}</span><small class="cell-sub">第 {{ run.attempts || 0 }}/{{ run.max_attempts || 3 }} 次尝试</small></td>
               <td>{{ formatTime(run.created_at) }}</td>
               <td><span v-if="run.approved" class="approved-chip"><CheckCircle2 :size="13" />{{ run.approved_by_name || '已通过' }}</span><span v-else class="muted-text">未审批</span></td>
-              <td><button class="text-action" @click="openReport(run.id)"><FileText :size="15" />查看报告</button></td>
+              <td class="history-actions"><button class="text-action" @click="openResult(run.id)"><History :size="15" />打开结果</button><button class="text-action" @click="openReport(run.id)"><FileText :size="15" />查看报告</button></td>
             </tr>
           </tbody>
         </table>
