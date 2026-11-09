@@ -1317,7 +1317,7 @@ textarea { resize: vertical; }
 .advanced-settings summary { min-height: 42px; padding: 9px 10px; }
 .advanced-settings summary strong { font-size: 11.5px; }
 .advanced-settings summary span { font-size: 9.5px; }
-.primary-run { min-height: 50px; margin-top: auto; border-radius: 12px; background: linear-gradient(135deg, #ed7049, #d95431); box-shadow: 0 10px 24px rgba(217,84,49,.22); }
+.primary-run { min-height: 50px; margin-top: 14px; border-radius: 12px; background: linear-gradient(135deg, #ed7049, #d95431); box-shadow: 0 10px 24px rgba(217,84,49,.22); }
 .primary-run:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 13px 28px rgba(217,84,49,.28); }
 .primary-run span { font-size: 12.5px; }
 .primary-run kbd { font-size: 9px; }
@@ -1412,10 +1412,10 @@ input[type="checkbox"], input[type="radio"] {
   }
   .control-panel .primary-run {
     position: sticky;
-    bottom: 0;
+    bottom: 12px;
     z-index: 3;
-    margin-top: auto;
-    box-shadow: 0 10px 24px rgba(217, 84, 49, .24), 0 -10px 18px rgba(255, 254, 249, .92);
+    margin-top: 14px;
+    box-shadow: 0 10px 24px rgba(217, 84, 49, .24), 0 -8px 16px rgba(255, 254, 249, .88);
   }
   .center-stack,
   .agent-rail {
