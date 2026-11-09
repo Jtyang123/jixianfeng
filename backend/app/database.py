@@ -1079,6 +1079,11 @@ class Database:
                 """
                 SELECT m.id AS material_id, m.code, m.name, m.category, m.base_unit,
                        SUM(i.quantity) AS total_quantity,
+                       SUM(CASE WHEN i.expiry_date IS NULL OR i.expiry_date >= CURRENT_DATE
+                                THEN i.quantity ELSE 0 END) AS usable_quantity,
+                       SUM(i.locked_quantity) AS locked_quantity,
+                       SUM(CASE WHEN i.expiry_date IS NULL OR i.expiry_date >= CURRENT_DATE
+                                THEN CASE WHEN i.quantity > i.locked_quantity THEN i.quantity - i.locked_quantity ELSE 0 END ELSE 0 END) AS available_quantity,
                        COUNT(DISTINCT i.warehouse_id) AS warehouse_count,
                        MAX(i.updated_at) AS updated_at
                 FROM inventory i
@@ -1088,6 +1093,24 @@ class Database:
                 ORDER BY m.category, m.name
                 """,
                 (snapshot["id"],),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_active_reservations(self) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.id, r.run_id, r.warehouse_id, w.name AS warehouse_name,
+                       r.material_id, m.code AS material_code, m.name AS material_name,
+                       m.base_unit, r.quantity, r.status, r.expires_at, r.created_at,
+                       runs.status AS run_status
+                FROM inventory_reservations r
+                JOIN materials m ON m.id = r.material_id
+                LEFT JOIN warehouses w ON w.id = r.warehouse_id
+                LEFT JOIN runs ON runs.id = r.run_id
+                WHERE r.status = 'active'
+                ORDER BY r.expires_at, r.run_id, w.id, m.name
+                """
             ).fetchall()
             return [dict(row) for row in rows]
 

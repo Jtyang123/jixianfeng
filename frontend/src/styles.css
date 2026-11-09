@@ -424,6 +424,23 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .segmented-control { display: flex; padding: 3px; background: #f0ede5; border-radius: 7px; }
 .segmented-control button { padding: 6px 10px; color: var(--muted); background: transparent; border: 0; border-radius: 5px; font-size: 9px; }
 .segmented-control button.active { color: var(--ink); background: white; box-shadow: 0 2px 6px rgba(20,40,35,.08); font-weight: 700; }
+.reservation-notice { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 12px; color: #7b4d12; background: #fbf1dc; border: 1px solid #efd8ad; border-radius: 8px; }
+.reservation-notice div { display: flex; flex: 1; flex-direction: column; gap: 3px; }
+.reservation-notice strong { font-size: 9px; }
+.reservation-notice span { color: #8a6a3d; font-size: 8px; }
+.reservation-notice button { padding: 6px 9px; color: #7b4d12; background: #fffaf0; border: 1px solid #e5c98f; border-radius: 6px; font-size: 8px; font-weight: 700; white-space: nowrap; }
+.reservation-list { display: grid; gap: 10px; }
+.reservation-card { padding: 12px; background: #faf8f2; border: 1px solid var(--line); border-radius: 9px; }
+.reservation-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.reservation-card-head div { display: flex; flex-direction: column; gap: 3px; }
+.reservation-card-head strong { font-size: 9px; }
+.reservation-card-head span { color: var(--muted); font-size: 8px; }
+.reservation-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.reservation-items > div { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 8px; background: #fffdf8; border-radius: 6px; }
+.reservation-items span { font-size: 8px; font-weight: 700; }
+.reservation-items small { color: var(--muted); font-size: 7px; }
+.reservation-items strong { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 500 10px 'DM Mono', monospace; }
+@media (max-width: 700px) { .reservation-items { grid-template-columns: 1fr; } .reservation-notice { align-items: flex-start; flex-wrap: wrap; } .reservation-notice div { min-width: calc(100% - 34px); } }
 .stock-number { font: 500 13px 'DM Mono', monospace; }
 .warehouse-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; }
 .warehouse-card { padding: 14px; background: #faf8f2; border: 1px solid var(--line); border-radius: 10px; }

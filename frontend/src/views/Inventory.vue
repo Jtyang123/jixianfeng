@@ -8,11 +8,13 @@ import { api, formatNumber, formatTime } from '../api'
 
 const emit = defineEmits(['refresh-dashboard'])
 const data = ref({ snapshot: null, summary: [], items: [], warehouses: [] })
+const reservationData = ref({ count: 0, items: [], totals: [] })
 const materials = ref([])
 const loading = ref(true)
 const uploading = ref(false)
 const saving = ref(false)
 const deletingId = ref(null)
+const releasingRunId = ref('')
 const error = ref('')
 const message = ref('')
 const importResult = ref(null)
@@ -32,12 +34,30 @@ const warehouseStats = computed(() => data.value.warehouses.map((warehouse) => {
   }
 }))
 const totalRecords = computed(() => data.value.items.length)
-const coldItems = computed(() => data.value.summary.filter((item) => item.category?.includes('医疗')).length)
+const reservationGroups = computed(() => {
+  const groups = new Map()
+  for (const item of reservationData.value.items || []) {
+    if (!groups.has(item.run_id)) {
+      groups.set(item.run_id, {
+        run_id: item.run_id,
+        run_status: item.run_status,
+        expires_at: item.expires_at,
+        items: [],
+      })
+    }
+    groups.get(item.run_id).items.push(item)
+  }
+  return [...groups.values()]
+})
 const selectedMaterial = computed(() => materials.value.find((item) => item.id === Number(stockForm.value.material_id)))
 const canSaveStock = computed(() => stockForm.value.warehouse_id && stockForm.value.material_id && Number(stockForm.value.quantity) > 0)
 
 function statusLabel(status) {
   return ({ available: '可用', locked: '锁定', expired: '过期' })[status] || status
+}
+
+function runStatusLabel(status) {
+  return ({ awaiting_approval: '待审批', approved: '已审批', needs_human: '人工研判', rejected: '已拒绝', failed: '失败' })[status] || status || '未知'
 }
 
 function resetStockForm() {
@@ -55,9 +75,12 @@ function resetStockForm() {
 async function load() {
   loading.value = true
   try {
-    const [inventoryData, materialRows] = await Promise.all([api.inventory(), api.materials()])
+    const [inventoryData, materialRows, reservations] = await Promise.all([
+      api.inventory(), api.materials(), api.inventoryReservations(),
+    ])
     data.value = inventoryData
     materials.value = materialRows
+    reservationData.value = reservations
     if (!stockForm.value.warehouse_id) stockForm.value.warehouse_id = inventoryData.warehouses[0]?.id || ''
     if (!stockForm.value.material_id) stockForm.value.material_id = materialRows[0]?.id || ''
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
@@ -128,6 +151,24 @@ async function removeStock(item) {
     error.value = exc.message
   } finally {
     deletingId.value = null
+  }
+}
+
+async function releaseRunReservation(group) {
+  const confirmed = window.confirm(`确定释放运行 ${group.run_id} 的全部库存预留吗？\n释放后库存会重新进入可用量。`)
+  if (!confirmed) return
+  releasingRunId.value = group.run_id
+  error.value = ''
+  message.value = ''
+  try {
+    const result = await api.releaseReservation(group.run_id)
+    message.value = `已释放 ${result.count || 0} 条库存预留`
+    await load()
+    emit('refresh-dashboard')
+  } catch (exc) {
+    error.value = exc.message
+  } finally {
+    releasingRunId.value = ''
   }
 }
 
@@ -206,22 +247,28 @@ onMounted(load)
       <div class="metric-card metric-card--accent"><Database :size="22" /><div><span>最新快照</span><strong>{{ data.snapshot?.row_count || 0 }}</strong><small>条库存记录</small></div></div>
       <div class="metric-card"><div><span>仓库节点</span><strong>{{ warehouseStats.length }}</strong><small>已纳入路网</small></div></div>
       <div class="metric-card"><div><span>物资品类</span><strong>{{ data.summary.length }}</strong><small>当前汇总</small></div></div>
-      <div class="metric-card"><div><span>医疗相关</span><strong>{{ coldItems }}</strong><small>重点保障</small></div></div>
+      <div class="metric-card"><div><span>库存预留</span><strong>{{ reservationData.count }}</strong><small>条占用记录</small></div></div>
     </section>
 
     <section class="content-card">
       <div class="inventory-toolbar">
         <div><div class="eyebrow">WAREHOUSE INVENTORY</div><h2>库存分布</h2></div>
-        <div class="segmented-control"><button :class="{ active: tab === 'summary' }" @click="tab = 'summary'">物资汇总</button><button :class="{ active: tab === 'warehouse' }" @click="tab = 'warehouse'">仓库视图</button><button :class="{ active: tab === 'details' }" @click="tab = 'details'">库存明细</button></div>
+        <div class="segmented-control"><button :class="{ active: tab === 'summary' }" @click="tab = 'summary'">物资汇总</button><button :class="{ active: tab === 'warehouse' }" @click="tab = 'warehouse'">仓库视图</button><button :class="{ active: tab === 'details' }" @click="tab = 'details'">库存明细</button><button :class="{ active: tab === 'reservations' }" @click="tab = 'reservations'">库存预留 {{ reservationData.count }}</button></div>
+      </div>
+
+      <div v-if="reservationData.count && tab !== 'reservations'" class="reservation-notice">
+        <AlertTriangle :size="17" />
+        <div><strong>当前有 {{ reservationData.count }} 条库存预留</strong><span>预留数量会从可用库存中扣除，审批后的方案才能继续使用。</span></div>
+        <button @click="tab = 'reservations'">查看并释放</button>
       </div>
 
       <div v-if="tab === 'summary'" class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>物资</th><th>分类</th><th>总可用量</th><th>覆盖仓库</th><th>最近更新</th></tr></thead>
+          <thead><tr><th>物资</th><th>分类</th><th>可用量</th><th>已锁定</th><th>总库存</th><th>覆盖仓库</th><th>最近更新</th></tr></thead>
           <tbody><tr v-for="item in data.summary" :key="item.material_id">
             <td><div class="material-cell"><span class="material-symbol">{{ item.name.slice(0, 1) }}</span><div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div></div></td>
             <td><span class="soft-tag">{{ item.category }}</span></td>
-            <td><strong class="stock-number">{{ formatNumber(item.total_quantity) }}</strong> <small>{{ item.base_unit }}</small></td>
+            <td><strong class="stock-number">{{ formatNumber(item.available_quantity) }}</strong> <small>{{ item.base_unit }}</small></td><td>{{ formatNumber(item.locked_quantity) }} <small>{{ item.base_unit }}</small></td><td>{{ formatNumber(item.total_quantity) }} <small>{{ item.base_unit }}</small></td>
             <td>{{ item.warehouse_count }} 个仓库</td>
             <td>{{ formatTime(item.updated_at) }}</td>
           </tr></tbody>
@@ -239,13 +286,13 @@ onMounted(load)
         </article>
       </div>
 
-      <div v-else class="table-wrap">
+      <div v-else-if="tab === 'details'" class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>仓库</th><th>物资</th><th>数量</th><th>批次</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>仓库</th><th>物资</th><th>数量</th><th>可用 / 锁定</th><th>批次</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>
           <tbody><tr v-for="item in data.items" :key="item.id" :class="{ 'inventory-row--editing': editingEntryId === item.id }">
             <td><strong>{{ item.warehouse_name }}</strong><small class="cell-sub">{{ item.warehouse_id }}</small></td>
             <td><strong>{{ item.material_name }}</strong><small class="cell-sub">{{ item.material_code }}</small></td>
-            <td><strong class="stock-number">{{ formatNumber(item.quantity, 2) }}</strong> <small>{{ item.unit }}</small></td>
+            <td><strong class="stock-number">{{ formatNumber(item.quantity, 2) }}</strong> <small>{{ item.unit }}</small></td><td><strong>{{ formatNumber(Math.max(0, item.quantity - item.locked_quantity), 2) }}</strong> <small>可用 · {{ formatNumber(item.locked_quantity, 2) }} 锁定</small></td>
             <td>{{ item.batch_no || '--' }}</td>
             <td>{{ item.expiry_date || '未填写' }}</td>
             <td><span class="inventory-status" :class="`inventory-status--${item.status}`">{{ statusLabel(item.status) }}</span></td>
@@ -253,6 +300,18 @@ onMounted(load)
           </tr></tbody>
         </table>
         <div v-if="!data.items.length" class="empty-table"><FileSpreadsheet :size="30" /><strong>暂无库存明细</strong><span>在上方选择仓库和物资后确认入库。</span></div>
+      </div>
+      <div v-else class="reservation-list">
+        <article v-for="group in reservationGroups" :key="group.run_id" class="reservation-card">
+          <div class="reservation-card-head">
+            <div><strong>运行 {{ group.run_id }}</strong><span>{{ runStatusLabel(group.run_status) }} · 到期 {{ formatTime(group.expires_at) }}</span></div>
+            <button type="button" class="record-delete" :disabled="releasingRunId === group.run_id" @click="releaseRunReservation(group)">{{ releasingRunId === group.run_id ? '释放中...' : '释放该运行预留' }}</button>
+          </div>
+          <div class="reservation-items">
+            <div v-for="item in group.items" :key="item.id"><span>{{ item.material_name }}</span><small>{{ item.warehouse_name || item.warehouse_id }}</small><strong>{{ formatNumber(item.quantity) }} {{ item.base_unit }}</strong></div>
+          </div>
+        </article>
+        <div v-if="!reservationGroups.length" class="empty-table"><CheckCircle2 :size="30" /><strong>当前没有库存预留</strong><span>审批通过后产生的库存占用会显示在这里。</span></div>
       </div>
     </section>
   </div>

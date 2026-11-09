@@ -149,7 +149,11 @@ const materialShortages = computed(() => {
 })
 function materialOf(id) { return materialMap.value[id] || {} }
 function stockOf(id) {
-  return inventoryData.value.summary?.find((item) => item.material_id === id)?.total_quantity || 0
+  const row = inventoryData.value.summary?.find((item) => item.material_id === id)
+  return row?.available_quantity ?? Math.max(0, Number(row?.total_quantity || 0) - Number(row?.locked_quantity || 0))
+}
+function lockedStockOf(id) {
+  return inventoryData.value.summary?.find((item) => item.material_id === id)?.locked_quantity || 0
 }
 function switchRunSource(source) {
   if (source === 'demo') {
@@ -536,7 +540,7 @@ onBeforeUnmount(() => {
                 <div class="material-avatar">{{ materialOf(row.material_id).name?.slice(0, 1) }}</div>
                 <div>
                   <strong>{{ materialOf(row.material_id).name }}</strong>
-                  <small>{{ materialOf(row.material_id).category }} · 库存 {{ formatNumber(stockOf(row.material_id)) }} {{ materialOf(row.material_id).base_unit }}</small>
+                  <small>{{ materialOf(row.material_id).category }} · 可用 {{ formatNumber(stockOf(row.material_id)) }} {{ materialOf(row.material_id).base_unit }}<template v-if="lockedStockOf(row.material_id) > 0"> · 已锁定 {{ formatNumber(lockedStockOf(row.material_id)) }}</template></small>
                 </div>
                 <button class="row-delete" title="移除" @click="removeDemand(index)"><X :size="14" /></button>
               </div>

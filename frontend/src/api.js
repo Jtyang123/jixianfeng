@@ -238,6 +238,7 @@ routeGeometry: (ids) => request(`/api/routes/geometry?ids=${encodeURIComponent(i
   queueMetrics: () => request('/api/queue/metrics'),
   retryJobs: (status = '') => request(`/api/retry-jobs${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   replayRetryJob: (id) => request(`/api/retry-jobs/${encodeURIComponent(id)}/replay`, { method: 'POST' }),
+  inventoryReservations: () => request('/api/inventory/reservations'),
   releaseReservation: (id) => request(`/api/runs/${id}/release-reservation`, { method: 'POST' }),
   approveRun: (id, note = '') => request(`/api/runs/${id}/approve`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),

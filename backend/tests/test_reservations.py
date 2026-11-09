@@ -43,6 +43,11 @@ def test_reservation_prevents_double_commit_and_release_restores_inventory(tmp_p
     assert stored["status"] == "approved"
     assert stored["approved_by_name"] == "值班员"
     assert stored["result"]["approval"]["inventory_reservation"]["count"] == 1
+    summary_row = next(item for item in db.inventory_summary() if item["material_id"] == row["material_id"])
+    assert summary_row["locked_quantity"] >= row["quantity"]
+    assert summary_row["available_quantity"] <= summary_row["usable_quantity"] - row["quantity"]
+    active = db.list_active_reservations()
+    assert any(item["run_id"] == "RUN-RESERVE-1" for item in active)
     with db.connect() as conn:
         locked = conn.execute("SELECT locked_quantity FROM inventory WHERE id=?", (row["id"],)).fetchone()["locked_quantity"]
     assert locked >= row["quantity"]

@@ -828,6 +828,20 @@ def inventory() -> dict:
     }
 
 
+@router.get("/inventory/reservations")
+def inventory_reservations() -> dict:
+    InventoryReservationService(db).cleanup_expired()
+    rows = db.list_active_reservations()
+    totals: dict[int, dict] = {}
+    for row in rows:
+        item = totals.setdefault(row["material_id"], {
+            "material_id": row["material_id"], "material_code": row["material_code"],
+            "material_name": row["material_name"], "base_unit": row["base_unit"], "quantity": 0,
+        })
+        item["quantity"] += float(row.get("quantity") or 0)
+    return {"count": len(rows), "items": rows, "totals": list(totals.values())}
+
+
 def _mutable_inventory_rows(snapshot_id: int | None) -> list[dict]:
     if snapshot_id is None:
         return []

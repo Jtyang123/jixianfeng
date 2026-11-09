@@ -129,6 +129,10 @@ def test_api_run_flow(tmp_path: Path):
     assert approve.json()["approved"] is True
     assert approve.json()["approved_by_name"]
     assert approve.json()["inventory_reservation"]["count"] > 0
+    reservations = client.get("/api/inventory/reservations")
+    assert reservations.status_code == 200
+    assert reservations.json()["count"] > 0
+    assert reservations.json()["items"][0]["run_id"] == run_id
     assert len(approve.json()["tasks"]) > 0
     assert all(task.get("payload") is not None for task in approve.json()["tasks"])
     assert all("payload_json" not in task for task in approve.json()["tasks"])
