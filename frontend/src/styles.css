@@ -1406,6 +1406,8 @@ input[type="checkbox"], input[type="radio"] {
 
 @media (min-width: 901px) {
   .control-panel {
+    align-self: start;
+    height: auto;
     max-height: calc(100vh - 104px);
     overflow-y: auto;
     scrollbar-gutter: stable;
