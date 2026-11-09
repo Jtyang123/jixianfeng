@@ -166,7 +166,11 @@ class AsyncPriorityExecutor:
         priority = int(self.priorities.get(agent_id, self.default_priority))
         queued_at = datetime.now().astimezone()
         await self.queue.put((-priority, self.sequence, agent_id, operation, future, queued_at))
-        return await future
+        try:
+            return await future
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
 
     async def _worker(self) -> None:
         while True:
@@ -179,8 +183,20 @@ class AsyncPriorityExecutor:
             self.active += 1
             self.peak_active = max(self.peak_active, self.active)
             status = "success"
+            operation_task = asyncio.create_task(operation())
+
+            def cancel_operation_if_abandoned(done_future):
+                if done_future.cancelled() and not operation_task.done():
+                    operation_task.cancel()
+
+            future.add_done_callback(cancel_operation_if_abandoned)
             try:
-                result = await operation()
+                result = await operation_task
+            except asyncio.CancelledError:
+                status = "cancelled"
+                if not future.done():
+                    future.cancel()
+                result = None
             except Exception as exc:
                 status = "failed"
                 if not future.done():

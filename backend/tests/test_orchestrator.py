@@ -37,6 +37,8 @@ class FakeAgentArts:
             })
         elif agent_id == "matching_agent":
             text = json.dumps({"recommended_plan_id": payload["plans"][0]["plan_id"]})
+        elif agent_id == "delivery_agent":
+            text = json.dumps({"recommended_plan_id": "PLAN-STALE", "summary": "stale delivery summary", "risk_alerts": ["stale delivery risk"]})
         elif agent_id == "verifier_agent":
             text = json.dumps({"verdict": "pass", "score": 100})
         elif agent_id == "risk_extension":
@@ -44,6 +46,23 @@ class FakeAgentArts:
         else:
             text = json.dumps({"summary": "ok"})
         return {"mode": "agentarts", "agent_id": agent_id, "text": text, "stream_events": 1}
+
+
+class BlockingDemandAgentArts(FakeAgentArts):
+    def __init__(self):
+        super().__init__()
+        self.demand_started = False
+        self.demand_cancelled = False
+
+    async def invoke(self, agent_id, payload, session_id="farmmatch", client=None):
+        if agent_id == "demand_agent":
+            self.demand_started = True
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                self.demand_cancelled = True
+                raise
+        return await super().invoke(agent_id, payload, session_id=session_id, client=client)
 
 
 class FakeLLM:
@@ -54,6 +73,46 @@ class FakeLLM:
     async def reflect(self, agent_id, payload, evidence):
         return {"agent_id": agent_id, "source": "test"}
 
+
+def test_background_demand_task_is_cancelled_when_pipeline_fails(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "background-cancel.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("rainstorm-ii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": scenario["closed_routes"],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"], "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    run_id = "RUN-BACKGROUND-CANCEL"
+    db.create_run(run_id, scenario["id"], request)
+    fake = BlockingDemandAgentArts()
+    monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: fake)
+    monkeypatch.setattr(orchestrator_module, "LLMService", FakeLLM)
+
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError("forced pipeline failure")
+
+    monkeypatch.setattr(orchestrator_module, "generate_plans", fail_generation)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+
+    run = db.get_run(run_id)
+    assert run["status"] == "failed"
+    assert fake.demand_started is True
+    assert fake.demand_cancelled is True
 
 def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "parallel-orchestrator.db", database_url="")
@@ -148,7 +207,9 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert scheduler_metrics["total_tasks"] >= 6
     assert scheduler_metrics["peak_concurrency"] >= 2
     decisions = {item["id"]: item for item in run["result"]["ai_decision_matrix"]}
-    assert decisions["D1"]["applied"] is True
+    assert decisions["D1"]["applied"] is False
+    assert decisions["D1"]["narrative_applied"] is True
+    assert decisions["D1"]["priority_advisory_applied"] is False
     assert decisions["D2"]["applied"] is False
     assert decisions["D2"]["source"] == "deterministic-single-policy"
     assert decisions["D3"]["applied"] is True
@@ -159,6 +220,9 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"after_demand", "post_verification"}
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
     assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])
+    interpretation = run["result"]["delivery"]["agentarts_interpretation"]
+    assert interpretation["review_status"] == "discarded"
+    assert "stale delivery risk" not in run["result"]["delivery"]["risk_alerts"]
 
 
 def test_core_workflow_can_replace_verifier_with_two_agent_vote(tmp_path: Path):

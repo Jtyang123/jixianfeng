@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import math
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable
@@ -14,6 +15,9 @@ from .config import (
     RUN_WORKER_CONCURRENCY,
 )
 from .database import Database, now_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 class QueueFullError(ValueError):
@@ -221,6 +225,7 @@ class RunWorkerPool:
             try:
                 claimed = queue.claim_next(worker_id, self.lease_seconds)
             except Exception:
+                logger.exception("Run queue claim failed for worker %s", worker_id)
                 await asyncio.sleep(self.poll_interval)
                 continue
             if not claimed:

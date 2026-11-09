@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from uuid import uuid4
 
@@ -22,6 +23,8 @@ from .retry_queue import RetryQueueRepository
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
 from .tools import ToolError, ToolService
 from .workflow_engine import WorkflowEngine, WorkflowRepository
+
+logger = logging.getLogger(__name__)
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
 
@@ -76,19 +79,32 @@ def build_ai_decision_matrix(
     delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
     demand_priority_decision = llm_decisions.get("demand_priority") or {}
     weight_decision = llm_decisions.get("matching_weights") or {}
+    demand_priority_applied = bool(demand_priority_decision.get("applied"))
+    demand_priority_advisory = {}
+    demand_narrative_applied = False
+    if isinstance(demand_parsed, dict):
+        demand_priority_advisory = demand_parsed.get("priority_adjustments") or demand_parsed.get("priority_overrides") or {}
+        demand_narrative_applied = bool(
+            demand_parsed.get("summary") or demand_parsed.get("assumptions") or demand_parsed.get("evidence_refs")
+        )
+    demand_source = (
+        str(demand_priority_decision.get("source") or "llm")
+        if demand_priority_applied
+        else ("agentarts-advisory-only" if demand_parsed else (demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic"))
+    )
     matrix = [
         {
-            "id": "D1", "decision": "需求理解与假设补全", "level": "AI 决策",
-            "ai_role": "补充摘要、假设和证据引用；可在相邻一级范围内调整物资优先级",
-            "applied": bool(demand_parsed) or bool(demand_priority_decision.get("applied")),
-            "source": (
-                f"agentarts+llm-priority:{len(demand_priority_decision.get('changes', []))}"
-                if demand_parsed and demand_priority_decision.get("applied")
-                else (demand_trace.get("mode", "local-deterministic") if isinstance(demand_trace, dict) else "local-deterministic")
-            ),
-            "boundary": "物资数量、单位和安置点分配仍由确定性工具计算",
-            "fallback": "本地需求拆分与主数据校验",
-            "local_equivalent": "确定性需求拆分、主数据映射、人口分配与置信度因子计算",
+            "id": "D1", "decision": "\u9700\u6c42\u4f18\u5148\u7ea7\u5efa\u8bae\u4e0e\u89e3\u91ca", "level": "AI \u8f85\u52a9",
+            "ai_role": "\u8865\u5145\u9700\u6c42\u6458\u8981\u3001\u5047\u8bbe\u4e0e\u8bc1\u636e\u5f15\u7528\uff1b\u8fdc\u7aef\u4f18\u5148\u7ea7\u5efa\u8bae\u4ec5\u4f5c\u5ba1\u8ba1\uff0c\u4e0d\u8ffd\u6539\u5df2\u6838\u9a8c\u65b9\u6848",
+            "applied": demand_priority_applied,
+            "source": demand_source,
+            "narrative_applied": demand_narrative_applied,
+            "priority_advisory_received": bool(demand_priority_advisory),
+            "priority_advisory_applied": demand_priority_applied,
+            "priority_advisory": demand_priority_advisory,
+            "boundary": "\u8fdc\u7aef\u4f18\u5148\u7ea7\u5efa\u8bae\u4e0d\u5728\u65b9\u6848\u751f\u6210\u540e\u56de\u5199\uff1b\u7269\u8d44\u6570\u91cf\u3001\u5355\u4f4d\u548c\u5b89\u7f6e\u70b9\u5206\u914d\u4ecd\u7531\u786e\u5b9a\u6027\u5de5\u5177\u8ba1\u7b97",
+            "fallback": "\u672c\u5730\u9700\u6c42\u62c6\u5206\u4e0e\u4e3b\u6570\u636e\u6821\u9a8c",
+            "local_equivalent": "\u786e\u5b9a\u6027\u9700\u6c42\u62c6\u5206\u3001\u4e3b\u6570\u636e\u6620\u5c04\u3001\u4eba\u53e3\u5206\u914d\u4e0e\u7f6e\u4fe1\u5ea6\u56e0\u5b50\u8ba1\u7b97",
         },
         {
             "id": "D2", "decision": "修复策略优先级选择", "level": "AI 决策",
@@ -199,6 +215,13 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     extension_reviews = []
     extension_workflow_runs = []
     agent_executor: AsyncPriorityExecutor | None = None
+    background_tasks: set[asyncio.Task] = set()
+
+    def track_background_task(coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        background_tasks.add(task)
+
+        return task
 
     async def call_agentarts(agent_id: str, payload: dict, trace_id: str | None = None) -> dict:
         if not agentarts.enabled:
@@ -502,7 +525,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
                     ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
                     llm_decisions["demand_priority"] = apply_llm_priority_adjustments(demand_plan, ai_reasoning["demand_agent"])
-                    demand_remote_task = asyncio.create_task(call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence}))
+                    demand_remote_task = track_background_task(call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence}))
                     pipeline_state["demand_agentarts_task"] = demand_remote_task
                     emit(db, run_id, "tool.called", "demand_agent", "\u8c03\u7528\u9700\u6c42\u6807\u51c6\u5316\u5de5\u5177", f"\u751f\u6210 {len(demand_plan['items'])} \u6761\u5b89\u7f6e\u70b9\u9700\u6c42\u3002")
                     emit(db, run_id, "agent.completed", "demand_agent", "\u9700\u6c42\u6807\u51c6\u5316\u5b8c\u6210", demand_plan["summary"], {
@@ -926,17 +949,41 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         if remote_delivery:
             cloud_recommendation = str(remote_delivery.get("recommended_plan_id") or "")
             final_recommendation = str((delivery.get("recommended_plan") or {}).get("plan_id") or "")
-            delivery["agentarts_interpretation"] = {
-                **remote_delivery,
-                "recommendation_consistency": (
-                    "consistent" if not cloud_recommendation or cloud_recommendation == final_recommendation
-                    else "cloud_suggestion_bounded_by_local_rules"
-                ),
-                "final_recommended_plan_id": final_recommendation,
-            }
+            valid_plan_ids = {str(report.get("plan_id") or "") for report in final_verification.get("reports", [])}
+            consistent = not cloud_recommendation or cloud_recommendation == final_recommendation
+            if consistent:
+                for field in ("risk_alerts", "actions"):
+                    incoming = remote_delivery.get(field) or []
+                    if isinstance(incoming, str):
+                        incoming = [incoming]
+                    merged = list(delivery.get(field) or [])
+                    merged.extend(str(item) for item in incoming if item and str(item) not in merged)
+                    delivery[field] = merged
+                if remote_delivery.get("summary"):
+                    delivery["agentarts_summary"] = remote_delivery["summary"]
+                interpretation = {
+                    **remote_delivery,
+                    "review_status": "applied",
+                    "reviewed_delivery_mode": "provisional-parallel",
+                    "recommendation_consistency": "consistent",
+                    "final_recommended_plan_id": final_recommendation,
+                }
+            else:
+                interpretation = {
+                    "review_status": "discarded",
+                    "reviewed_delivery_mode": "provisional-parallel",
+                    "cloud_recommended_plan_id": cloud_recommendation,
+                    "final_recommended_plan_id": final_recommendation,
+                    "recommendation_consistency": (
+                        "discarded-plan-mismatch" if cloud_recommendation in valid_plan_ids else "discarded-stale-plan"
+                    ),
+                    "discarded_fields": ["summary", "risk_alerts", "actions", "alternatives"],
+                    "note": "\u4e91\u7aef\u5ba1\u67e5\u57fa\u4e8e\u5e76\u884c\u9884\u89c8\u5305\uff0c\u4e0e\u6700\u7ec8\u63a8\u8350\u4e0d\u4e00\u81f4\uff0c\u5df2\u4e22\u5f03\u5176\u53d9\u4e8b\u5185\u5bb9\uff0c\u4ec5\u4fdd\u7559\u5ba1\u8ba1\u5143\u6570\u636e\u3002",
+                }
+            delivery["agentarts_interpretation"] = interpretation
             reasoning = ai_reasoning.setdefault("delivery_agent", {})
             if isinstance(reasoning, dict):
-                reasoning["agentarts_interpretation"] = delivery["agentarts_interpretation"]
+                reasoning["agentarts_interpretation"] = interpretation
         ai_decision_matrix = build_ai_decision_matrix(
             agent_decision, agentarts_trace, final_verification, extension_reviews, llm_service.status,
             llm_decisions=llm_decisions,
@@ -1055,9 +1102,18 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "recommended_plan": (delivery.get("recommended_plan") or {}).get("name"),
         })
     except Exception as exc:
-        emit(db, run_id, "run.failed", "orchestrator", "推演执行失败", str(exc))
+        logger.exception("Orchestration failed for run %s", run_id)
+        try:
+            emit(db, run_id, "run.failed", "orchestrator", "\u63a8\u6f14\u6267\u884c\u5931\u8d25", str(exc))
+        except Exception:
+            logger.exception("Failed to persist orchestration failure event for %s", run_id)
         db.update_run(run_id, "failed", {"error": str(exc), "run_id": run_id})
     finally:
+        pending_tasks = [task for task in background_tasks if not task.done()]
+        for task in pending_tasks:
+            task.cancel()
+        if background_tasks:
+            await asyncio.gather(*list(background_tasks), return_exceptions=True)
         if agent_executor is not None:
             await agent_executor.close()
         if http_client is not None:

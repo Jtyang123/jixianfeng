@@ -235,7 +235,7 @@ async def auth_guard(request: Request, call_next):
                 ip=request.client.host if request.client else "",
             )
         except Exception:
-            pass
+            logger.exception("Failed to persist API audit log for %s %s", request.method, path)
     return response
 
 

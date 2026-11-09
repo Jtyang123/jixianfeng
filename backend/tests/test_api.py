@@ -551,6 +551,9 @@ def test_tool_registry_function_calling_and_mcp(tmp_path: Path):
     initialize = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
     assert initialize.status_code == 200
     assert initialize.json()["result"]["serverInfo"]["name"] == "jixianfeng-emergency-tools"
+    notification = client.post("/api/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+    assert notification.status_code == 202
+    assert notification.content == b""
 
     listed = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     assert listed.status_code == 200
@@ -564,3 +567,10 @@ def test_tool_registry_function_calling_and_mcp(tmp_path: Path):
     result = called.json()["result"]
     assert result["tool"]["id"] == "inventory_query"
     assert isinstance(result["result"]["items"], list)
+    invalid_type = client.post("/api/mcp", json={
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "inventory_query", "arguments": {"material_id": "3"}},
+    })
+    assert invalid_type.status_code == 200
+    assert invalid_type.json()["error"]["code"] == -32602
+    assert "integer" in invalid_type.json()["error"]["message"]

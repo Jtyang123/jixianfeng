@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta
 from uuid import uuid4
 
 from .config import RESERVATION_SWEEP_INTERVAL_SECONDS, RESERVATION_TTL_HOURS
 from .database import Database, now_iso
+
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_expiry(value: object, reference: datetime) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=reference.tzinfo)
+    return parsed.astimezone(reference.tzinfo)
 
 
 class InventoryReservationError(ValueError):
@@ -27,20 +44,21 @@ class InventoryReservationService:
             "items": rows,
         }
 
-    def _release_expired(self, conn) -> list[dict]:
+    def _release_expired(self, conn) -> tuple[list[dict], list[str]]:
         now = datetime.now().astimezone()
         rows = conn.execute(
             "SELECT * FROM inventory_reservations WHERE status='active'"
         ).fetchall()
         released: list[dict] = []
+        invalid_expiry: list[str] = []
         affected_runs: set[str] = set()
         for raw in rows:
             row = dict(raw)
-            try:
-                expired = datetime.fromisoformat(row["expires_at"]) <= now
-            except (TypeError, ValueError):
-                expired = True
-            if not expired:
+            expires_at = _parse_expiry(row.get("expires_at"), now)
+            if expires_at is None:
+                invalid_expiry.append(str(row.get("id") or ""))
+                continue
+            if expires_at > now:
                 continue
             conn.execute(
                 "UPDATE inventory SET locked_quantity=MAX(0, locked_quantity-?) WHERE id=?",
@@ -63,19 +81,31 @@ class InventoryReservationService:
                 "UPDATE runs SET approved=0, approved_at=NULL, reserved_at=NULL, status=?, result_json=? WHERE id=?",
                 (next_status, json.dumps(result, ensure_ascii=False), run_id),
             )
-        return released
+        return released, invalid_expiry
 
     def cleanup_expired(self) -> dict:
         with self.db.connect() as conn:
-            released = self._release_expired(conn)
+            released, invalid_expiry = self._release_expired(conn)
         runs = sorted({item["run_id"] for item in released})
+        event_errors: list[dict] = []
         for run_id in runs:
-            self.db.add_event(
-                run_id, "inventory.reservation_expired", "orchestrator", "库存预留",
-                "库存预留已过期释放", f"释放 {sum(1 for item in released if item['run_id'] == run_id)} 条库存预留。",
-                {"released_count": sum(1 for item in released if item['run_id'] == run_id)},
-            )
-        return {"released_count": len(released), "runs": runs, "items": released}
+            count = sum(1 for item in released if item["run_id"] == run_id)
+            try:
+                self.db.add_event(
+                    run_id, "inventory.reservation_expired", "orchestrator", "\u5e93\u5b58\u9884\u7559",
+                    "\u5e93\u5b58\u9884\u7559\u5df2\u8fc7\u671f\u91ca\u653e", f"\u91ca\u653e {count} \u6761\u5e93\u5b58\u9884\u7559\u3002",
+                    {"released_count": count},
+                )
+            except Exception as exc:
+                logger.exception("Failed to record reservation cleanup event for %s", run_id)
+                event_errors.append({"run_id": run_id, "error": str(exc)[:240]})
+        if invalid_expiry:
+            logger.warning("Skipped reservations with missing or invalid expires_at: %s", invalid_expiry)
+        return {
+            "released_count": len(released), "runs": runs, "items": released,
+            "invalid_expiry_count": len(invalid_expiry), "invalid_expiry_ids": invalid_expiry,
+            "event_errors": event_errors,
+        }
 
     def active_for_run(self, run_id: str) -> list[dict]:
         self.cleanup_expired()
@@ -123,7 +153,7 @@ class InventoryReservationService:
                 ).fetchall()
                 for raw in rows:
                     row = dict(raw)
-                    available = max(0.0, float(row["quantity"]) - float(row["locked_quantity"] or 0) - float(row.get("reserved_here") or 0))
+                    available = max(0.0, float(row["quantity"]) - float(row["locked_quantity"] or 0))
                     if available <= 0.001:
                         continue
                     take = min(remaining, available)
@@ -252,7 +282,7 @@ class ReservationMaintenanceWorker:
             try:
                 InventoryReservationService(self.db_provider()).cleanup_expired()
             except Exception:
-                pass
+                logger.exception("Reservation maintenance sweep failed")
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=RESERVATION_SWEEP_INTERVAL_SECONDS)
             except asyncio.TimeoutError:

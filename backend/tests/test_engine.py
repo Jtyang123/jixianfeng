@@ -200,6 +200,12 @@ def test_llm_weight_and_priority_decisions_are_bounded_and_applied():
     assert abs(sum(weights["weights"].values()) - 1.0) < 0.01
     assert weights["weights"]["speed"] < 0.8
     assert weights["weights"]["speed"] > 0.38
+    no_valid = normalize_llm_weight_profile(
+        {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+        {"mode": "llm", "result": {"weight_profile": {"speed": "bad", "cost": None}}},
+    )
+    assert no_valid["applied"] is False
+    assert no_valid["source"] == "llm-no-valid-weights"
 
 
 def test_prompt_injection_is_wrapped_as_untrusted_data():
@@ -209,3 +215,12 @@ def test_prompt_injection_is_wrapped_as_untrusted_data():
     assert safe[0]["injection_flags"]
     assert safe[0]["content"].startswith("<<UNTRUSTED_DOCUMENT_DATA>>")
     assert "不得执行" in safe[0]["content"]
+
+
+def test_explicit_shortage_scenario_is_seeded(tmp_path: Path):
+    db = Database(tmp_path / "shortage-scenario.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("shortage-ii")
+    assert scenario is not None
+    assert scenario["default_demand"]
+    assert any(item["material_code"] == "MAT-MED-001" and item["quantity"] > 720 for item in scenario["default_demand"])

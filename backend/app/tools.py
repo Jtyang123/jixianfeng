@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import socket
@@ -48,6 +49,84 @@ BUILTIN_TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]
+
+
+SENSITIVE_AUDIT_KEYS = {"api_key", "authorization", "password", "secret", "token", "access_key", "secret_key"}
+
+
+def _sanitize_audit_value(value: Any, depth: int = 0) -> Any:
+    if depth > 5:
+        return "<max-depth>"
+    if isinstance(value, dict):
+        return {
+            str(key): ("<redacted>" if str(key).lower() in SENSITIVE_AUDIT_KEYS else _sanitize_audit_value(item, depth + 1))
+            for key, item in list(value.items())[:100]
+        }
+    if isinstance(value, list):
+        rows = [_sanitize_audit_value(item, depth + 1) for item in value[:100]]
+        if len(value) > 100:
+            rows.append({"omitted_items": len(value) - 100})
+        return rows
+    if isinstance(value, str) and len(value) > 2000:
+        return value[:2000] + "<truncated>"
+    return value
+
+
+def _audit_json(value: Any, max_chars: int = 16000) -> str:
+    serialized = json.dumps(_sanitize_audit_value(value), ensure_ascii=False)
+    if len(serialized) <= max_chars:
+        return serialized
+    return json.dumps({
+        "truncated": True,
+        "sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        "preview": serialized[: max_chars // 2],
+    }, ensure_ascii=False)
+
+
+def _json_type_matches(value: Any, expected: str) -> bool:
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    return True
+
+
+def validate_tool_arguments(arguments: dict, schema: dict, path: str = "arguments") -> None:
+    if not isinstance(arguments, dict):
+        raise ToolError(f"{path} 必须是对象")
+    if not schema:
+        return
+    expected_type = str(schema.get("type") or "")
+    if expected_type and not _json_type_matches(arguments, expected_type):
+        raise ToolError(f"{path} 类型必须为 {expected_type}")
+    properties = schema.get("properties") or {}
+    for key in schema.get("required") or []:
+        if key not in arguments:
+            raise ToolError(f"{path}.{key} 为必填参数")
+    if schema.get("additionalProperties") is False:
+        unexpected = sorted(set(arguments) - set(properties))
+        if unexpected:
+            raise ToolError(f"{path} 包含未定义参数：{', '.join(unexpected)}")
+    for key, value in arguments.items():
+        child = properties.get(key)
+        if not isinstance(child, dict):
+            continue
+        child_type = str(child.get("type") or "")
+        if child_type and not _json_type_matches(value, child_type):
+            raise ToolError(f"{path}.{key} 类型必须为 {child_type}")
+        if child_type in {"integer", "number"} and value is not None:
+            if "minimum" in child and value < child["minimum"]:
+                raise ToolError(f"{path}.{key} 不能小于 {child['minimum']}")
+            if "maximum" in child and value > child["maximum"]:
+                raise ToolError(f"{path}.{key} 不能大于 {child['maximum']}")
 
 
 def _matches(item: dict, arguments: dict) -> bool:
@@ -234,8 +313,8 @@ class ToolRepository:
                 """INSERT INTO tool_calls
                    (id, tool_id, session_id, status, arguments_json, result_json, latency_ms, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (call_id, tool_id, session_id, status, json.dumps(arguments, ensure_ascii=False),
-                 json.dumps(result, ensure_ascii=False), latency_ms, now_iso()),
+                (call_id, tool_id, session_id, status, _audit_json(arguments),
+                 _audit_json(result), latency_ms, now_iso()),
             )
         return {"id": call_id, "tool_id": tool_id, "status": status, "latency_ms": latency_ms}
 class ToolService:
@@ -270,6 +349,7 @@ class ToolService:
         arguments = arguments or {}
         started = time.perf_counter()
         try:
+            validate_tool_arguments(arguments, tool.get("input_schema") or {})
             if tool["kind"] == "builtin":
                 result = self._builtin(tool_id, arguments)
             elif tool["kind"] == "http":

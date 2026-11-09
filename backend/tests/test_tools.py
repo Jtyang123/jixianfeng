@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app import tools as tools_module
-from app.tools import ToolError, mcp_call_remote, validate_tool_endpoint
+from app.tools import ToolError, mcp_call_remote, validate_tool_arguments, validate_tool_endpoint
 
 
 def test_tool_endpoint_rejects_link_local_ssrf(monkeypatch):
@@ -50,3 +50,15 @@ def test_mcp_client_performs_initialize_session_and_tools_call(monkeypatch):
     assert result["protocol_version"] == "2024-11-05"
     assert result["session_id"] == "session-123"
     assert result["response"]["result"]["content"][0]["text"] == "ok"
+
+
+def test_tool_argument_schema_rejects_coerced_material_id():
+    schema = {
+        "type": "object",
+        "properties": {"material_id": {"type": "integer"}, "status": {"type": "string"}},
+        "additionalProperties": False,
+    }
+    with pytest.raises(ToolError, match="integer"):
+        validate_tool_arguments({"material_id": "3"}, schema)
+    with pytest.raises(ToolError, match="extra"):
+        validate_tool_arguments({"status": "available", "extra": True}, schema)

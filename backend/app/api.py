@@ -345,9 +345,11 @@ async def invoke_tool(tool_id: str, payload: ToolInvokeRequest, request: Request
     return result
 
 
-@router.post("/mcp")
-async def mcp_endpoint(payload: dict, x_integration_key: str | None = Header(default=None, alias="X-Integration-Key")) -> dict:
+@router.post("/mcp", response_model=None)
+async def mcp_endpoint(payload: dict, x_integration_key: str | None = Header(default=None, alias="X-Integration-Key")):
     expected = os.getenv("INTEGRATION_API_KEY", "").strip()
+    if str(payload.get("method") or "").startswith("notifications/"):
+        return Response(status_code=202)
     if expected and x_integration_key != expected:
         return {"jsonrpc": "2.0", "id": payload.get("id"), "error": {"code": -32001, "message": "接入密钥无效"}}
     return await ToolService(db).handle_mcp(payload)

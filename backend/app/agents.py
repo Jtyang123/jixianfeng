@@ -90,18 +90,26 @@ def normalize_llm_weight_profile(default_weights: dict, reasoning: dict) -> dict
     if not isinstance(raw, dict):
         return {"applied": False, "weights": defaults, "source": "user-weights", "raw": {}}
     proposed = {}
+    valid_values = 0
     for key in ("speed", "cost", "risk"):
-        value = _num(raw.get(key), defaults[key])
+        value = _num(raw.get(key), float("nan"))
+        if not math.isfinite(value):
+            proposed[key] = defaults[key]
+            continue
+        valid_values += 1
         proposed[key] = max(0.05, min(0.80, value))
+    if not valid_values:
+        return {"applied": False, "weights": defaults, "source": "llm-no-valid-weights", "raw": {}}
     proposed_total = sum(proposed.values()) or 1.0
     proposed = {key: value / proposed_total for key, value in proposed.items()}
     blended = {key: round(defaults[key] * 0.5 + proposed[key] * 0.5, 4) for key in defaults}
     blended_total = sum(blended.values()) or 1.0
     blended = {key: round(value / blended_total, 4) for key, value in blended.items()}
+    applied = any(abs(blended[key] - defaults[key]) > 0.0001 for key in defaults)
     return {
-        "applied": True,
+        "applied": applied,
         "weights": blended,
-        "source": reasoning.get("mode", "llm"),
+        "source": reasoning.get("mode", "llm") if applied else "llm-no-weight-change",
         "raw": proposed,
         "boundary": "用户权重与 LLM 建议各占 50%，仅用于已核验方案排序，不改变核验结论",
     }

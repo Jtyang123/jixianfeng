@@ -571,6 +571,7 @@ class Database:
             self._ensure_document_columns(conn)
             self._ensure_workflow_columns(conn)
             self._ensure_run_columns(conn)
+            self._ensure_demo_shortage_scenario(conn)
 
     def reset_demo(self) -> None:
         with self.connect() as conn:
@@ -728,6 +729,33 @@ class Database:
                 gps_source = COALESCE(NULLIF(gps_source, ''), 'warehouse')
             WHERE lat IS NULL OR lng IS NULL OR gps_source IS NULL OR gps_source = ''
             """
+        )
+
+    def _ensure_demo_shortage_scenario(self, conn) -> None:
+        if not SEED_DEMO:
+            return
+        existing = conn.execute("SELECT id FROM scenarios WHERE id = 'shortage-ii'").fetchone()
+        if existing:
+            return
+        demand = [
+            {"material_code": "MAT-WATER-001", "quantity": 60000, "priority": "P0", "deadline_hours": 6},
+            {"material_code": "MAT-MED-001", "quantity": 900, "priority": "P0", "deadline_hours": 8},
+            {"material_code": "MAT-GEN-001", "quantity": 60, "priority": "P1", "deadline_hours": 12},
+        ]
+        conn.execute(
+            """
+            INSERT INTO scenarios
+            (id, name, description, event_type, severity, location, lat, lng,
+             affected_population, closed_routes, default_demand, risk_notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "shortage-ii", "库存缺口与跨仓压力演练",
+                "道路正常但库存总量不足，用于演示跨仓拆分、缺口识别和转人工研判。",
+                "物资短缺", "II级", "武汉市·模拟多片区", 30.5800, 114.3100,
+                15000, "[]", _json(demand),
+                "该场景刻意设置超过库存上限的需求，预期经过多轮匹配后转人工研判。",
+            ),
         )
 
     def _ensure_route_columns(self, conn) -> None:

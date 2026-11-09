@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -79,3 +80,53 @@ def test_expired_reservation_is_released_and_run_marked(tmp_path: Path):
     with db.connect() as conn:
         locked = conn.execute("SELECT locked_quantity FROM inventory WHERE id=?", (row["id"],)).fetchone()["locked_quantity"]
     assert locked == 0
+
+
+def test_invalid_or_naive_expiry_does_not_release_active_reservations(tmp_path: Path):
+    db = Database(tmp_path / "reservation-invalid-expiry.db", database_url="")
+    db.initialize()
+    rows = [item for item in db.inventory_rows(db.latest_snapshot()["id"]) if item["quantity"] >= 5][:3]
+    plan = {
+        "plan_id": "PLAN-INVALID-EXPIRY",
+        "assignments": [
+            {
+                "warehouse_id": item["warehouse_id"],
+                "warehouse_name": item["warehouse_name"],
+                "material_id": item["material_id"],
+                "quantity": 5,
+            }
+            for item in rows
+        ],
+        "metrics": {},
+    }
+    db.create_run("RUN-INVALID-EXPIRY", "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+    db.update_run("RUN-INVALID-EXPIRY", "awaiting_approval", {
+        "delivery": {"recommended_plan": {"plan_id": plan["plan_id"]}},
+        "rounds": [{"plans": [plan]}],
+    })
+    service = InventoryReservationService(db)
+    reserved = service.reserve("RUN-INVALID-EXPIRY", plan, {"id": 1, "username": "admin"}, "test")
+    assert reserved["count"] == 3
+    naive_future = (datetime.now() + timedelta(days=1)).replace(tzinfo=None).isoformat(sep=" ")
+    values = [naive_future, "not-a-timestamp", ""]
+    with db.connect() as conn:
+        reservations = conn.execute(
+            "SELECT id FROM inventory_reservations WHERE run_id=? ORDER BY id",
+            ("RUN-INVALID-EXPIRY",),
+        ).fetchall()
+        for row, value in zip(reservations, values):
+            conn.execute("UPDATE inventory_reservations SET expires_at=? WHERE id=?", (value, row["id"]))
+    cleaned = service.cleanup_expired()
+    assert cleaned["released_count"] == 0
+    assert cleaned["invalid_expiry_count"] == 2
+    with db.connect() as conn:
+        locked = conn.execute(
+            "SELECT SUM(locked_quantity) AS total FROM inventory WHERE id IN (?, ?, ?)",
+            tuple(item["id"] for item in rows),
+        ).fetchone()["total"]
+        statuses = [row["status"] for row in conn.execute(
+            "SELECT status FROM inventory_reservations WHERE run_id=?",
+            ("RUN-INVALID-EXPIRY",),
+        ).fetchall()]
+    assert locked == 15
+    assert statuses == ["active", "active", "active"]

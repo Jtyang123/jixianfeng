@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import re
+import time
 from collections import Counter
 from pathlib import Path
 from zipfile import ZipFile
@@ -14,10 +16,13 @@ import httpx
 from openpyxl import load_workbook
 
 from .config import (
-    EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_DIMENSIONS,
+    EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_BATCH_SIZE, EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT,
 )
 from .database import Database, now_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseError(ValueError):
@@ -232,6 +237,38 @@ class EmbeddingService:
             "default_mode": "remote-semantic" if self.remote else "offline-lexical-hash",
         }
 
+    def _hash_embedding(self, text: str) -> tuple[list[float], dict]:
+        vector = embed_text(text, dimensions=self.dimensions)
+        return vector, {"provider": "hash", "model": "domain-hash-v1", "dimensions": self.dimensions, "mode": "fallback"}
+
+    def embed_many(self, texts: list[str]) -> list[tuple[list[float], dict]]:
+        items = [str(text or "") for text in texts]
+        if not items:
+            return []
+        if self.remote:
+            vectors: list[list[float]] = []
+            try:
+                headers = {"Content-Type": "application/json"}
+                if EMBEDDING_API_KEY:
+                    headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
+                for start in range(0, len(items), EMBEDDING_BATCH_SIZE):
+                    batch = items[start:start + EMBEDDING_BATCH_SIZE]
+                    response = httpx.post(
+                        f"{EMBEDDING_BASE_URL}/embeddings", headers=headers,
+                        json={"model": self.model, "input": batch, "dimensions": self.dimensions},
+                        timeout=EMBEDDING_TIMEOUT,
+                    )
+                    response.raise_for_status()
+                    payload = sorted(response.json().get("data") or [], key=lambda item: int(item.get("index") or 0))
+                    if len(payload) != len(batch):
+                        raise ValueError("embedding response count mismatch")
+                    vectors.extend([float(value) for value in item["embedding"]] for item in payload)
+                meta = {"provider": self.provider, "model": self.model, "dimensions": self.dimensions, "mode": "remote"}
+                return [(vector, dict(meta, dimensions=len(vector))) for vector in vectors]
+            except Exception:
+                logger.warning("Remote batch embedding failed; using deterministic hash fallback", exc_info=True)
+        return [self._hash_embedding(text) for text in items]
+
     def embed(self, text: str) -> tuple[list[float], dict]:
         if self.remote:
             try:
@@ -248,9 +285,8 @@ class EmbeddingService:
                 if vector:
                     return vector, {"provider": self.provider, "model": self.model, "dimensions": len(vector), "mode": "remote"}
             except Exception:
-                pass
-        vector = embed_text(text, dimensions=self.dimensions)
-        return vector, {"provider": "hash", "model": "domain-hash-v1", "dimensions": self.dimensions, "mode": "fallback"}
+                logger.warning("Remote embedding failed; using deterministic hash fallback", exc_info=True)
+        return self._hash_embedding(text)
 
 def _query_terms(query: str) -> list[str]:
     text = str(query or "").lower()
@@ -316,6 +352,7 @@ class KnowledgeRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
         self.embedding = EmbeddingService()
+        self._corpus_cache: dict[tuple[str, int], dict] = {}
 
     def insert_document(self, name: str, category: str, source: str, chunks: list[str] | list[dict]) -> dict:
         if not chunks:
@@ -344,10 +381,10 @@ class KnowledgeRepository:
                 "INSERT INTO knowledge_documents (name, category, source, status, content_hash, chunk_count, created_at) VALUES (?, ?, ?, 'active', ?, ?, ?)",
                 (name, category or "其他", source or "upload", content_hash, len(normalized), now),
             )
-            for index, item in enumerate(normalized, start=1):
-                content = str(item.get("text") or item.get("content") or "")
+            contents = [str(item.get("text") or item.get("content") or "") for item in normalized]
+            embedded = self.embedding.embed_many(contents)
+            for index, (item, content, (vector, meta)) in enumerate(zip(normalized, contents, embedded), start=1):
                 title = str(item.get("section") or (content.splitlines()[0] if content.splitlines() else f"{name} 第 {index} 段"))[:120]
-                vector, meta = self.embedding.embed(content)
                 security_flags = detect_prompt_injection(content)
                 conn.execute(
                     """INSERT INTO knowledge_chunks
@@ -361,6 +398,7 @@ class KnowledgeRepository:
                      int(item.get("char_start") or 0), int(item.get("char_end") or len(content)),
                      json.dumps(security_flags, ensure_ascii=False), now),
                 )
+        self._corpus_cache.clear()
         return self.get_document(document_id) or {}
 
     def list_documents(self) -> list[dict]:
@@ -388,6 +426,7 @@ class KnowledgeRepository:
                 return False
             conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM knowledge_documents WHERE id = ?", (document_id,))
+        self._corpus_cache.clear()
         return True
 
     def search(self, query: str, top_k: int = 4) -> list[dict]:
@@ -396,32 +435,65 @@ class KnowledgeRepository:
         if not terms and not semantic_query:
             return []
         query_vector, query_meta = self.embedding.embed(query)
+        cache_key = (str(query_meta["provider"]), int(query_meta["dimensions"]))
         with self.db.connect() as conn:
-            rows = conn.execute(
-                """SELECT c.*, d.name AS document_name, d.category
+            stats = conn.execute(
+                """SELECT COUNT(*) AS row_count, COALESCE(MAX(c.id), 0) AS max_id
                    FROM knowledge_chunks c
                    JOIN knowledge_documents d ON d.id = c.document_id
-                   WHERE d.status = 'active'
-                   ORDER BY c.id DESC LIMIT 5000"""
-            ).fetchall()
-            documents = []
-            for raw in rows:
-                item = dict(raw)
-                try:
-                    embedding = json.loads(item.get("embedding_json") or "[]")
-                except (TypeError, json.JSONDecodeError):
-                    embedding = []
-                if len(embedding) != query_meta["dimensions"] or item.get("embedding_provider") != query_meta["provider"]:
-                    embedding, stored_meta = self.embedding.embed(str(item.get("content") or ""))
-                    conn.execute(
+                   WHERE d.status = 'active'"""
+            ).fetchone()
+            fingerprint = (int(stats["row_count"]), int(stats["max_id"]))
+        cached = self._corpus_cache.get(cache_key)
+        if cached and cached.get("fingerprint") == fingerprint and cached.get("expires_at", 0) > time.monotonic():
+            documents = [dict(item) for item in cached.get("documents", [])]
+        else:
+            with self.db.connect() as conn:
+                rows = conn.execute(
+                    """SELECT c.id, c.document_id, c.seq, c.title, c.content, c.embedding_json,
+                              c.embedding_provider, c.embedding_model, c.embedding_dim,
+                              c.page_no, c.section, c.char_start, c.char_end, c.security_flags_json,
+                              d.name AS document_name, d.category
+                       FROM knowledge_chunks c
+                       JOIN knowledge_documents d ON d.id = c.document_id
+                       WHERE d.status = 'active'
+                       ORDER BY c.id DESC LIMIT 5000"""
+                ).fetchall()
+                documents = []
+                stale_documents: list[tuple[dict, str]] = []
+                for raw in rows:
+                    item = dict(raw)
+                    try:
+                        embedding = json.loads(item.get("embedding_json") or "[]")
+                    except (TypeError, json.JSONDecodeError):
+                        embedding = []
+                    content = str(item.get("content") or "")
+                    if len(embedding) != query_meta["dimensions"] or item.get("embedding_provider") != query_meta["provider"]:
+                        stale_documents.append((item, content))
+                    else:
+                        item["embedding"] = embedding
+                        item["tokens"] = Counter(_semantic_terms(content))
+                        documents.append(item)
+                if stale_documents:
+                    embedded = self.embedding.embed_many([content for _, content in stale_documents])
+                    update_rows = []
+                    for (item, content), (embedding, stored_meta) in zip(stale_documents, embedded):
+                        update_rows.append((
+                            json.dumps(embedding), stored_meta["provider"], stored_meta["model"], stored_meta["dimensions"], item["id"],
+                        ))
+                        item["embedding"] = embedding
+                        item["tokens"] = Counter(_semantic_terms(content))
+                        documents.append(item)
+                    conn.executemany(
                         """UPDATE knowledge_chunks SET embedding_json=?, embedding_provider=?,
                            embedding_model=?, embedding_dim=? WHERE id=?""",
-                        (json.dumps(embedding), stored_meta["provider"], stored_meta["model"], stored_meta["dimensions"], item["id"]),
+                        update_rows,
                     )
-                item["embedding"] = embedding
-                item["tokens"] = Counter(_semantic_terms(str(item.get("content") or "")))
-                documents.append(item)
-
+            self._corpus_cache[cache_key] = {
+                "fingerprint": fingerprint,
+                "expires_at": time.monotonic() + 30.0,
+                "documents": [dict(item) for item in documents],
+            }
         token_frequency: Counter = Counter()
         for item in documents:
             token_frequency.update(item["tokens"].keys())
