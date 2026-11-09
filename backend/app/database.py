@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import DATABASE_URL, DB_PATH, SEED_DEMO
+from .config import DATABASE_URL, DB_PATH, DEMO_INVENTORY_MULTIPLIER, SEED_DEMO
 
 
 def now_iso() -> str:
@@ -845,6 +845,7 @@ class Database:
         for material_code, per_warehouse in inventory_by_material.items():
             material_id = material_ids[material_code]
             for wh_id, quantity in per_warehouse.items():
+                quantity = round(quantity * DEMO_INVENTORY_MULTIPLIER, 2)
                 unit = base_units[material_code]
                 inventory_rows.append((
                     snapshot_id, wh_id, material_id, quantity, unit,

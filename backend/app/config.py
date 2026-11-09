@@ -39,6 +39,7 @@ AUTH_LOCKOUT_MINUTES = int(os.getenv("AUTH_LOCKOUT_MINUTES", "15"))
 AUTH_BOOTSTRAP_USERNAME = os.getenv("AUTH_BOOTSTRAP_USERNAME", "admin").strip()
 AUTH_BOOTSTRAP_PASSWORD = os.getenv("AUTH_BOOTSTRAP_PASSWORD", "")
 SEED_DEMO = os.getenv("FARMMATCH_SEED_DEMO", "true").strip().lower() == "true"
+DEMO_INVENTORY_MULTIPLIER = max(0.1, float(os.getenv("DEMO_INVENTORY_MULTIPLIER", "2.0")))
 AGENT_RUNTIME = os.getenv("AGENT_RUNTIME", "local").strip().lower()
 DEMO_PACING_FACTOR = max(0.0, min(1.0, float(os.getenv("DEMO_PACING_FACTOR", "0.2"))))
 AGENTARTS_ENABLED = os.getenv("AGENTARTS_ENABLED", "false").strip().lower() == "true"
