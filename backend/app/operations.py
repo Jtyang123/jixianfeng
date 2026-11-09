@@ -283,7 +283,12 @@ class OperationsRepository:
                      payload, created_at, created_at),
                 )
             rows = conn.execute("SELECT * FROM dispatch_tasks WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
-            return [dict(row) for row in rows]
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json") or "{}")
+                result.append(item)
+            return result
 
     def list_tasks(self, run_id: str | None = None) -> list[dict]:
         with self.db.connect() as conn:

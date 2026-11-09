@@ -764,7 +764,7 @@ onBeforeUnmount(() => {
             <div class="task-tracking-head"><div><div class="eyebrow">DISPATCH EXECUTION</div><h3>执行任务跟踪</h3><p>更新任务状态后，系统会记录负责人和最后更新时间。</p></div><span class="workflow-chip">{{ dispatchTasks.length }} 条任务</span></div>
             <div v-if="dispatchTasks.length" class="dispatch-task-block dispatch-task-block--page">
               <div v-for="task in dispatchTasks" :key="task.id" class="dispatch-task-row">
-                <div><strong>{{ task.title }}</strong><span>{{ task.assignee || '待分配' }} · {{ task.payload.route_name || '' }} · {{ task.payload.vehicle_trips || 0 }} 趟</span></div>
+                <div><strong>{{ task.title }}</strong><span>{{ task.assignee || '待分配' }} · {{ task.payload?.route_name || '' }} · {{ task.payload?.vehicle_trips || 0 }} 趟</span></div>
                 <select :value="task.status" @change="updateTaskStatus(task, $event.target.value)">
                   <option value="pending">待执行</option><option value="assigned">已分配</option>
                   <option value="in_progress">执行中</option><option value="completed">已完成</option>
