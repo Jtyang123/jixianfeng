@@ -606,7 +606,7 @@ onBeforeUnmount(() => {
             <div class="status-metrics">
               <span><PackageOpen :size="15" />{{ demandItems.length }} 类物资</span>
               <span><Truck :size="15" />{{ formatNumber(totalWeight, 1) }} kg</span>
-              <span><Clock3 :size="15" />云端推理通常 45–90 秒</span>
+              <span><Clock3 :size="15" />云端智能体并行推理中</span>
               <button v-if="runResult" class="view-result-action" @click="scrollToResult">查看结果 <ChevronDown :size="14" /></button>
             </div>
           </div>
@@ -673,7 +673,13 @@ onBeforeUnmount(() => {
             <div class="plan-metrics">
               <div :class="{ 'plan-metric--best': report.plan_id === cheapestPlanId }"><span>预估成本 <em v-if="report.plan_id === cheapestPlanId">最低</em></span><strong>¥{{ formatNumber(report.metrics.total_cost) }}</strong></div>
               <div :class="{ 'plan-metric--best': report.plan_id === fastestPlanId }"><span>最长时效 <em v-if="report.plan_id === fastestPlanId">最快</em></span><strong>{{ report.metrics.max_eta_hours }}<small>h</small></strong></div>
+              <div><span>平均时效</span><strong>{{ report.metrics.avg_eta_hours ?? '—' }}<small>h</small></strong></div>
               <div><span>需求覆盖</span><strong>{{ (report.metrics.coverage * 100).toFixed(1) }}<small>%</small></strong></div>
+            </div>
+            <div class="plan-cost-line">
+              <span>¥{{ formatNumber(report.metrics.cost_per_trip) }} / 趟</span>
+              <span>¥{{ formatNumber(report.metrics.cost_per_ton_km) }} / 吨公里</span>
+              <em>演练估算</em>
             </div>
             <div class="plan-foot">
               <span><Truck :size="13" />{{ report.metrics.vehicle_trips }} 趟</span>
@@ -707,9 +713,22 @@ onBeforeUnmount(() => {
           <div v-if="resultTab === 'detail'" class="detail-content">
             <div class="detail-summary-row">
               <div><Wallet :size="17" /><span>总成本</span><strong>¥{{ formatNumber(selectedReport.metrics.total_cost) }}</strong></div>
+              <div><Clock3 :size="17" /><span>平均时效</span><strong>{{ selectedReport.metrics.avg_eta_hours ?? '—' }}h</strong></div>
               <div><Clock3 :size="17" /><span>最长时效</span><strong>{{ selectedReport.metrics.max_eta_hours }}h</strong></div>
               <div><ShieldCheck :size="17" /><span>核验评分</span><strong>{{ selectedReport.verification.score }}</strong></div>
-              <div><PackageOpen :size="17" /><span>分配条目</span><strong>{{ selectedReport.assignments.length }}</strong></div>
+            </div>
+            <div v-if="selectedReport.cost_breakdown" class="cost-breakdown-panel">
+              <div class="cost-breakdown-head">
+                <div><strong>成本口径</strong><span>{{ selectedReport.cost_breakdown.basis }}</span></div>
+                <em>非承运商报价</em>
+              </div>
+              <div class="cost-breakdown-grid">
+                <div><span>固定出车</span><strong>¥{{ formatNumber(selectedReport.cost_breakdown.fixed_dispatch_cost) }}</strong></div>
+                <div><span>里程与时长</span><strong>¥{{ formatNumber(selectedReport.cost_breakdown.distance_time_cost) }}</strong></div>
+                <div><span>策略调整</span><strong>¥{{ formatNumber(selectedReport.cost_breakdown.strategy_adjustment) }}</strong></div>
+                <div><span>合计</span><strong>¥{{ formatNumber(selectedReport.cost_breakdown.total_cost) }}</strong></div>
+              </div>
+              <p>{{ selectedReport.cost_breakdown.formula }}。当前估算不含{{ selectedReport.cost_breakdown.excludes.join('、') }}，仅用于方案间比较。</p>
             </div>
             <div class="assignment-toolbar">
               <div class="demand-material-strip"><span>本次需求物资</span><em v-for="material in runDemandMaterials" :key="material.material_id">{{ material.name }}</em></div>

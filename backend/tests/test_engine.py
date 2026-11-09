@@ -48,8 +48,16 @@ def test_two_round_verification_loop(tmp_path: Path):
     demand_material_ids = {item["material_id"] for item in demand["items"]}
     for plan in plans_v2:
         assert {assignment["material_id"] for assignment in plan["assignments"]} <= demand_material_ids
-    assert metrics_by_strategy["speed"]["assignment_count"] > metrics_by_strategy["cost"]["assignment_count"]
-    assert len({metrics["assignment_count"] for metrics in metrics_by_strategy.values()}) >= 2
+    assert metrics_by_strategy["speed"]["max_eta_hours"] <= metrics_by_strategy["balanced"]["max_eta_hours"]
+    assert metrics_by_strategy["speed"]["max_eta_hours"] <= metrics_by_strategy["cost"]["max_eta_hours"]
+    assert metrics_by_strategy["cost"]["total_cost"] <= metrics_by_strategy["balanced"]["total_cost"]
+    assert metrics_by_strategy["cost"]["total_cost"] <= metrics_by_strategy["speed"]["total_cost"]
+    for plan in plans_v2:
+        breakdown = plan["cost_breakdown"]
+        assert breakdown["total_cost"] == plan["metrics"]["total_cost"]
+        assert round(breakdown["fixed_dispatch_cost"] + breakdown["distance_time_cost"] + breakdown["strategy_adjustment"], 2) == breakdown["total_cost"]
+        assert plan["metrics"]["avg_eta_hours"] > 0
+        assert plan["metrics"]["cost_per_trip"] > 0
     assert all(plan["metrics"]["coverage"] == 1.0 for plan in plans_v2)
     assert all(plan.get("policy_note") for plan in plans_v2)
     verification_v2 = verify_plans(plans_v2, demand, inventory, routes, vehicles, scenario["closed_routes"])

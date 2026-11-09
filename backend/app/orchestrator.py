@@ -311,6 +311,29 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         )
         remembered_policy = str(remembered.get("policy") or "") if isinstance(remembered, dict) else ""
         memory_selected = remembered_policy if remembered_policy in allowed_ids else ""
+        repairable = [item for item in allowed if item["id"] != "escalate_human"]
+        if len(repairable) <= 1:
+            selected = repairable[0]["id"] if repairable else "escalate_human"
+            source = "deterministic-single-policy" if repairable else "deterministic-no-safe-repair"
+            result = {
+                "selected_policy": selected,
+                "allowed_policies": allowed,
+                "source": source,
+                "memory_key": memory_selected if memory_selected == selected else "",
+                "rationale": (
+                    f"\u5f53\u524d\u53ea\u6709 {selected} \u4e00\u4e2a\u5b89\u5168\u81ea\u52a8\u4fee\u590d\u7b56\u7565\uff0c\u76f4\u63a5\u6267\u884c\u786e\u5b9a\u6027\u7b56\u7565\uff0c\u4e0d\u518d\u7b49\u5f85\u4e91\u7aef\u7b56\u7565\u9009\u62e9\u3002"
+                    if repairable
+                    else "\u5f53\u524d\u6ca1\u6709\u53ef\u5b89\u5168\u81ea\u52a8\u6267\u884c\u7684\u4fee\u590d\u7b56\u7565\uff0c\u76f4\u63a5\u8f6c\u4eba\u5de5\u7814\u5224\u3002"
+                ),
+                "attempt": next_attempt,
+            }
+            agentarts_trace["rework_policy"] = {
+                "mode": source,
+                "selected_policy": selected,
+                "source": source,
+            }
+            emit(db, run_id, "ai.rework_policy", "rework_policy", "\u4fee\u590d\u7b56\u7565\u5df2\u786e\u5b9a", result["rationale"], result)
+            return result
         if not agentarts.enabled:
             selected = memory_selected or default_policy
             return {
@@ -479,25 +502,13 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
                     ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
                     llm_decisions["demand_priority"] = apply_llm_priority_adjustments(demand_plan, ai_reasoning["demand_agent"])
-                    demand_remote = await call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence})
-                    remote_demand = demand_remote.get("parsed") if isinstance(demand_remote, dict) else None
-                    if remote_demand:
-                        demand_plan["agentarts_interpretation"] = remote_demand
-                        agentarts_priority = apply_llm_priority_adjustments(
-                            demand_plan, {"mode": "agentarts", "result": remote_demand}
-                        )
-                        if agentarts_priority.get("applied"):
-                            llm_decisions["demand_priority"] = agentarts_priority
-                        if remote_demand.get("summary"):
-                            demand_plan["summary"] = remote_demand["summary"]
-                        if remote_demand.get("assumptions"):
-                            demand_plan["assumptions"] = list(dict.fromkeys(demand_plan["assumptions"] + [str(item) for item in remote_demand["assumptions"]]))
-                        if remote_demand.get("evidence_refs"):
-                            demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [str(item) for item in remote_demand["evidence_refs"]]))
-                    emit(db, run_id, "tool.called", "demand_agent", "调用需求标准化工具", f"生成 {len(demand_plan['items'])} 条安置点需求。")
-                    emit(db, run_id, "agent.completed", "demand_agent", "需求标准化完成", demand_plan["summary"], {
+                    demand_remote_task = asyncio.create_task(call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence}))
+                    pipeline_state["demand_agentarts_task"] = demand_remote_task
+                    emit(db, run_id, "tool.called", "demand_agent", "\u8c03\u7528\u9700\u6c42\u6807\u51c6\u5316\u5de5\u5177", f"\u751f\u6210 {len(demand_plan['items'])} \u6761\u5b89\u7f6e\u70b9\u9700\u6c42\u3002")
+                    emit(db, run_id, "agent.completed", "demand_agent", "\u9700\u6c42\u6807\u51c6\u5316\u5b8c\u6210", demand_plan["summary"], {
                         "items": len(demand_plan["items"]),
                         "confidence": demand_plan["confidence"],
+                        "agentarts_mode": "parallel-advisory",
                     })
                     pipeline_state["demand"] = demand_plan
                 if not pipeline_state["demand_workflows_done"]:
@@ -791,10 +802,43 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             )
             return await call_agentarts("verifier_agent", verifier_payload)
 
-        matching_remote, verifier_remote = await asyncio.gather(
-            call_agentarts("matching_agent", matching_payload),
-            run_verifier_review(),
+        provisional_delivery = build_delivery_package(
+            final_verification, scenario, snapshot, pipeline_state.get("decision_weights") or request.get("weights", {}),
         )
+        provisional_delivery["llm_weight_decision"] = llm_decisions.get("matching_weights", {})
+
+        async def run_delivery_review() -> dict:
+            ai_reasoning["delivery_agent"] = await llm_service.reflect("delivery_agent", provisional_delivery, evidence)
+            return await call_agentarts("delivery_agent", {"delivery": provisional_delivery, "evidence": evidence})
+
+        emit(db, run_id, "agent.started", "delivery_agent", "\u65b9\u6848\u4ea4\u4ed8\u667a\u80fd\u4f53\u5e76\u884c\u6c47\u603b", "\u4ea4\u4ed8 AgentArts \u4e0e\u6700\u7ec8\u5339\u914d\u3001\u72ec\u7acb\u6838\u9a8c\u5e76\u884c\u6267\u884c\uff0c\u6570\u503c\u4ecd\u7531\u786e\u5b9a\u6027\u89c4\u5219\u751f\u6210\u3002")
+        demand_remote_task = pipeline_state.get("demand_agentarts_task")
+        if demand_remote_task is None:
+            matching_remote, verifier_remote, delivery_remote = await asyncio.gather(
+                call_agentarts("matching_agent", matching_payload),
+                run_verifier_review(),
+                run_delivery_review(),
+            )
+            demand_remote = {"mode": "local-fallback", "reason": "demand advisory task was not started"}
+        else:
+            matching_remote, verifier_remote, delivery_remote, demand_remote = await asyncio.gather(
+                call_agentarts("matching_agent", matching_payload),
+                run_verifier_review(),
+                run_delivery_review(),
+                demand_remote_task,
+            )
+        remote_demand = demand_remote.get("parsed") if isinstance(demand_remote, dict) else None
+        if remote_demand:
+            demand_plan["agentarts_interpretation"] = {**remote_demand, "application_mode": "parallel-advisory"}
+            demand_plan["agentarts_priority_advisory"] = remote_demand.get("priority_adjustments") or remote_demand.get("priority_overrides") or {}
+            demand_plan["agentarts_priority_applied"] = False
+            if remote_demand.get("summary"):
+                demand_plan["summary"] = remote_demand["summary"]
+            if remote_demand.get("assumptions"):
+                demand_plan["assumptions"] = list(dict.fromkeys(demand_plan["assumptions"] + [str(item) for item in remote_demand["assumptions"]]))
+            if remote_demand.get("evidence_refs"):
+                demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [str(item) for item in remote_demand["evidence_refs"]]))
+            emit(db, run_id, "agentarts.advisory", "demand_agent", "\u9700\u6c42\u667a\u80fd\u4f53\u5e76\u884c\u5efa\u8bae\u5df2\u56de\u6536", "\u4e91\u7aef\u6458\u8981\u3001\u5047\u8bbe\u4e0e\u8bc1\u636e\u5f15\u7528\u5df2\u5408\u5165\u9700\u6c42\u8bf4\u660e\uff1b\u4f18\u5148\u7ea7\u5efa\u8bae\u4e0d\u5728\u65b9\u6848\u5df2\u6838\u9a8c\u540e\u8ffd\u6539\uff0c\u907f\u514d\u6570\u636e\u4e0e\u7ed3\u679c\u4e0d\u4e00\u81f4\u3002", {"advisory_only": True})
         remote_matching = matching_remote.get("parsed") if isinstance(matching_remote, dict) else None
         if remote_matching:
             rounds[-1]["agentarts_interpretation"] = remote_matching
@@ -863,7 +907,6 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 }
 
             extension_reviews.extend(await asyncio.gather(*(run_extension(agent) for agent in extension_agents)))
-        emit(db, run_id, "agent.started", "delivery_agent", "方案交付智能体汇总结果", "仅使用已通过核验的事实生成对比与交付包。")
         await pace(0.4)
         delivery = build_delivery_package(
             final_verification, scenario, snapshot, pipeline_state.get("decision_weights") or request.get("weights", {}),
@@ -879,14 +922,21 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             for risk in risks:
                 risk_text = risk if isinstance(risk, str) else json.dumps(risk, ensure_ascii=False)
                 delivery.setdefault("risk_alerts", []).append(f"{review['agent_name']}：{risk_text}")
-        ai_reasoning["delivery_agent"] = await llm_service.reflect("delivery_agent", delivery, evidence)
-        delivery_remote = await call_agentarts("delivery_agent", {"delivery": delivery, "evidence": evidence})
         remote_delivery = delivery_remote.get("parsed") if isinstance(delivery_remote, dict) else None
         if remote_delivery:
-            delivery["agentarts_interpretation"] = remote_delivery
+            cloud_recommendation = str(remote_delivery.get("recommended_plan_id") or "")
+            final_recommendation = str((delivery.get("recommended_plan") or {}).get("plan_id") or "")
+            delivery["agentarts_interpretation"] = {
+                **remote_delivery,
+                "recommendation_consistency": (
+                    "consistent" if not cloud_recommendation or cloud_recommendation == final_recommendation
+                    else "cloud_suggestion_bounded_by_local_rules"
+                ),
+                "final_recommended_plan_id": final_recommendation,
+            }
             reasoning = ai_reasoning.setdefault("delivery_agent", {})
             if isinstance(reasoning, dict):
-                reasoning["agentarts_interpretation"] = remote_delivery
+                reasoning["agentarts_interpretation"] = delivery["agentarts_interpretation"]
         ai_decision_matrix = build_ai_decision_matrix(
             agent_decision, agentarts_trace, final_verification, extension_reviews, llm_service.status,
             llm_decisions=llm_decisions,

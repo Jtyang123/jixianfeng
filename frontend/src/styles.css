@@ -271,11 +271,14 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .risk-score small { font-size: 7px; }
 .risk-score--warn { color: var(--red); }
 .plan-card h3 { margin: 12px 0 11px; font-size: 14px; }
-.plan-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.plan-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .plan-metrics div { display: flex; flex-direction: column; gap: 3px; }
 .plan-metrics span { color: var(--muted); font-size: 7px; }
 .plan-metrics strong { font: 500 14px 'DM Mono', monospace; }
 .plan-metrics small { font-size: 8px; }
+.plan-cost-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 9px; color: var(--muted); font-size: 8px; }
+.plan-cost-line span { padding: 3px 6px; background: #f2efe6; border-radius: 5px; }
+.plan-cost-line em { margin-left: auto; padding: 3px 6px; color: #8a5a18; background: #fbf0d9; border-radius: 5px; font-size: 7px; font-style: normal; font-weight: 700; }
 .plan-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 8px; }
 .plan-foot span { display: flex; align-items: center; gap: 3px; }
 .plan-verdict { margin-left: auto; color: var(--red); font-weight: 700; }
@@ -291,6 +294,16 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .detail-summary-row svg { color: var(--teal); }
 .detail-summary-row span { color: var(--muted); font-size: 8px; }
 .detail-summary-row strong { margin-left: auto; font: 500 12px 'DM Mono', monospace; }
+.cost-breakdown-panel { margin-bottom: 13px; padding: 11px 12px; background: #f8f5ed; border: 1px solid var(--line); border-radius: 8px; }
+.cost-breakdown-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.cost-breakdown-head div { display: flex; flex-direction: column; gap: 3px; }
+.cost-breakdown-head strong { font-size: 10px; }
+.cost-breakdown-head span, .cost-breakdown-panel p { color: var(--muted); font-size: 8px; line-height: 1.55; }
+.cost-breakdown-head em { padding: 3px 6px; color: #8a5a18; background: #fbf0d9; border-radius: 5px; font-size: 7px; font-style: normal; font-weight: 700; white-space: nowrap; }
+.cost-breakdown-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 9px 0 7px; }
+.cost-breakdown-grid div { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; background: #fffdf8; border-radius: 6px; }
+.cost-breakdown-grid span { color: var(--muted); font-size: 7px; }
+.cost-breakdown-grid strong { font: 500 11px 'DM Mono', monospace; }
 .table-wrap { width: 100%; overflow-x: auto; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .data-table th { padding: 9px 10px; color: var(--muted); background: #f5f2e9; border-bottom: 1px solid var(--line); font-size: 8px; font-weight: 600; text-align: left; white-space: nowrap; }
@@ -477,7 +490,7 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
   .result-actions, .toolbar-actions { width: 100%; }
   .plan-grid { grid-template-columns: 1fr; }
   .closure-strip { flex-wrap: wrap; }
-  .detail-summary-row, .check-grid { grid-template-columns: repeat(2, 1fr); }
+  .detail-summary-row, .check-grid, .cost-breakdown-grid { grid-template-columns: repeat(2, 1fr); }
   .inventory-hero { flex-direction: column; }
   .upload-zone { min-width: 0; }
   .filter-bar { align-items: stretch; flex-direction: column; }
@@ -505,7 +518,7 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
   .closure-step, .closure-arrow { flex: 1 1 100%; }
   .detail-tabs { overflow-x: auto; }
   .detail-tabs .detail-id { display: none; }
-  .detail-summary-row, .check-grid, .delivery-grid, .form-grid { grid-template-columns: 1fr; }
+  .detail-summary-row, .check-grid, .delivery-grid, .form-grid, .cost-breakdown-grid { grid-template-columns: 1fr; }
   .warehouse-grid { grid-template-columns: 1fr; }
   .inventory-hero { padding: 16px; }
   .upload-zone { grid-template-columns: auto 1fr; }

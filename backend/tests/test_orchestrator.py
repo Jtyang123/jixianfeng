@@ -149,8 +149,8 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert scheduler_metrics["peak_concurrency"] >= 2
     decisions = {item["id"]: item for item in run["result"]["ai_decision_matrix"]}
     assert decisions["D1"]["applied"] is True
-    assert decisions["D2"]["applied"] is True
-    assert decisions["D2"]["source"] == "agentarts"
+    assert decisions["D2"]["applied"] is False
+    assert decisions["D2"]["source"] == "deterministic-single-policy"
     assert decisions["D3"]["applied"] is True
     assert run["result"]["prompt_adaptations"]
     assert run["result"]["prompt_adaptations"][0]["active_version"].startswith("v1.4+adaptive")
@@ -278,7 +278,7 @@ def test_inventory_tool_result_changes_matching_decision(tmp_path: Path):
     unmet_material_ids = {item["material_id"] for plan in run["result"]["final_plans"] for item in plan.get("unmet", [])}
     assert water["id"] in unmet_material_ids
 
-def test_cross_run_memory_changes_safe_default_tie_break(tmp_path: Path):
+def test_cross_run_memory_is_saved_without_unsafe_override(tmp_path: Path):
     db = Database(tmp_path / "cross-run-memory.db", database_url="")
     db.initialize()
     scenario = db.get_scenario("rainstorm-ii")
@@ -308,8 +308,8 @@ def test_cross_run_memory_changes_safe_default_tie_break(tmp_path: Path):
 
     first = db.get_run("RUN-MEMORY-1")["result"]
     second = db.get_run("RUN-MEMORY-2")["result"]
-    assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-fallback"
-    assert second["rework_directives"][0]["policy_selection"]["source"] == "memory-assisted-deterministic"
+    assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
+    assert second["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
     assert second["memory_context"]["matching_agent"]["successful_repair_policy"]["value"]["policy"] == "route_failover"
     memory_events = [event["type"] for event in db.events_after("RUN-MEMORY-2")]
     assert "memory.loaded" in memory_events

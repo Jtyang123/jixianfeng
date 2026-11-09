@@ -353,6 +353,28 @@ def _select_route(
 
     return min(candidates, key=score)
 
+def _cost_breakdown(route: dict, trips: int, strategy_factor: float) -> dict:
+    """Return a transparent comparison estimate, not a carrier quotation."""
+    trips = max(1, int(trips))
+    base_transport_cost = round(_num(route.get("cost")) * trips, 2)
+    fixed_dispatch_cost = round(min(base_transport_cost, 180.0 * trips), 2)
+    distance_time_cost = round(max(0.0, base_transport_cost - fixed_dispatch_cost), 2)
+    strategy_adjustment = round(base_transport_cost * (_num(strategy_factor, 1.0) - 1.0), 2)
+    return {
+        "currency": "CNY",
+        "basis": "\u6f14\u7ec3\u4f30\u7b97\uff0c\u4e0d\u662f\u627f\u8fd0\u5546\u62a5\u4ef7",
+        "model_version": "estimate-v2",
+        "base_transport_cost": base_transport_cost,
+        "fixed_dispatch_cost": fixed_dispatch_cost,
+        "distance_time_cost": distance_time_cost,
+        "strategy_adjustment": strategy_adjustment,
+        "total_cost": round(base_transport_cost + strategy_adjustment, 2),
+        "formula": "\u03a3(\u8def\u7ebf\u57fa\u7840\u8fd0\u8f93\u8d39 \u00d7 \u8d9f\u6b21 \u00d7 \u7b56\u7565\u7cfb\u6570)",
+        "includes": ["\u56fa\u5b9a\u51fa\u8f66\u8d39", "\u91cc\u7a0b\u4e0e\u8fd0\u8f93\u65f6\u957f\u4f30\u7b97", "\u7b56\u7565\u670d\u52a1\u8c03\u6574"],
+        "excludes": ["\u771f\u5b9e\u5e02\u573a\u62a5\u4ef7", "\u8def\u6865\u8d39\u5b9e\u62a5", "\u53f8\u673a\u98df\u5bbf\u8865\u8d34", "\u88c5\u5378\u4eba\u5de5", "\u51b7\u94fe\u9644\u52a0\u8d39", "\u4e34\u65f6\u52a0\u4ef7"],
+    }
+
+
 def generate_plans(
     demand_plan: dict,
     inventory: list[dict],
@@ -403,10 +425,7 @@ def generate_plans(
                 route = route_cache[pair]
                 if not route:
                     continue
-                take_limit = remaining
-                if strategy["id"] == "speed" and remaining > 10:
-                    take_limit = max(1.0, remaining * 0.7)
-                take = min(remaining, available, take_limit)
+                take = min(remaining, available)
                 weight_kg = take * _num(demand["unit_weight_kg"])
                 warehouse_vehicles = vehicle_by_warehouse.get(wh_id, [])
                 capacity = max([_num(vehicle["capacity_kg"]) for vehicle in warehouse_vehicles] or [0])
@@ -459,9 +478,9 @@ def generate_plans(
                     deadline_penalty = overdue_score * (0.30 if deadline_first else 0.06)
                     allocation_bonus = item["new_warehouse"] * (0.06 if multi_warehouse else 0.0)
                     if strategy["id"] == "speed":
-                        candidate_score = eta_score * 0.68 + cost_score * 0.12 + item["risk"] * 0.08 + item["split"] * 0.08 + item["new_warehouse"] * 0.04 + fleet_penalty + deadline_penalty + allocation_bonus
+                        candidate_score = eta_score * 0.76 + cost_score * 0.06 + item["risk"] * 0.04 + item["split"] * 0.12 + item["new_warehouse"] * 0.06 + fleet_penalty + deadline_penalty + allocation_bonus
                     elif strategy["id"] == "cost":
-                        candidate_score = eta_score * 0.01 + dispatch_score * 0.58 + item["risk"] * 0.01 + item["split"] * 0.34 + item["new_warehouse"] * 0.06 + fleet_penalty + deadline_penalty + allocation_bonus
+                        candidate_score = eta_score * 0.01 + dispatch_score * 0.66 + item["risk"] * 0.01 + item["split"] * 0.22 + item["new_warehouse"] * 0.10 + fleet_penalty + deadline_penalty + allocation_bonus
                     else:
                         candidate_score = eta_score * 0.34 + cost_score * 0.22 + item["risk"] * 0.18 + item["split"] * 0.14 + item["load_pressure"] * 0.08 + item["new_warehouse"] * 0.04 + fleet_penalty + deadline_penalty + allocation_bonus
                     candidates.append((candidate_score, item["warehouse"], item["route"]))
@@ -475,10 +494,6 @@ def generate_plans(
                 take_cap = remaining
                 if len(candidates) > 1 and multi_warehouse and remaining > 10:
                     take_cap = max(1.0, remaining * (0.5 if strategy["id"] == "speed" else 0.6))
-                elif len(candidates) > 1 and strategy["id"] == "speed" and remaining > 10:
-                    take_cap = max(1.0, remaining * 0.65)
-                elif len(candidates) > 1 and strategy["id"] == "balanced" and remaining > 10:
-                    take_cap = max(1.0, remaining * 0.8)
                 take = min(remaining, available, take_cap)
                 if take <= 0:
                     continue
@@ -569,6 +584,9 @@ def generate_plans(
         group_outputs: list[dict] = []
         total_cost = 0.0
         total_trips = 0
+        total_weight_kg = 0.0
+        total_ton_km = 0.0
+        weighted_eta_hours = 0.0
         for (wh_id, dst_id), items in grouped.items():
             weight = sum(_num(item["quantity"]) * _num(item["unit_weight_kg"]) for item in items)
             available_vehicles = vehicle_by_warehouse.get(wh_id, [])
@@ -576,9 +594,15 @@ def generate_plans(
             trips = max(1, math.ceil(weight / max(capacity, 1)))
             route = next(route for route in routes if route["id"] == items[0]["route_id"])
             effective_eta = round(_num(route["eta_hours"]) + _num(strategy["consolidation_delay_hours"]), 2)
-            group_cost = round(_num(route["cost"]) * trips * _num(strategy["cost_factor"], 1.0), 2)
+            breakdown = _cost_breakdown(route, trips, strategy["cost_factor"])
+            group_cost = breakdown["total_cost"]
+            distance_km = _num(route.get("distance_km"))
+            ton_km = (weight / 1000.0) * distance_km
             total_cost += group_cost
             total_trips += trips
+            total_weight_kg += weight
+            total_ton_km += ton_km
+            weighted_eta_hours += effective_eta * trips
             group_id = f"G-{strategy['id']}-{wh_id}-{dst_id}"
             group_outputs.append(
                 {
@@ -589,6 +613,7 @@ def generate_plans(
                     "destination_name": items[0]["destination_name"],
                     "route_id": route["id"],
                     "route_name": route["road_name"],
+                    "distance_km": round(distance_km, 2),
                     "eta_hours": effective_eta,
                     "base_eta_hours": route["eta_hours"],
                     "policy_delay_hours": _num(strategy["consolidation_delay_hours"]),
@@ -597,6 +622,8 @@ def generate_plans(
                     "available_vehicles": len(available_vehicles),
                     "vehicle_trips": trips,
                     "cost": group_cost,
+                    "cost_per_ton_km": round(group_cost / ton_km, 2) if ton_km > 0 else 0.0,
+                    "cost_breakdown": breakdown,
                 }
             )
             for item in items:
@@ -611,6 +638,19 @@ def generate_plans(
         delivered = sum(_num(item["quantity"]) for item in assignments)
         coverage = delivered / total_demand if total_demand else 0
         max_eta = max([_num(item["route_eta_hours"]) for item in assignments] or [0])
+        plan_cost_breakdown = {
+            "currency": "CNY",
+            "basis": "\u6f14\u7ec3\u4f30\u7b97\uff0c\u4e0d\u662f\u627f\u8fd0\u5546\u62a5\u4ef7",
+            "model_version": "estimate-v2",
+            "base_transport_cost": round(sum(group["cost_breakdown"]["base_transport_cost"] for group in group_outputs), 2),
+            "fixed_dispatch_cost": round(sum(group["cost_breakdown"]["fixed_dispatch_cost"] for group in group_outputs), 2),
+            "distance_time_cost": round(sum(group["cost_breakdown"]["distance_time_cost"] for group in group_outputs), 2),
+            "strategy_adjustment": round(sum(group["cost_breakdown"]["strategy_adjustment"] for group in group_outputs), 2),
+            "total_cost": round(total_cost, 2),
+            "formula": "\u03a3(\u8def\u7ebf\u57fa\u7840\u8fd0\u8f93\u8d39 \u00d7 \u8d9f\u6b21 \u00d7 \u7b56\u7565\u7cfb\u6570)",
+            "includes": ["\u56fa\u5b9a\u51fa\u8f66\u8d39", "\u91cc\u7a0b\u4e0e\u8fd0\u8f93\u65f6\u957f\u4f30\u7b97", "\u7b56\u7565\u670d\u52a1\u8c03\u6574"],
+            "excludes": ["\u771f\u5b9e\u5e02\u573a\u62a5\u4ef7", "\u8def\u6865\u8d39\u5b9e\u62a5", "\u53f8\u673a\u98df\u5bbf\u8865\u8d34", "\u88c5\u5378\u4eba\u5de5", "\u51b7\u94fe\u9644\u52a0\u8d39", "\u4e34\u65f6\u52a0\u4ef7"],
+        }
         plans.append(
             {
                 "plan_id": f"PLAN-{attempt}-{strategy['id'].upper()}",
@@ -620,6 +660,7 @@ def generate_plans(
                 "policy_note": strategy["policy_note"],
                 "cost_factor": strategy["cost_factor"],
                 "consolidation_delay_hours": strategy["consolidation_delay_hours"],
+                "cost_breakdown": plan_cost_breakdown,
                 "attempt": attempt,
                 "assignments": assignments,
                 "groups": group_outputs,
@@ -627,11 +668,17 @@ def generate_plans(
                 "metrics": {
                     "total_cost": round(total_cost, 2),
                     "max_eta_hours": round(max_eta, 2),
+                    "avg_eta_hours": round(weighted_eta_hours / total_trips, 2) if total_trips else 0.0,
                     "coverage": round(coverage, 4),
                     "vehicle_trips": total_trips,
                     "warehouse_count": len({item["warehouse_id"] for item in assignments}),
                     "assignment_count": len(assignments),
                     "unmet_items": len(unmet),
+                    "total_weight_kg": round(total_weight_kg, 2),
+                    "ton_km": round(total_ton_km, 2),
+                    "cost_per_trip": round(total_cost / total_trips, 2) if total_trips else 0.0,
+                    "cost_per_ton_km": round(total_cost / total_ton_km, 2) if total_ton_km > 0 else 0.0,
+                    "cost_basis": "\u6f14\u7ec3\u4f30\u7b97\uff0c\u4e0d\u662f\u627f\u8fd0\u5546\u62a5\u4ef7",
                 },
             }
         )
