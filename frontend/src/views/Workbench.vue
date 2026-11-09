@@ -9,6 +9,7 @@ import AgentRail from '../components/AgentRail.vue'
 import MapCanvas from '../components/MapCanvas.vue'
 import { api, formatNumber } from '../api'
 import { mergeRunEvent, runEventsUrl } from '../utils/runEvents.js'
+import { approvalPresentation, scoreDeltaLabel } from '../utils/runPresentation.js'
 
 defineProps({ dashboard: { type: Object, default: () => ({}) } })
 const emit = defineEmits(['refresh-dashboard', 'navigate'])
@@ -90,6 +91,8 @@ function selectPlan(planId) {
   assignmentMaterialFilter.value = 'all'
 }
 const selectedPlan = computed(() => selectedReport.value || null)
+const approvalDisplay = computed(() => approvalPresentation(runResult.value?.delivery?.status, approved.value))
+const scoreDelta = computed(() => scoreDeltaLabel(runResult.value?.loop_metrics?.score_gain))
 const firstRound = computed(() => runResult.value?.rounds?.[0])
 const secondRound = computed(() => runResult.value?.rounds?.[1])
 const closedRoutes = computed(() => runResult.value?.closed_routes || selectedScenario.value?.closed_routes || [])
@@ -583,8 +586,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="result-actions">
             <button class="secondary-action" @click="openReport"><FileDown :size="16" />导出报告</button>
-            <button v-if="runResult.delivery.status === 'ready' && !approved" class="approve-action" @click="approveRun"><CheckCircle2 :size="16" />人工审批通过</button>
-            <span v-else class="approved-chip"><Check :size="14" />已审批</span>
+            <button v-if="approvalDisplay === 'pending'" class="approve-action" @click="approveRun"><CheckCircle2 :size="16" />人工审批通过</button>
+            <span v-else-if="approvalDisplay === 'approved'" class="approved-chip"><Check :size="14" />已审批</span>
+            <span v-else class="human-review-chip"><AlertTriangle :size="14" />已转人工研判</span>
           </div>
         </div>
 
@@ -592,7 +596,7 @@ onBeforeUnmount(() => {
           <div><span>闭环轮次</span><strong>{{ runResult.loop_metrics.attempts }}</strong></div>
           <div><span>首轮硬阻断</span><strong>{{ runResult.loop_metrics.blockers_found }}</strong></div>
           <div><span>修正后评分</span><strong>{{ runResult.loop_metrics.final_score }}</strong></div>
-          <div><span>评分提升</span><strong class="metric-positive">+{{ runResult.loop_metrics.score_gain }}</strong></div>
+          <div><span>评分变化</span><strong :class="runResult.loop_metrics.score_gain >= 0 ? 'metric-positive' : 'metric-negative'">{{ scoreDelta }}</strong></div>
           <div><span>RAG 证据</span><strong>{{ runResult.retrieval.length }}</strong></div>
           <div><span>AgentArts 决策</span><strong class="metric-mode">{{ runResult.agent_decision?.applied ? '已采纳' : '规则回退' }}</strong></div>
         </div>

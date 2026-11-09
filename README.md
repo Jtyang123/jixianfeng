@@ -254,7 +254,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。CI 配置真实 PostgreSQL 18 时结果：`65 passed`；无 PostgreSQL 环境时：`62 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 4 项组件/重连测试，`8 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。CI 配置真实 PostgreSQL 18 时结果：`65 passed`；无 PostgreSQL 环境时：`62 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 5 项组件/重连测试，`9 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 
