@@ -18,7 +18,9 @@ const releasingRunId = ref('')
 const error = ref('')
 const message = ref('')
 const importResult = ref(null)
-const tab = ref('summary')
+const requestedInventoryTab = new URLSearchParams(window.location.search).get('inventory_tab')
+const validInventoryTabs = ['summary', 'warehouse', 'details', 'reservations']
+const tab = ref(validInventoryTabs.includes(requestedInventoryTab) ? requestedInventoryTab : 'summary')
 const fileInput = ref(null)
 const editingEntryId = ref(null)
 const stockForm = ref({
@@ -51,6 +53,13 @@ const reservationGroups = computed(() => {
 })
 const selectedMaterial = computed(() => materials.value.find((item) => item.id === Number(stockForm.value.material_id)))
 const canSaveStock = computed(() => stockForm.value.warehouse_id && stockForm.value.material_id && Number(stockForm.value.quantity) > 0)
+
+function selectTab(nextTab) {
+  tab.value = nextTab
+  const url = new URL(window.location.href)
+  url.searchParams.set('inventory_tab', nextTab)
+  window.history.replaceState({}, '', url)
+}
 
 function statusLabel(status) {
   return ({ available: '可用', locked: '锁定', expired: '过期' })[status] || status
@@ -253,13 +262,13 @@ onMounted(load)
     <section class="content-card">
       <div class="inventory-toolbar">
         <div><div class="eyebrow">WAREHOUSE INVENTORY</div><h2>库存分布</h2></div>
-        <div class="segmented-control"><button :class="{ active: tab === 'summary' }" @click="tab = 'summary'">物资汇总</button><button :class="{ active: tab === 'warehouse' }" @click="tab = 'warehouse'">仓库视图</button><button :class="{ active: tab === 'details' }" @click="tab = 'details'">库存明细</button><button :class="{ active: tab === 'reservations' }" @click="tab = 'reservations'">库存预留 {{ reservationData.count }}</button></div>
+        <div class="segmented-control"><button :class="{ active: tab === 'summary' }" @click="selectTab('summary')">物资汇总</button><button :class="{ active: tab === 'warehouse' }" @click="selectTab('warehouse')">仓库视图</button><button :class="{ active: tab === 'details' }" @click="selectTab('details')">库存明细</button><button :class="{ active: tab === 'reservations' }" @click="selectTab('reservations')">库存预留 {{ reservationData.count }}</button></div>
       </div>
 
       <div v-if="reservationData.count && tab !== 'reservations'" class="reservation-notice">
         <AlertTriangle :size="17" />
         <div><strong>当前有 {{ reservationData.count }} 条库存预留</strong><span>预留数量会从可用库存中扣除，审批后的方案才能继续使用。</span></div>
-        <button @click="tab = 'reservations'">查看并释放</button>
+        <button @click="selectTab('reservations')">查看并释放</button>
       </div>
 
       <div v-if="tab === 'summary'" class="table-wrap">

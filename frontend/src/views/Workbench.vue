@@ -360,6 +360,15 @@ async function finishRun(id) {
   }
 }
 
+function openInventoryReservations() {
+  const url = new URL(window.location.href)
+  url.searchParams.set('page', 'data')
+  url.searchParams.set('tab', 'inventory')
+  url.searchParams.set('inventory_tab', 'reservations')
+  window.history.replaceState({}, '', url)
+  emit('navigate', 'data')
+}
+
 async function startRun() {
   if (!canRun.value) return
   error.value = ''
@@ -571,7 +580,7 @@ onBeforeUnmount(() => {
               <p v-for="item in materialShortages" :key="item.material_id">
                 {{ item.name }}：需求 {{ formatNumber(item.required) }}，总可用 {{ formatNumber(item.available) }}，缺口 {{ formatNumber(item.shortage) }} {{ item.unit }}
               </p>
-              <p>总可用量满足不代表一定能交付，系统仍会继续检查仓库分布、路线、时效和车辆运力。</p>
+              <p>总可用量满足不代表一定能交付，系统仍会继续检查仓库分布、路线、时效和车辆运力。</p><button type="button" class="shortage-reservation-action" @click="openInventoryReservations">查看并释放库存预留</button>
             </div>
           </div>
 
