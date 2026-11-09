@@ -4,6 +4,7 @@ import json
 import math
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -280,6 +281,7 @@ class Database:
                     detail TEXT NOT NULL DEFAULT '',
                     payload_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
+                    UNIQUE (run_id, seq),
                     FOREIGN KEY (run_id) REFERENCES runs(id)
                 );
 
@@ -706,6 +708,20 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(operational_events)").fetchall()}
         if "demand_json" not in columns:
             conn.execute("ALTER TABLE operational_events ADD COLUMN demand_json TEXT NOT NULL DEFAULT '[]'")
+        duplicate_runs = conn.execute(
+            """SELECT run_id FROM agent_events GROUP BY run_id, seq
+               HAVING COUNT(*) > 1 LIMIT 100"""
+        ).fetchall()
+        for duplicate in duplicate_runs:
+            run_id = duplicate["run_id"]
+            rows = conn.execute(
+                "SELECT id FROM agent_events WHERE run_id=? ORDER BY seq, id", (run_id,)
+            ).fetchall()
+            for index, row in enumerate(rows, start=1):
+                conn.execute("UPDATE agent_events SET seq=? WHERE id=?", (index, row["id"]))
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_run_seq_unique ON agent_events(run_id, seq)"
+        )
 
     def _ensure_vehicle_columns(self, conn) -> None:
         if self.engine == "postgresql":
@@ -1255,27 +1271,37 @@ class Database:
             conn.execute("UPDATE runs SET status = ? WHERE id = ?", (status, run_id))
 
     def add_event(self, run_id: str, event_type: str, agent_id: str, agent_name: str, title: str, detail: str = "", payload: dict | None = None) -> dict:
-        with self.connect() as conn:
-            seq = conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM agent_events WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()["seq"]
-            created_at = now_iso()
-            event_id = self._insert_id(
-                conn,
-                """
-                INSERT INTO agent_events
-                (run_id, seq, type, agent_id, agent_name, title, detail, payload_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (run_id, seq, event_type, agent_id, agent_name, title, detail, _json(payload or {}), created_at),
-            )
-            return {
-                "id": event_id, "run_id": run_id, "seq": seq,
-                "type": event_type, "agent_id": agent_id, "agent_name": agent_name,
-                "title": title, "detail": detail, "payload": payload or {},
-                "created_at": created_at,
-            }
+        for attempt in range(8):
+            try:
+                with self.connect() as conn:
+                    seq = conn.execute(
+                        "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM agent_events WHERE run_id = ?",
+                        (run_id,),
+                    ).fetchone()["seq"]
+                    created_at = now_iso()
+                    event_id = self._insert_id(
+                        conn,
+                        """
+                        INSERT INTO agent_events
+                        (run_id, seq, type, agent_id, agent_name, title, detail, payload_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (run_id, seq, event_type, agent_id, agent_name, title, detail, _json(payload or {}), created_at),
+                    )
+                    return {
+                        "id": event_id, "run_id": run_id, "seq": seq,
+                        "type": event_type, "agent_id": agent_id, "agent_name": agent_name,
+                        "title": title, "detail": detail, "payload": payload or {},
+                        "created_at": created_at,
+                    }
+            except Exception as exc:
+                message = str(exc).lower()
+                if "unique" not in message and "duplicate key" not in message:
+                    raise
+                if attempt >= 7:
+                    raise
+                time.sleep(0.005 * (attempt + 1))
+        raise RuntimeError("failed to allocate event sequence")
 
     def events_after(self, run_id: str, after_seq: int = 0) -> list[dict]:
         with self.connect() as conn:

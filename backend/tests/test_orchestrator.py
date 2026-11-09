@@ -221,7 +221,8 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert all(item["status"] == "success" for item in run["result"]["extension_workflow_runs"])
     assert any("扩展风险" in item for item in run["result"]["delivery"]["risk_alerts"])
     interpretation = run["result"]["delivery"]["agentarts_interpretation"]
-    assert interpretation["review_status"] == "discarded"
+    assert interpretation["review_status"] == "audit-only"
+    assert interpretation["recommendation_consistency"] == "stale-plan"
     assert "stale delivery risk" not in run["result"]["delivery"]["risk_alerts"]
 
 

@@ -82,6 +82,8 @@ class InventoryReservationService:
                 (next_status, json.dumps(result, ensure_ascii=False), run_id),
             )
             count = sum(1 for item in released if item["run_id"] == run_id)
+            if self.db.engine == "postgresql":
+                conn.execute("SELECT id FROM runs WHERE id=? FOR UPDATE", (run_id,))
             seq = conn.execute(
                 "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM agent_events WHERE run_id = ?",
                 (run_id,),

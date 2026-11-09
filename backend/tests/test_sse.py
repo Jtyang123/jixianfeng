@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -25,3 +26,18 @@ def test_sse_resumes_after_last_event_id(tmp_path: Path):
     assert "事件二" in body
     assert "事件一" not in body
     assert "id: 2" in body
+def test_concurrent_event_sequences_are_unique(tmp_path: Path):
+    test_db = Database(tmp_path / "event-sequence.db", database_url="")
+    test_db.initialize()
+    test_db.create_run("RUN-SEQ", "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+
+    def write_event(index):
+        return test_db.add_event("RUN-SEQ", "test.event", "tester", "测试", f"事件 {index}")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(write_event, range(24)))
+
+    events = test_db.events_after("RUN-SEQ")
+    sequences = [event["seq"] for event in events]
+    assert len(sequences) == 24
+    assert sequences == list(range(1, 25))

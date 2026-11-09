@@ -6,8 +6,10 @@ import json
 import logging
 import math
 import re
+import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
@@ -23,6 +25,9 @@ from .database import Database, now_iso
 
 
 logger = logging.getLogger(__name__)
+_EMBEDDING_BACKFILL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="embedding-backfill")
+_EMBEDDING_BACKFILL_LOCK = threading.Lock()
+_EMBEDDING_BACKFILL_PENDING: set[int] = set()
 
 
 class KnowledgeBaseError(ValueError):
@@ -354,6 +359,53 @@ class KnowledgeRepository:
         self.embedding = EmbeddingService()
         self._corpus_cache: dict[tuple[str, int], dict] = {}
 
+    def _schedule_embedding_backfill(self, chunk_ids: list[int]) -> None:
+        if not chunk_ids or not self.embedding.remote:
+            return
+        with _EMBEDDING_BACKFILL_LOCK:
+            new_ids = [chunk_id for chunk_id in dict.fromkeys(chunk_ids) if chunk_id not in _EMBEDDING_BACKFILL_PENDING]
+            _EMBEDDING_BACKFILL_PENDING.update(new_ids)
+        if new_ids:
+            _EMBEDDING_BACKFILL_EXECUTOR.submit(self._backfill_embeddings, new_ids)
+
+    def _backfill_embeddings(self, chunk_ids: list[int]) -> None:
+        try:
+            placeholders = ",".join("?" for _ in chunk_ids)
+            with self.db.connect() as conn:
+                rows = conn.execute(
+                    f"SELECT id, content FROM knowledge_chunks WHERE id IN ({placeholders}) ORDER BY id",
+                    tuple(chunk_ids),
+                ).fetchall()
+            items = [dict(row) for row in rows]
+            embedded = self.embedding.embed_many([str(item.get("content") or "") for item in items])
+            update_rows = []
+            for item, (embedding, meta) in zip(items, embedded):
+                update_rows.append((
+                    json.dumps(embedding), meta["provider"], meta["model"], meta["dimensions"], item["id"],
+                ))
+            if update_rows:
+                with self.db.connect() as conn:
+                    conn.executemany(
+                        """UPDATE knowledge_chunks SET embedding_json=?, embedding_provider=?,
+                           embedding_model=?, embedding_dim=? WHERE id=?""",
+                        update_rows,
+                    )
+                self._corpus_cache.clear()
+        except Exception:
+            logger.exception("Background embedding backfill failed for %s chunks", len(chunk_ids))
+        finally:
+            with _EMBEDDING_BACKFILL_LOCK:
+                _EMBEDDING_BACKFILL_PENDING.difference_update(chunk_ids)
+
+    def wait_for_embedding_backfill(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with _EMBEDDING_BACKFILL_LOCK:
+                if not _EMBEDDING_BACKFILL_PENDING:
+                    return True
+            time.sleep(0.01)
+        return False
+
     def insert_document(self, name: str, category: str, source: str, chunks: list[str] | list[dict]) -> dict:
         if not chunks:
             raise KnowledgeBaseError("文档没有可入库的文本内容")
@@ -438,12 +490,14 @@ class KnowledgeRepository:
         cache_key = (str(query_meta["provider"]), int(query_meta["dimensions"]))
         with self.db.connect() as conn:
             stats = conn.execute(
-                """SELECT COUNT(*) AS row_count, COALESCE(MAX(c.id), 0) AS max_id
+                """SELECT COUNT(*) AS row_count, COALESCE(MAX(c.id), 0) AS max_id,
+                          SUM(CASE WHEN c.embedding_provider <> ? OR c.embedding_dim <> ? THEN 1 ELSE 0 END) AS stale_count
                    FROM knowledge_chunks c
                    JOIN knowledge_documents d ON d.id = c.document_id
-                   WHERE d.status = 'active'"""
+                   WHERE d.status = 'active'""",
+                (str(query_meta["provider"]), int(query_meta["dimensions"])),
             ).fetchone()
-            fingerprint = (int(stats["row_count"]), int(stats["max_id"]))
+            fingerprint = (int(stats["row_count"]), int(stats["max_id"]), int(stats["stale_count"] or 0))
         cached = self._corpus_cache.get(cache_key)
         if cached and cached.get("fingerprint") == fingerprint and cached.get("expires_at", 0) > time.monotonic():
             documents = [dict(item) for item in cached.get("documents", [])]
@@ -474,21 +528,13 @@ class KnowledgeRepository:
                         item["embedding"] = embedding
                         item["tokens"] = Counter(_semantic_terms(content))
                         documents.append(item)
-                if stale_documents:
-                    embedded = self.embedding.embed_many([content for _, content in stale_documents])
-                    update_rows = []
-                    for (item, content), (embedding, stored_meta) in zip(stale_documents, embedded):
-                        update_rows.append((
-                            json.dumps(embedding), stored_meta["provider"], stored_meta["model"], stored_meta["dimensions"], item["id"],
-                        ))
-                        item["embedding"] = embedding
-                        item["tokens"] = Counter(_semantic_terms(content))
-                        documents.append(item)
-                    conn.executemany(
-                        """UPDATE knowledge_chunks SET embedding_json=?, embedding_provider=?,
-                           embedding_model=?, embedding_dim=? WHERE id=?""",
-                        update_rows,
-                    )
+                backfill_ids = []
+                for item, content in stale_documents:
+                    item["embedding"] = embed_text(content, dimensions=int(query_meta["dimensions"]))
+                    item["tokens"] = Counter(_semantic_terms(content))
+                    documents.append(item)
+                    backfill_ids.append(int(item["id"]))
+                self._schedule_embedding_backfill(backfill_ids)
             self._corpus_cache[cache_key] = {
                 "fingerprint": fingerprint,
                 "expires_at": time.monotonic() + 30.0,

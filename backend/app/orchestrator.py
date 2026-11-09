@@ -951,35 +951,18 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             final_recommendation = str((delivery.get("recommended_plan") or {}).get("plan_id") or "")
             valid_plan_ids = {str(report.get("plan_id") or "") for report in final_verification.get("reports", [])}
             consistent = not cloud_recommendation or cloud_recommendation == final_recommendation
-            if consistent:
-                for field in ("risk_alerts", "actions"):
-                    incoming = remote_delivery.get(field) or []
-                    if isinstance(incoming, str):
-                        incoming = [incoming]
-                    merged = list(delivery.get(field) or [])
-                    merged.extend(str(item) for item in incoming if item and str(item) not in merged)
-                    delivery[field] = merged
-                if remote_delivery.get("summary"):
-                    delivery["agentarts_summary"] = remote_delivery["summary"]
-                interpretation = {
-                    **remote_delivery,
-                    "review_status": "applied",
-                    "reviewed_delivery_mode": "provisional-parallel",
-                    "recommendation_consistency": "consistent",
-                    "final_recommended_plan_id": final_recommendation,
-                }
-            else:
-                interpretation = {
-                    "review_status": "discarded",
-                    "reviewed_delivery_mode": "provisional-parallel",
-                    "cloud_recommended_plan_id": cloud_recommendation,
-                    "final_recommended_plan_id": final_recommendation,
-                    "recommendation_consistency": (
-                        "discarded-plan-mismatch" if cloud_recommendation in valid_plan_ids else "discarded-stale-plan"
-                    ),
-                    "discarded_fields": ["summary", "risk_alerts", "actions", "alternatives"],
-                    "note": "\u4e91\u7aef\u5ba1\u67e5\u57fa\u4e8e\u5e76\u884c\u9884\u89c8\u5305\uff0c\u4e0e\u6700\u7ec8\u63a8\u8350\u4e0d\u4e00\u81f4\uff0c\u5df2\u4e22\u5f03\u5176\u53d9\u4e8b\u5185\u5bb9\uff0c\u4ec5\u4fdd\u7559\u5ba1\u8ba1\u5143\u6570\u636e\u3002",
-                }
+            interpretation = {
+                "review_status": "audit-only",
+                "reviewed_delivery_mode": "provisional-parallel",
+                "cloud_recommended_plan_id": cloud_recommendation,
+                "final_recommended_plan_id": final_recommendation,
+                "recommendation_consistency": (
+                    "consistent" if consistent
+                    else ("plan-mismatch" if cloud_recommendation in valid_plan_ids else "stale-plan")
+                ),
+                "discarded_fields": ["summary", "risk_alerts", "actions", "alternatives"],
+                "note": "云端交付 Agent 仅作并行审计；最终摘要、风险与动作只从最终核验包生成。",
+            }
             delivery["agentarts_interpretation"] = interpretation
             reasoning = ai_reasoning.setdefault("delivery_agent", {})
             if isinstance(reasoning, dict):

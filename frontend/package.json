@@ -8,7 +8,7 @@
     "build": "vite build",
     "test": "npm run test:unit && npm run test:component",
     "test:unit": "node --test tests/workflowCanvas.test.js",
-    "test:component": "vitest run tests/WorkflowDesigner.test.js tests/runEvents.test.js",
+    "test:component": "vitest run tests/WorkflowDesigner.test.js tests/runEvents.test.js tests/Inventory.test.js",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
