@@ -43,7 +43,7 @@ async function load() {
   try {
     const [materialRows, inventory] = await Promise.all([api.materials(), api.inventory()])
     materials.value = materialRows
-    stockMap.value = Object.fromEntries(inventory.summary.map((item) => [item.material_id, item.total_quantity]))
+    stockMap.value = Object.fromEntries(inventory.summary.map((item) => [item.material_id, item]))
   } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
 
@@ -100,7 +100,7 @@ onMounted(load)
         <div>
           <div class="eyebrow">MATERIAL MASTER DATA</div>
           <h2>物资库</h2>
-          <p>统一物资编码、单位、重量、储存条件和优先级，供库存上传与需求选择复用。</p>
+          <p>统一物资编码、单位、重量、储存条件和优先级；库存列按可用量展示，审批预占数量单独标注。</p>
         </div>
         <div class="toolbar-actions">
           <a class="secondary-action" href="/api/materials/template" download><Download :size="16" />下载模板</a>
@@ -126,7 +126,7 @@ onMounted(load)
 
       <div class="table-wrap">
         <table class="data-table material-table">
-          <thead><tr><th>物资</th><th>分类</th><th>规格 / 单位</th><th>储存条件</th><th>优先级</th><th>当前库存</th><th>来源</th></tr></thead>
+          <thead><tr><th>物资</th><th>分类</th><th>规格 / 单位</th><th>储存条件</th><th>优先级</th><th>可用 / 锁定</th><th>来源</th></tr></thead>
           <tbody>
             <tr v-for="item in filtered" :key="item.id">
               <td><div class="material-cell"><span class="material-symbol">{{ item.name.slice(0, 1) }}</span><div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div></div></td>
@@ -134,7 +134,7 @@ onMounted(load)
               <td><strong>{{ item.specification || '通用规格' }}</strong><small class="cell-sub">{{ item.base_unit }}<template v-if="item.package_unit"> · {{ item.conversion_rate }}{{ item.base_unit }}/{{ item.package_unit }}</template></small></td>
               <td><span class="storage-chip" :class="{ 'storage-chip--cold': item.is_cold_chain }"><Snowflake v-if="item.is_cold_chain" :size="12" />{{ item.storage_type }}</span></td>
               <td><span class="priority-dot" :class="`priority-dot--${item.default_priority}`" />{{ item.default_priority }}</td>
-              <td><strong>{{ formatNumber(stockMap[item.id]) }}</strong> <small>{{ item.base_unit }}</small></td>
+              <td><strong>{{ formatNumber(stockMap[item.id]?.available_quantity) }}</strong> <small>{{ item.base_unit }} 可用<template v-if="stockMap[item.id]?.locked_quantity > 0"> · {{ formatNumber(stockMap[item.id]?.locked_quantity) }} 锁定</template></small></td>
               <td><span class="source-chip">{{ { builtin: '内置', import: '导入', manual: '自建' }[item.source] || item.source }}</span></td>
             </tr>
           </tbody>
