@@ -101,6 +101,18 @@ const totalWeight = computed(() => demandItems.value.reduce((sum, item) => {
   return sum + Number(item.quantity || 0) * Number(material?.unit_weight_kg || 0)
 }, 0))
 const canRun = computed(() => demandItems.value.length > 0 && !running.value && (runSource.value === 'demo' ? Boolean(selectedScenario.value) : Boolean(selectedEventId.value)))
+const workflowStep = computed(() => {
+  if (approved.value) return 4
+  if (runResult.value || running.value) return 3
+  if (demandItems.value.length) return 2
+  return 1
+})
+const workflowSteps = [
+  { id: 1, label: '选择事件', hint: '演练或真实事件' },
+  { id: 2, label: '配置需求', hint: '物资、数量与时限' },
+  { id: 3, label: '智能匹配', hint: '生成并独立核验' },
+  { id: 4, label: '审批执行', hint: '确认方案与库存' },
+]
 
 const statusText = computed(() => {
   if (running.value) return `推演进行中 · ${events.value.length} 个事件`
@@ -366,8 +378,16 @@ function openReport() {
   if (runId.value) window.open(`/api/runs/${runId.value}/report`, '_blank')
 }
 
+function handleRunShortcut(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canRun.value) {
+    event.preventDefault()
+    startRun()
+  }
+}
+
 onMounted(() => {
   window.addEventListener('farmmatch:events-changed', handleEventsChanged)
+  window.addEventListener('keydown', handleRunShortcut)
   loadData()
 })
 onActivated(async () => {
@@ -376,6 +396,7 @@ onActivated(async () => {
 onBeforeUnmount(() => {
   eventSource?.close()
   window.removeEventListener('farmmatch:events-changed', handleEventsChanged)
+  window.removeEventListener('keydown', handleRunShortcut)
 })
 </script>
 <template>
@@ -386,6 +407,19 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
+      <div class="workbench-command-strip">
+        <div class="command-steps" aria-label="调度流程">
+          <div v-for="step in workflowSteps" :key="step.id" class="command-step" :class="{ 'command-step--active': workflowStep === step.id, 'command-step--done': workflowStep > step.id }">
+            <span class="command-step-index"><Check v-if="workflowStep > step.id" :size="12" /><template v-else>{{ step.id }}</template></span>
+            <div><strong>{{ step.label }}</strong><small>{{ step.hint }}</small></div>
+          </div>
+        </div>
+        <div class="command-context">
+          <span class="command-context-chip"><span class="live-dot" />{{ runSource === 'event' ? '真实事件模式' : '演练场景模式' }}</span>
+          <span class="command-context-copy">{{ inventoryData.snapshot?.label || '正在读取库存快照' }} · {{ inventoryData.snapshot?.row_count || 0 }} 条记录</span>
+        </div>
+      </div>
+
       <div class="workbench-grid">
         <section class="control-panel">
           <div class="panel-heading">
@@ -499,7 +533,7 @@ onBeforeUnmount(() => {
           <button class="primary-run" :disabled="!canRun" @click="startRun">
             <Play :size="18" fill="currentColor" />
             <span>{{ running ? '智能体推演中...' : '启动多智能体推演' }}</span>
-            <kbd>RUN</kbd>
+            <kbd>Ctrl ↵</kbd>
           </button>
         </section>
 

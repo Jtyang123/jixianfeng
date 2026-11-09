@@ -36,7 +36,10 @@ exports[`WorkflowDesigner template interaction > instantiates a template, connec
           <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"></path>
           <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"></path>
         </svg>
-      </div>
+      </div><label class="workflow-search"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search" aria-hidden="true">
+          <path d="m21 21-4.34-4.34"></path>
+          <circle cx="11" cy="11" r="8"></circle>
+        </svg><input placeholder="搜索模板或工作流"></label>
       <div class="workflow-template-list">
         <article>
           <div><strong>E2E 模板</strong><small>TPL-E2E · standalone</small></div>
@@ -70,12 +73,13 @@ exports[`WorkflowDesigner template interaction > instantiates a template, connec
             <option value="standalone">独立工作流</option>
           </select></label><label class="check-label"><input type="checkbox">启用工作流</label><label class="full-span"><span>说明</span><input></label></div>
       <div class="workflow-canvas-shell">
-        <div class="workflow-canvas-toolbar"><span>节点画布</span><small>循环体已展开；拖动节点调整位置，从输出口拖线到输入口建立依赖</small><button class="secondary-action"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" aria-hidden="true">
+        <div class="workflow-canvas-toolbar"><span>节点画布</span><small>1 个节点 · 循环体已展开 · 从输出口拖线到输入口建立依赖</small><button class="secondary-action"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" aria-hidden="true">
               <path d="M5 12h14"></path>
               <path d="M12 5v14"></path>
             </svg>新增节点</button></div>
         <!--v-if-->
-        <div class="workflow-canvas"><svg class="workflow-canvas-edges" viewBox="0 0 960 520" preserveAspectRatio="none">
+        <div class="workflow-canvas">
+          <div class="workflow-canvas-guide"><strong>从模板开始，或新增一个节点</strong><span>拖动卡片调整位置；从右侧输出口拖线到下一个节点输入口，即可建立依赖。</span></div><svg class="workflow-canvas-edges" viewBox="0 0 960 520" preserveAspectRatio="none">
             <defs>
               <marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
                 <path d="M0,0 L8,4 L0,8 Z" fill="currentColor"></path>
@@ -83,7 +87,7 @@ exports[`WorkflowDesigner template interaction > instantiates a template, connec
             </defs>
             <!--v-if-->
           </svg>
-          <div class="workflow-node-card" style="left: 48px; top: 54px;"><span class="workflow-node-port workflow-node-port--input" title="输入依赖"></span>
+          <div class="workflow-node-card workflow-node-card--agent" style="left: 48px; top: 54px;"><span class="workflow-node-port workflow-node-port--input" title="输入依赖"></span>
             <div class="workflow-node-type">agent
               <!--v-if-->
             </div><strong>A05</strong><small>risk_extension</small><span class="workflow-node-port workflow-node-port--output" title="拖拽建立依赖"></span>

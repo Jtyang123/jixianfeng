@@ -1,12 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { CheckCircle2, GitBranch, Layers3, Play, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from '@lucide/vue'
+import { CheckCircle2, GitBranch, Layers3, Play, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2 } from '@lucide/vue'
 import { api } from '../api'
 import { addWorkflowNode, applyVisualPositions, computeLoopZones, connectWorkflowNodes, findNodeByVisualId, flattenVisualNodes } from '../utils/workflowCanvas.js'
 
 const props = defineProps({ user: { type: Object, default: null } })
 const workflows = ref([])
 const templates = ref([])
+const workflowSearch = ref('')
 const selectedId = ref('post-verification-review')
 const loading = ref(true)
 const saving = ref(false)
@@ -45,6 +46,16 @@ const form = ref({
   }, null, 2),
 })
 const isAdmin = computed(() => props.user?.role === 'admin')
+const filteredTemplates = computed(() => {
+  const query = workflowSearch.value.trim().toLowerCase()
+  if (!query) return templates.value
+  return templates.value.filter((item) => `${item.name} ${item.id} ${item.description}`.toLowerCase().includes(query))
+})
+const filteredWorkflows = computed(() => {
+  const query = workflowSearch.value.trim().toLowerCase()
+  if (!query) return workflows.value
+  return workflows.value.filter((item) => `${item.name} ${item.id} ${item.stage}`.toLowerCase().includes(query))
+})
 
 async function load() {
   loading.value = true
@@ -394,22 +405,23 @@ onMounted(load)
     <div class="workflow-designer-grid">
       <section class="content-card workflow-list-card">
         <div class="workflow-head"><div><div class="eyebrow">REUSABLE TEMPLATES</div><h2>可复用模板库</h2><p>模板为只读种子，实例化后生成可编辑、可发布的工作流。</p></div><Layers3 :size="18" /></div>
-        <div v-if="templates.length" class="workflow-template-list">
-          <article v-for="template in templates" :key="template.id">
+        <label class="workflow-search"><Search :size="15" /><input v-model="workflowSearch" placeholder="搜索模板或工作流" /></label>
+        <div v-if="filteredTemplates.length" class="workflow-template-list">
+          <article v-for="template in filteredTemplates" :key="template.id">
             <div><strong>{{ template.name }}</strong><small>{{ template.id }} · {{ template.stage }}</small></div>
             <p>{{ template.description }}</p>
             <button class="secondary-action" :disabled="!isAdmin" @click="useTemplate(template)"><Plus :size="12" />实例化</button>
           </article>
         </div>
-        <div v-else class="empty-table"><Layers3 :size="24" /><strong>暂无模板</strong><span>管理员初始化后将显示内置模板。</span></div>
+        <div v-else class="empty-table"><Layers3 :size="24" /><strong>没有匹配模板</strong><span>调整搜索词，或清空搜索查看全部模板。</span></div>
         <div class="workflow-head workflow-list-divider"><div><div class="eyebrow">WORKFLOW VERSIONS</div><h2>已发布工作流</h2></div><GitBranch :size="18" /></div>
         <div v-if="loading" class="loading-panel"><div class="loading-orbit" /><strong>正在加载工作流</strong></div>
         <div v-else class="workflow-definition-list">
-          <button v-for="item in workflows" :key="item.id" :class="{ active: selectedId === item.id }" @click="selectWorkflow(item)">
+          <button v-for="item in filteredWorkflows" :key="item.id" :class="{ active: selectedId === item.id }" @click="selectWorkflow(item)">
             <span><strong>{{ item.name }}</strong><small>{{ item.id }} · v{{ item.version }}</small></span>
             <em>{{ item.stage }}</em>
           </button>
-          <div v-if="!workflows.length" class="empty-table"><GitBranch :size="26" /><strong>暂无已发布工作流</strong><span>新建并保存第一个工作流。</span></div>
+          <div v-if="!filteredWorkflows.length" class="empty-table"><GitBranch :size="26" /><strong>没有匹配工作流</strong><span>调整搜索词，或新建第一个工作流。</span></div>
         </div>
       </section>
 
@@ -422,7 +434,7 @@ onMounted(load)
           <label class="full-span"><span>说明</span><input v-model="form.description" :disabled="!isAdmin" /></label>
         </div>
         <div class="workflow-canvas-shell">
-          <div class="workflow-canvas-toolbar"><span>节点画布</span><small>循环体已展开；拖动节点调整位置，从输出口拖线到输入口建立依赖</small><button v-if="isAdmin" class="secondary-action" @click="openNodeForm"><Plus :size="13" />新增节点</button></div>
+          <div class="workflow-canvas-toolbar"><span>节点画布</span><small>{{ visualNodes.length }} 个节点 · 循环体已展开 · 从输出口拖线到输入口建立依赖</small><button v-if="isAdmin" class="secondary-action" @click="openNodeForm"><Plus :size="13" />新增节点</button></div>
           <div v-if="showNodeForm" class="workflow-node-form">
             <label><span>节点 ID</span><input v-model="nodeDraft.id" placeholder="A06" /></label>
             <label><span>类型</span><select v-model="nodeDraft.type"><option value="agent">Agent</option><option value="tool">工具</option><option value="condition">条件</option><option value="subworkflow">子工作流</option><option value="loop">循环</option></select></label>
@@ -436,12 +448,13 @@ onMounted(load)
           </div>
           <div ref="canvasRef" class="workflow-canvas">
             <div v-for="zone in loopZones" :key="zone.id" class="workflow-loop-zone" :style="{ left: `${zone.x}px`, top: `${zone.y}px`, width: `${zone.width}px`, height: `${zone.height}px` }"><span>LOOP · {{ zone.label }}</span></div>
+            <div v-if="visualNodes.length <= 1" class="workflow-canvas-guide"><strong>从模板开始，或新增一个节点</strong><span>拖动卡片调整位置；从右侧输出口拖线到下一个节点输入口，即可建立依赖。</span></div>
             <svg class="workflow-canvas-edges" viewBox="0 0 960 520" preserveAspectRatio="none">
               <defs><marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker></defs>
               <path v-for="edge in visualEdges" :key="edge.id" :d="edge.path" class="workflow-edge" marker-end="url(#workflow-arrow)" />
               <path v-if="connectionPath" :d="connectionPath" class="workflow-edge workflow-edge--active" />
             </svg>
-            <div v-for="node in visualNodes" :key="node.visualId" class="workflow-node-card" :class="{ 'workflow-node-card--dragging': dragging?.visualId === node.visualId, 'workflow-node-card--loop-child': node.scopePath }" :style="{ left: `${node.x}px`, top: `${node.y}px` }" @pointerdown.stop="startNodeDrag(node, $event)">
+            <div v-for="node in visualNodes" :key="node.visualId" class="workflow-node-card" :class="[`workflow-node-card--${node.type}`, { 'workflow-node-card--dragging': dragging?.visualId === node.visualId, 'workflow-node-card--loop-child': node.scopePath }]" :style="{ left: `${node.x}px`, top: `${node.y}px` }" @pointerdown.stop="startNodeDrag(node, $event)">
               <span class="workflow-node-port workflow-node-port--input" title="输入依赖" @pointerup.stop="finishConnection(node, $event)" />
               <div class="workflow-node-type">{{ node.type }}<em v-if="node.scopePath"> · 循环内</em></div>
               <strong>{{ node.node_id }}</strong>
