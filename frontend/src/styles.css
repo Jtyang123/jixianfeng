@@ -1403,3 +1403,43 @@ input[type="checkbox"], input[type="radio"] {
 
 .human-review-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 11px; color: #9a542f; background: #fff2df; border: 1px solid #f1d2a9; border-radius: 9px; font-size: 11px; font-weight: 700; }
 .metric-negative { color: var(--red) !important; }
+
+@media (min-width: 901px) {
+  .control-panel {
+    max-height: calc(100vh - 104px);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .control-panel .primary-run {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    margin-top: auto;
+    box-shadow: 0 10px 24px rgba(217, 84, 49, .24), 0 -10px 18px rgba(255, 254, 249, .92);
+  }
+  .center-stack,
+  .agent-rail {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    height: calc(100vh - 104px);
+    min-height: 560px;
+  }
+  .center-stack {
+    height: calc(100vh - 104px);
+  }
+  .map-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .map-panel .leaflet-shell {
+    flex: 1;
+    height: auto;
+    min-height: 390px;
+  }
+  .agent-rail {
+    min-height: 560px;
+  }
+}
