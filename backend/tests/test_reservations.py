@@ -1,9 +1,16 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from threading import Barrier
 from pathlib import Path
 
 import pytest
 
+from fastapi.testclient import TestClient
+
+from app import api as api_module
 from app.database import Database
+from app.main import app
+from app.operations import OperationsRepository
 from app.reservations import InventoryReservationError, InventoryReservationService
 
 
@@ -130,3 +137,59 @@ def test_invalid_or_naive_expiry_does_not_release_active_reservations(tmp_path: 
         ).fetchall()]
     assert locked == 15
     assert statuses == ["active", "active", "active"]
+
+def test_concurrent_release_only_decrements_locked_quantity_once(tmp_path: Path):
+    db = Database(tmp_path / "reservation-concurrent-release.db", database_url="")
+    db.initialize()
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    row = next(item for item in inventory if item["quantity"] > 10 and item["locked_quantity"] == 0)
+    plan = _plan(row)
+    db.create_run("RUN-CONCURRENT-RELEASE", "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+    db.update_run("RUN-CONCURRENT-RELEASE", "awaiting_approval", {
+        "delivery": {"recommended_plan": {"plan_id": plan["plan_id"]}},
+        "rounds": [{"plans": [plan]}],
+    })
+    InventoryReservationService(db).reserve(
+        "RUN-CONCURRENT-RELEASE", plan, {"id": 1, "username": "admin"}, "test"
+    )
+    barrier = Barrier(2)
+
+    def release_once():
+        barrier.wait()
+        return InventoryReservationService(db).release("RUN-CONCURRENT-RELEASE")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: release_once(), range(2)))
+    assert sorted(item["count"] for item in results) == [0, 1]
+    with db.connect() as conn:
+        locked = conn.execute("SELECT locked_quantity FROM inventory WHERE id=?", (row["id"],)).fetchone()["locked_quantity"]
+    assert locked == 0
+
+def test_second_release_request_does_not_duplicate_audit_event(tmp_path: Path):
+    db = Database(tmp_path / "reservation-release-audit.db", database_url="")
+    db.initialize()
+    api_module.db = db
+    api_module.ops = OperationsRepository(db)
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    row = next(item for item in inventory if item["quantity"] > 10 and item["locked_quantity"] == 0)
+    plan = _plan(row)
+    run_id = "RUN-RELEASE-AUDIT"
+    db.create_run(run_id, "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+    db.update_run(run_id, "awaiting_approval", {
+        "delivery": {"recommended_plan": {"plan_id": plan["plan_id"]}},
+        "rounds": [{"plans": [plan]}],
+    })
+    InventoryReservationService(db).reserve(run_id, plan, {"id": 1, "username": "admin"}, "test")
+    client = TestClient(app)
+    with client:
+        first = client.post(f"/api/runs/{run_id}/release-reservation")
+        second = client.post(f"/api/runs/{run_id}/release-reservation")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["count"] == 1
+    assert second.json()["count"] == 0
+    release_events = [
+        event for event in db.events_after(run_id)
+        if event["type"] == "inventory.reservation_released"
+    ]
+    assert len(release_events) == 1

@@ -1467,12 +1467,13 @@ def release_run_reservation(run_id: str, request: Request) -> dict:
     if not db.get_run(run_id):
         raise HTTPException(status_code=404, detail="运行记录不存在")
     released = InventoryReservationService(db).release(run_id)
-    db.add_event(
-        run_id, "inventory.reservation_released", "orchestrator", "库存预留",
-        "库存预留已释放", f"释放 {released['count']} 条预留。", released,
-    )
-    auth_service.audit("inventory_reservation_released", "POST", f"/api/runs/{run_id}/release-reservation", 200,
-                       current, resource_type="run", resource_id=run_id)
+    if released["count"]:
+        db.add_event(
+            run_id, "inventory.reservation_released", "orchestrator", "库存预留",
+            "库存预留已释放", f"释放 {released['count']} 条预留。", released,
+        )
+        auth_service.audit("inventory_reservation_released", "POST", f"/api/runs/{run_id}/release-reservation", 200,
+                           current, resource_type="run", resource_id=run_id)
     return released
 
 

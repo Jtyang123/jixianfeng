@@ -60,13 +60,15 @@ class InventoryReservationService:
                 continue
             if expires_at > now:
                 continue
+            claimed = conn.execute(
+                "UPDATE inventory_reservations SET status='expired', released_at=? WHERE id=? AND status='active'",
+                (now_iso(), row["id"]),
+            )
+            if claimed.rowcount == 0:
+                continue
             conn.execute(
                 "UPDATE inventory SET locked_quantity=MAX(0, locked_quantity-?) WHERE id=?",
                 (float(row["quantity"]), row["inventory_id"]),
-            )
-            conn.execute(
-                "UPDATE inventory_reservations SET status='expired', released_at=? WHERE id=?",
-                (now_iso(), row["id"]),
             )
             released.append(row)
             affected_runs.add(row["run_id"])
@@ -241,17 +243,21 @@ class InventoryReservationService:
             rows = conn.execute(
                 "SELECT * FROM inventory_reservations WHERE run_id=? AND status='active'", (run_id,)
             ).fetchall()
+            released_rows = []
             for raw in rows:
                 row = dict(raw)
+                claimed = conn.execute(
+                    "UPDATE inventory_reservations SET status='released', released_at=? WHERE id=? AND status='active'",
+                    (now_iso(), row["id"]),
+                )
+                if claimed.rowcount == 0:
+                    continue
                 conn.execute(
                     "UPDATE inventory SET locked_quantity=MAX(0, locked_quantity-?) WHERE id=?",
                     (float(row["quantity"]), row["inventory_id"]),
                 )
-                conn.execute(
-                    "UPDATE inventory_reservations SET status='released', released_at=? WHERE id=?",
-                    (now_iso(), row["id"]),
-                )
-            if rows:
+                released_rows.append(row)
+            if released_rows:
                 run_row = conn.execute("SELECT result_json FROM runs WHERE id=?", (run_id,)).fetchone()
                 result = json.loads(run_row["result_json"] or "{}") if run_row else {}
                 if isinstance(result.get("approval"), dict):
@@ -262,7 +268,7 @@ class InventoryReservationService:
                        reserved_at=NULL, status='awaiting_approval', result_json=? WHERE id=?""",
                     (json.dumps(result, ensure_ascii=False), run_id),
                 )
-        return self._summary([dict(row) for row in rows])
+        return self._summary(released_rows)
 
 class ReservationMaintenanceWorker:
     def __init__(self, db_provider) -> None:
