@@ -64,6 +64,14 @@ def new_run_id() -> str:
     return f"RUN-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:4].upper()}"
 
 
+def build_executor_priorities(schedule: dict) -> dict[str, int]:
+    priorities = {}
+    for item in schedule.get("dispatch", []):
+        effective = item.get("effective_priority", item.get("priority", 0))
+        priorities[str(item["agent_id"])] = int(effective)
+    return priorities
+
+
 def build_ai_decision_matrix(
     agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict],
     llm_status: dict, llm_decisions: dict | None = None,
@@ -826,7 +834,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics)
         agent_executor = AsyncPriorityExecutor(
-            {item["agent_id"]: int(item["priority"]) for item in schedule["dispatch"]},
+            build_executor_priorities(schedule),
             max_workers=3,
         )
 
@@ -841,6 +849,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "loop": schedule["loop"],
             "executor": "asyncio.PriorityQueue",
             "workers": agent_executor.max_workers,
+            "dispatch": schedule["dispatch"],
         })
         emit(db, run_id, "rag.retrieved", "orchestrator", "RAG 规则检索完成", f"检索到 {len(evidence)} 条可引用规则。", {
             "documents": [{"id": item["id"], "title": item["title"], "score": item["score"]} for item in evidence],

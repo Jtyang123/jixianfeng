@@ -528,3 +528,14 @@ def test_knowledge_tool_result_is_consumed_by_downstream_context(tmp_path: Path)
     assert run["result"]["execution_evidence"]
     consumed = [event for event in db.events_after("RUN-KNOWLEDGE-TOOL") if event["type"] == "tool.consumed"]
     assert any(event["payload"].get("tool_id") == "knowledge_search" for event in consumed)
+
+def test_executor_priorities_use_effective_priority_values():
+    schedule = {
+        "dispatch": [
+            {"agent_id": "matching_agent", "priority": 88, "effective_priority": 61, "load_penalty": 27},
+            {"agent_id": "verifier_agent", "priority": 99, "effective_priority": 99, "load_penalty": 0},
+        ]
+    }
+    priorities = orchestrator_module.build_executor_priorities(schedule)
+    assert priorities == {"matching_agent": 61, "verifier_agent": 99}
+    assert priorities["matching_agent"] < schedule["dispatch"][0]["priority"]
