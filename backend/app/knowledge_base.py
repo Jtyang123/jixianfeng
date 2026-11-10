@@ -384,14 +384,18 @@ def sanitize_agent_payload(payload: dict) -> dict:
     return safe
 
 
+_EMBEDDING_SERVICE = EmbeddingService()
+_CORPUS_CACHE: dict[tuple[str, int], dict] = {}
+
+
 class KnowledgeRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
-        self.embedding = EmbeddingService()
-        self._corpus_cache: dict[tuple[str, int], dict] = {}
+        self.embedding = _EMBEDDING_SERVICE
+        self._corpus_cache = _CORPUS_CACHE
 
     def _schedule_embedding_backfill(self, chunk_ids: list[int]) -> None:
-        if not chunk_ids or not self.embedding.remote:
+        if not chunk_ids or not (self.embedding.remote or self.embedding.local_model):
             return
         with _EMBEDDING_BACKFILL_LOCK:
             new_ids = [chunk_id for chunk_id in dict.fromkeys(chunk_ids) if chunk_id not in _EMBEDDING_BACKFILL_PENDING]
@@ -578,8 +582,10 @@ class KnowledgeRepository:
                         item["tokens"] = Counter(_semantic_terms(content))
                         documents.append(item)
                 backfill_ids = []
+                semantic_active = bool(self.embedding.local_model or self.embedding.remote)
                 for item, content in stale_documents:
-                    item["embedding"] = embed_text(content, dimensions=int(query_meta["dimensions"]))
+                    item["_space_mismatch"] = semantic_active
+                    item["embedding"] = [] if semantic_active else embed_text(content, dimensions=int(query_meta["dimensions"]))
                     item["tokens"] = Counter(_semantic_terms(content))
                     documents.append(item)
                     backfill_ids.append(int(item["id"]))
@@ -615,11 +621,16 @@ class KnowledgeRepository:
             lowered = content.lower()
             exact_matches = sum(1 for term in terms if term in lowered)
             exact_ratio = exact_matches / max(len(terms), 1)
-            cosine = cosine_similarity(query_vector, item["embedding"])
+            space_mismatch = bool(item.get("_space_mismatch"))
+            cosine = 0.0 if space_mismatch else cosine_similarity(query_vector, item["embedding"])
             normalized_bm25 = bm25 / max_bm25 if max_bm25 > 0 else 0.0
             semantic_hits = sum(1 for term in set(semantic_query) if term in item["tokens"])
             semantic_ratio = semantic_hits / max(len(set(semantic_query)), 1)
-            hybrid_score = cosine * 0.55 + normalized_bm25 * 0.30 + exact_ratio * 0.10 + semantic_ratio * 0.05
+            hybrid_score = (
+                normalized_bm25 * 0.75 + exact_ratio * 0.15 + semantic_ratio * 0.10
+                if space_mismatch
+                else cosine * 0.55 + normalized_bm25 * 0.30 + exact_ratio * 0.10 + semantic_ratio * 0.05
+            )
             if hybrid_score < 0.035:
                 continue
             heading = f"{item.get('section') or ''} {item.get('title') or ''}".lower()
@@ -661,6 +672,7 @@ class KnowledgeRepository:
                     "exact_ratio": round(exact_ratio, 4),
                     "semantic_ratio": round(semantic_ratio, 4),
                     "heading_overlap": round(heading_overlap, 4),
+                    "space_mismatch": space_mismatch,
                 },
                 "_hybrid": hybrid_score,
                 "_heading_overlap": heading_overlap,
