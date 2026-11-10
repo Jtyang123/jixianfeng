@@ -22,7 +22,7 @@ from .registry import AgentRegistryService, apply_agent_load
 from .reservations import InventoryReservationService
 from .retry_queue import RetryQueueRepository
 from .scheduler import AsyncPriorityExecutor, CORE_WORKFLOW, build_dynamic_schedule
-from .tools import ToolError, ToolService
+from .tools import ToolError, ToolRepository, ToolService
 from .workflow_engine import WorkflowEngine, WorkflowRepository
 
 logger = logging.getLogger(__name__)
@@ -252,6 +252,55 @@ async def run_planner_orchestration(
         "demand_plan", "knowledge_search", "inventory_query", "route_query",
         "vehicle_query", "generate_plans", "verify_plans", "delivery_package", "escalate_human",
     ]
+    tool_agent_map = {
+        "demand_plan": "demand_agent",
+        "knowledge_search": "demand_agent",
+        "inventory_query": "matching_agent",
+        "route_query": "matching_agent",
+        "vehicle_query": "matching_agent",
+        "generate_plans": "matching_agent",
+        "verify_plans": "verifier_agent",
+        "delivery_package": "delivery_agent",
+        "escalate_human": "orchestrator",
+    }
+    tool_repository = ToolRepository(db)
+
+    async def timed_planner_call(operation, func, *args):
+        started = time.perf_counter()
+        try:
+            result = await func(*args)
+            db.record_agent_performance(
+                "planner", run_id, operation, True,
+                (time.perf_counter() - started) * 1000, "",
+            )
+            return result
+        except Exception as exc:
+            db.record_agent_performance(
+                "planner", run_id, operation, False,
+                (time.perf_counter() - started) * 1000, type(exc).__name__,
+            )
+            raise
+
+    def tool_result_summary(tool: str, result: dict) -> dict:
+        if tool == "demand_plan":
+            return {"items": len(result.get("items", [])), "confidence": result.get("confidence")}
+        if tool == "knowledge_search":
+            return {"items": len(result.get("items", []))}
+        if tool == "inventory_query":
+            return {"items": result.get("items", 0), "available_rows": result.get("available_rows", 0), "total_quantity": result.get("total_quantity", 0)}
+        if tool == "route_query":
+            return {"items": result.get("items", 0), "closed_routes": len(result.get("closed_routes", []))}
+        if tool == "vehicle_query":
+            return {"items": result.get("items", 0), "available": result.get("available", 0)}
+        if tool == "generate_plans":
+            plans = result.get("plans", [])
+            return {"plan_count": len(plans), "plan_ids": [item.get("plan_id") for item in plans], "metrics": [item.get("metrics", {}) for item in plans]}
+        if tool == "verify_plans":
+            return {"verdict": result.get("verdict"), "score": result.get("score"), "blockers": result.get("blocker_summary", [])}
+        if tool == "delivery_package":
+            recommended = result.get("recommended_plan") or {}
+            return {"status": result.get("status"), "recommended_plan_id": recommended.get("plan_id"), "alternatives": len(result.get("alternatives", [])), "risk_count": len(result.get("risk_alerts", []))}
+        return {"status": result.get("status"), "error": result.get("error")}
     planner_request = {
         "event": request.get("event", {}),
         "scenario": {key: scenario.get(key) for key in ("id", "name", "description", "severity", "affected_population")},
@@ -262,7 +311,7 @@ async def run_planner_orchestration(
             "vehicles": len(vehicles), "inventory_rows": len(inventory),
         },
     }
-    plan = await planner.create_plan(planner_request, available_tools)
+    plan = await timed_planner_call("create_plan", planner.create_plan, planner_request, available_tools)
     emit(db, run_id, "llm.thinking", "planner", "LLM生成任务计划", plan.get("summary", ""), {
         "mode": plan.get("mode"), "steps": plan.get("steps", []), "available_tools": available_tools,
     })
@@ -293,9 +342,14 @@ async def run_planner_orchestration(
     while executed_steps < 10 and step_index < len(current_plan.get("steps", [])):
         step = current_plan["steps"][step_index]
         tool = str(step.get("tool") or "")
+        agent_id = tool_agent_map.get(tool, "orchestrator")
+        emit(db, run_id, "agent.started", agent_id, f"LLM Planner 调用 {AGENT_NAMES.get(agent_id, agent_id)}", step.get("reason", ""), {
+            "runtime": "llm-planner", "step_id": step.get("id"), "tool": tool,
+        })
         emit(db, run_id, "llm.thinking", "planner", f"LLM选择工具 · {tool}", step.get("reason", ""), {
             "step_id": step.get("id"), "tool": tool, "input": step.get("input", {}),
         })
+        step_started = time.perf_counter()
         result: dict
         if tool == "demand_plan":
             result = ensure_demand()
@@ -349,7 +403,8 @@ async def run_planner_orchestration(
                     })
                     break
                 attempt += 1
-                current_plan = await planner.create_plan(
+                current_plan = await timed_planner_call(
+                    "create_plan", planner.create_plan,
                     {**planner_request, "feedback": {"missing": "plans", "required_action": "generate_plans"}},
                     available_tools,
                 )
@@ -392,8 +447,19 @@ async def run_planner_orchestration(
         else:
             result = {"error": f"未知工具：{tool}"}
         executed_steps += 1
+        step_latency_ms = (time.perf_counter() - step_started) * 1000
+        result_summary = tool_result_summary(tool, result if isinstance(result, dict) else {"result": result})
+        tool_status = "failed" if isinstance(result, dict) and result.get("error") else "success"
+        tool_repository.record_call(
+            f"planner:{tool}", run_id, tool_status, step.get("input", {}), result_summary, step_latency_ms,
+        )
+        emit(db, run_id, "agent.completed", agent_id, f"LLM Planner 完成 {AGENT_NAMES.get(agent_id, agent_id)}", "工具结果已返回。", {
+            "runtime": "llm-planner", "step_id": step.get("id"), "tool": tool,
+            "status": tool_status, "latency_ms": round(step_latency_ms, 2), "summary": result_summary,
+        })
         remaining = current_plan.get("steps", [])[step_index + 1:]
-        decision = await planner.decide(
+        decision = await timed_planner_call(
+            "decide", planner.decide,
             {"tool": tool, "result": result},
             remaining,
             {
@@ -422,7 +488,8 @@ async def run_planner_orchestration(
             rework_directives.append(directive)
             prompt_adaptations.append(adaptation)
             attempt += 1
-            current_plan = await planner.create_plan(
+            current_plan = await timed_planner_call(
+                "create_plan", planner.create_plan,
                 {**planner_request, "feedback": {"issue_codes": verification.get("blocker_summary", []), "required_fixes": verification.get("required_fixes", [])}},
                 available_tools,
             )
@@ -438,7 +505,8 @@ async def run_planner_orchestration(
                 break
             if verification and verification.get("verdict") == "pass" and delivery is None:
                 last_decision = {"decision": "continue", "reason": "方案已通过核验，仍需生成交付包。", "next_tool": "delivery_package"}
-                current_plan = await planner.create_plan(
+                current_plan = await timed_planner_call(
+                    "create_plan", planner.create_plan,
                     {**planner_request, "feedback": {"verification": "pass", "required_action": "delivery_package"}},
                     available_tools,
                 )
@@ -446,7 +514,8 @@ async def run_planner_orchestration(
                 continue
             break
         if decision.get("decision") == "replan":
-            current_plan = await planner.create_plan(
+            current_plan = await timed_planner_call(
+                "create_plan", planner.create_plan,
                 {**planner_request, "feedback": {"last_decision": decision, "last_tool": tool}},
                 available_tools,
             )

@@ -179,8 +179,30 @@ def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, mo
     assert decisions_by_id["D8"]["source"] == "llm-planner"
     assert decisions_by_id["D3"]["applied"] is False
     assert decisions_by_id["D3"]["source"] == "deterministic-scorer"
-    event_types = [event["type"] for event in db.events_after(run_id)]
+    events = db.events_after(run_id)
+    event_types = [event["type"] for event in events]
     assert "llm.thinking" in event_types
+    started_agents = {
+        event["agent_id"] for event in events
+        if event["type"] == "agent.started" and event["agent_id"] in {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
+    }
+    assert started_agents == {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
+    completed_planner_events = [
+        event for event in events
+        if event["type"] == "agent.completed" and event["payload"].get("runtime") == "llm-planner"
+    ]
+    assert len(completed_planner_events) == run["result"]["planner_trace"]["executed_steps"]
+    with db.connect() as conn:
+        tool_call_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM tool_calls WHERE tool_id LIKE 'planner:%' AND session_id=?",
+            (run_id,),
+        ).fetchone()["count"]
+        planner_performance_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM agent_performance WHERE agent_id='planner' AND run_id=?",
+            (run_id,),
+        ).fetchone()["count"]
+    assert tool_call_count == run["result"]["planner_trace"]["executed_steps"]
+    assert planner_performance_count >= run["result"]["planner_trace"]["executed_steps"] + 1
 
 def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "parallel-orchestrator.db", database_url="")
