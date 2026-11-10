@@ -259,3 +259,10 @@ def test_all_routes_closed_returns_explicit_road_blocker(tmp_path: Path):
     verification = verify_plans(plans, _single_demand(), inventory, db.route_rows(), db.vehicle_rows(), closed)
     assert verification["verdict"] == "rework"
     assert any(code.startswith("ROAD-") for code in verification["blocker_summary"])
+    road_issue = next(
+        issue for report in verification["reports"] for issue in report["verification"]["blockers"]
+        if issue["code"] == "ROAD-ALL-CLOSED"
+    )
+    assert road_issue["type"] == "道路"
+    assert "所有可用路线均已封闭" in road_issue["message"]
+    assert "封闭路线共" in road_issue["evidence"]

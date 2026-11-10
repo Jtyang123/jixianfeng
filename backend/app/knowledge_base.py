@@ -497,7 +497,7 @@ class KnowledgeRepository:
                 continue
             content = str(doc.get("content") or "")
             self.insert_document(
-                doc["title"], doc.get("category") or "??", doc.get("source") or "?????",
+                doc["title"], doc.get("category") or "其他", doc.get("source") or "内置规则库",
                 [{
                     "text": content, "page_no": None, "section": doc["title"],
                     "char_start": 0, "char_end": len(content),

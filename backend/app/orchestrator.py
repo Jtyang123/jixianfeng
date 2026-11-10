@@ -97,11 +97,11 @@ def build_ai_decision_matrix(
     chosen_by = str(agent_decision.get("chosen_by") or "")
     d3_applied = bool(agent_decision.get("applied"))
     d3_source = agent_decision.get("source", "deterministic-fallback")
-    d3_boundary = "??????????????????"
+    d3_boundary = "只能从已通过独立核验的方案集合中选择"
     if chosen_by == "deterministic-scorer":
         d3_applied = False
         d3_source = "deterministic-scorer"
-        d3_boundary = "?????????????????????LLM?????????"
+        d3_boundary = "推荐由确定性权重排序给出，LLM 未参与方案选择"
     planner_repair_policies = [str(item) for item in planner_decision.get("repair_policies", []) if item]
     d2_applied = bool(rework_parsed) and rework_trace.get("mode") == "agentarts"
     d2_source = rework_trace.get("mode", "deterministic-fallback") if isinstance(rework_trace, dict) else "deterministic-fallback"
