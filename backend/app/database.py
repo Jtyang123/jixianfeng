@@ -5,6 +5,7 @@ import math
 import re
 import sqlite3
 import time
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -415,6 +416,20 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, status);
+
+                CREATE TABLE IF NOT EXISTS agent_performance (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL DEFAULT '',
+                    operation TEXT NOT NULL DEFAULT 'invoke',
+                    success INTEGER NOT NULL DEFAULT 0,
+                    latency_ms REAL NOT NULL DEFAULT 0,
+                    error_type TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_performance_agent
+                ON agent_performance(agent_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS agent_memory (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1265,6 +1280,45 @@ class Database:
                        WHERE id=?""",
                     (status, _json(result), now_iso(), run_id),
                 )
+
+    def record_agent_performance(
+        self, agent_id: str, run_id: str, operation: str, success: bool,
+        latency_ms: float, error_type: str = "",
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO agent_performance
+                   (agent_id, run_id, operation, success, latency_ms, error_type, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (agent_id, run_id, operation, 1 if success else 0, round(float(latency_ms), 2), error_type[:160], now_iso()),
+            )
+
+    def agent_performance_summary(self) -> dict[str, dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT agent_id, COUNT(*) AS samples, SUM(success) AS successes,
+                          AVG(latency_ms) AS average_latency_ms
+                   FROM agent_performance GROUP BY agent_id"""
+            ).fetchall()
+            error_rows = conn.execute(
+                """SELECT agent_id, error_type, COUNT(*) AS count
+                   FROM agent_performance WHERE error_type <> ''
+                   GROUP BY agent_id, error_type"""
+            ).fetchall()
+        errors: dict[str, dict[str, int]] = defaultdict(dict)
+        for row in error_rows:
+            errors[row["agent_id"]][row["error_type"]] = int(row["count"])
+        result = {}
+        for row in rows:
+            samples = int(row["samples"] or 0)
+            successes = int(row["successes"] or 0)
+            result[row["agent_id"]] = {
+                "historical_samples": samples,
+                "historical_success_rate": round(successes / samples, 4) if samples else 0.0,
+                "historical_average_latency_ms": round(float(row["average_latency_ms"] or 0), 2),
+                "historical_error_types": errors.get(row["agent_id"], {}),
+            }
+        return result
 
     def set_run_status(self, run_id: str, status: str) -> None:
         with self.connect() as conn:

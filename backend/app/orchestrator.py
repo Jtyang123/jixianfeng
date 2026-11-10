@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from .database import Database
 from .knowledge_base import KnowledgeRepository, sanitize_agent_payload
 from .local_agents import invoke_local_registered_agent
 from .llm import LLMService
+from .llm_planner import LLMPlanner
 from .memory import MemoryRepository
 from .registry import AgentRegistryService, apply_agent_load
 from .reservations import InventoryReservationService
@@ -188,6 +190,259 @@ async def pace(seconds: float) -> None:
         await asyncio.sleep(delay)
 
 
+async def run_planner_orchestration(
+    db: Database,
+    run_id: str,
+    request: dict,
+    scenario: dict,
+    materials: list[dict],
+    destinations: list[dict],
+    warehouses: list[dict],
+    routes: list[dict],
+    vehicles: list[dict],
+    inventory: list[dict],
+    evidence: list[dict],
+    schedule: dict,
+    planner,
+    llm_service,
+) -> dict:
+    available_tools = [
+        "demand_plan", "knowledge_search", "inventory_query", "route_query",
+        "vehicle_query", "generate_plans", "verify_plans", "delivery_package", "escalate_human",
+    ]
+    planner_request = {
+        "event": request.get("event", {}),
+        "scenario": {key: scenario.get(key) for key in ("id", "name", "description", "severity", "affected_population")},
+        "demand_items": request.get("demand_items", []),
+        "weights": request.get("weights", {}),
+        "resource_summary": {
+            "warehouses": len(warehouses), "routes": len(routes),
+            "vehicles": len(vehicles), "inventory_rows": len(inventory),
+        },
+    }
+    plan = await planner.create_plan(planner_request, available_tools)
+    emit(db, run_id, "llm.thinking", "planner", "LLM生成任务计划", plan.get("summary", ""), {
+        "mode": plan.get("mode"), "steps": plan.get("steps", []), "available_tools": available_tools,
+    })
+    demand_plan = None
+    plans: list[dict] = []
+    verification = None
+    delivery = None
+    rounds: list[dict] = []
+    rework_directives: list[dict] = []
+    prompt_adaptations: list[dict] = []
+    decisions: list[dict] = []
+    attempt = 1
+    executed_steps = 0
+    step_index = 0
+    current_plan = plan
+    last_decision = {"decision": "continue", "reason": "开始执行LLM计划", "next_tool": None}
+
+    def ensure_demand() -> dict:
+        nonlocal demand_plan
+        if demand_plan is None:
+            demand_plan = build_demand_plan(request, materials, destinations)
+            demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan.get("evidence_refs", []) + [item["id"] for item in evidence]))
+            emit(db, run_id, "agent.completed", "demand_agent", "需求工具执行完成", demand_plan["summary"], {
+                "items": len(demand_plan["items"]), "confidence": demand_plan["confidence"],
+            })
+        return demand_plan
+
+    while executed_steps < 10 and step_index < len(current_plan.get("steps", [])):
+        step = current_plan["steps"][step_index]
+        tool = str(step.get("tool") or "")
+        emit(db, run_id, "llm.thinking", "planner", f"LLM选择工具 · {tool}", step.get("reason", ""), {
+            "step_id": step.get("id"), "tool": tool, "input": step.get("input", {}),
+        })
+        result: dict
+        if tool == "demand_plan":
+            result = ensure_demand()
+        elif tool == "inventory_query":
+            result = {
+                "items": len(inventory),
+                "available_rows": sum(1 for item in inventory if item.get("status") == "available"),
+                "total_quantity": round(sum(float(item.get("quantity") or 0) for item in inventory), 2),
+            }
+        elif tool == "route_query":
+            result = {"items": len(routes), "closed_routes": request.get("event", {}).get("closed_route_ids", [])}
+        elif tool == "vehicle_query":
+            result = {"items": len(vehicles), "available": sum(1 for item in vehicles if item.get("status") == "available")}
+        elif tool == "knowledge_search":
+            result = {"items": evidence}
+        elif tool == "generate_plans":
+            demand_plan = ensure_demand()
+            directive = rework_directives[-1] if rework_directives else None
+            plans = generate_plans(
+                demand_plan, inventory, warehouses, routes, vehicles,
+                attempt=attempt, closed_routes=request.get("event", {}).get("closed_route_ids", []),
+                rework_directive=directive,
+            )
+            emit(db, run_id, "plan.generated", "matching_agent", f"第 {attempt} 轮候选方案生成", "LLM规划调用确定性方案生成工具。", {
+                "plans": [{"plan_id": item["plan_id"], "name": item["name"], "metrics": item["metrics"]} for item in plans],
+            })
+            result = {"plans": plans}
+        elif tool == "verify_plans":
+            demand_plan = ensure_demand()
+            if not plans:
+                last_decision = {"decision": "replan", "reason": "核验前缺少候选方案，要求重新规划。", "next_tool": "generate_plans"}
+                emit(db, run_id, "llm.thinking", "planner", "前置条件不足，触发重规划", last_decision["reason"], last_decision)
+                break
+            verification = verify_plans(
+                plans, demand_plan, inventory, routes, vehicles,
+                request.get("event", {}).get("closed_route_ids", []),
+            )
+            rounds.append({
+                "attempt": attempt, "plans": plans, "verification": verification,
+                "mode": "llm-react", "rework_directive": rework_directives[-1] if rework_directives else None,
+            })
+            emit(
+                db, run_id, "verification.passed" if verification["verdict"] == "pass" else "verification.failed",
+                "verifier_agent", f"第 {attempt} 轮核验完成",
+                f"核验结论：{verification['verdict']}，评分 {verification['score']}。", verification,
+            )
+            result = verification
+        elif tool == "delivery_package":
+            if not verification or verification.get("verdict") != "pass":
+                delivery = None
+                result = {"status": "blocked", "reason": "核验未通过，禁止生成可执行交付包。"}
+            else:
+                delivery = build_delivery_package(
+                    verification, scenario, db.latest_snapshot(), request.get("weights", {}),
+                    agent_decision={"applied": True, "recommended_plan_id": None, "source": "llm-planner", "rationale": "LLM Planner完成决策。"},
+                )
+                result = delivery
+        elif tool == "escalate_human":
+            result = {"status": "human_escalation", "reason": step.get("reason", "")}
+        else:
+            result = {"error": f"未知工具：{tool}"}
+        executed_steps += 1
+        remaining = current_plan.get("steps", [])[step_index + 1:]
+        decision = await planner.decide(
+            {"tool": tool, "result": result},
+            remaining,
+            {
+                "attempt": attempt,
+                "verification_verdict": (verification or {}).get("verdict"),
+                "has_delivery": delivery is not None,
+                "executed_steps": executed_steps,
+                "last_reason": last_decision.get("reason", ""),
+            },
+        )
+        decisions.append({"step": step, "decision": decision})
+        last_decision = decision
+        emit(db, run_id, "llm.thinking", "planner", "LLM判断工具结果", decision.get("reason", ""), decision)
+
+        if tool == "verify_plans" and verification and verification.get("verdict") != "pass":
+            allowed = allowed_rework_policies(verification)
+            selected_policy = decision.get("repair_policy") or next(
+                (item["id"] for item in allowed if item["id"] != "escalate_human"), "escalate_human"
+            )
+            if attempt >= 3 or selected_policy == "escalate_human":
+                last_decision = {"decision": "human", "reason": "达到自适应重算上限或没有安全修复策略。", "next_tool": "escalate_human"}
+                break
+            directive = build_rework_directive(verification, attempt + 1, selected_policy=selected_policy)
+            adaptation = build_prompt_adaptation(verification, directive)
+            directive["prompt_adaptation"] = adaptation
+            rework_directives.append(directive)
+            prompt_adaptations.append(adaptation)
+            attempt += 1
+            current_plan = await planner.create_plan(
+                {**planner_request, "feedback": {"issue_codes": verification.get("blocker_summary", []), "required_fixes": verification.get("required_fixes", [])}},
+                available_tools,
+            )
+            emit(db, run_id, "llm.thinking", "planner", "LLM触发重规划", "核验未通过，基于问题代码重新生成工具计划。", {
+                "blockers": verification.get("blocker_summary", []),
+                "repair_policy": selected_policy,
+                "adaptive_prompt": adaptation,
+            })
+            step_index = 0
+            continue
+        if decision.get("decision") in {"stop", "human"}:
+            if delivery is not None or tool in {"escalate_human", "delivery_package"}:
+                break
+            if verification and verification.get("verdict") == "pass" and delivery is None:
+                last_decision = {"decision": "continue", "reason": "方案已通过核验，仍需生成交付包。", "next_tool": "delivery_package"}
+                current_plan = await planner.create_plan(
+                    {**planner_request, "feedback": {"verification": "pass", "required_action": "delivery_package"}},
+                    available_tools,
+                )
+                step_index = 0
+                continue
+            break
+        if decision.get("decision") == "replan":
+            current_plan = await planner.create_plan(
+                {**planner_request, "feedback": {"last_decision": decision, "last_tool": tool}},
+                available_tools,
+            )
+            step_index = 0
+            continue
+        next_tool = decision.get("next_tool")
+        if next_tool and next_tool != "stop":
+            next_index = next(
+                (index for index, item in enumerate(current_plan.get("steps", [])[step_index + 1:], start=step_index + 1) if item.get("tool") == next_tool),
+                step_index + 1,
+            )
+            step_index = next_index
+        else:
+            step_index += 1
+
+    if delivery is None:
+        final_verification = verification or {"verdict": "rework", "score": 0, "reports": [], "blocker_summary": ["PLANNER-INCOMPLETE"], "required_fixes": ["LLM计划未完成核验与交付"]}
+        delivery = build_delivery_package(final_verification, scenario, db.latest_snapshot(), request.get("weights", {}))
+    else:
+        final_verification = verification or {"verdict": "rework", "score": 0, "reports": [], "blocker_summary": [], "required_fixes": []}
+    recommended = delivery.get("recommended_plan") or {}
+    agent_decision = {
+        "applied": bool(recommended),
+        "recommended_plan_id": recommended.get("plan_id"),
+        "recommended_strategy": None,
+        "rationale": last_decision.get("reason", ""),
+        "source": "llm-planner",
+    }
+    ai_matrix = build_ai_decision_matrix(agent_decision, {}, final_verification, [], llm_service.status, {})
+    return {
+        "run_id": run_id,
+        "runtime": "llm-planner",
+        "runtime_label": "LLM ReAct Planner + 确定性工具安全执行",
+        "scenario": scenario,
+        "event": request["event"],
+        "closed_routes": request.get("event", {}).get("closed_route_ids", []),
+        "demand": demand_plan or {},
+        "rounds": rounds,
+        "final_verification": final_verification,
+        "delivery": delivery,
+        "rework_directives": rework_directives,
+        "prompt_adaptations": prompt_adaptations,
+        "active_prompt_versions": {"planner": "llm-react-v1", "matching_agent": "v1.4", "verifier_agent": "v1.5", "delivery_agent": "v1.2"},
+        "loop_metrics": {
+            "attempts": len(rounds), "max_attempts": 3,
+            "initial_score": rounds[0]["verification"]["score"] if rounds else 0,
+            "final_score": final_verification.get("score", 0),
+            "score_gain": (final_verification.get("score", 0) - rounds[0]["verification"]["score"]) if rounds else 0,
+            "blockers_found": len(rounds[0]["verification"].get("blocker_summary", [])) if rounds else 0,
+            "final_blockers": len(final_verification.get("blocker_summary", [])),
+            "adaptive_categories": sorted({category for item in rework_directives for category in item.get("categories", [])}),
+            "adaptive_prompt_versions": [item["active_version"] for item in prompt_adaptations],
+            "adaptive_tool_overrides": list(dict.fromkeys(override for item in rework_directives for override in item.get("tool_overrides", []))),
+            "workflow_paths": ["llm-react"],
+            "selected_repair_policies": [item.get("selected_policy", "") for item in rework_directives],
+            "rework_rounds": len(rework_directives),
+            "converged": final_verification.get("verdict") == "pass",
+            "exhausted": final_verification.get("verdict") != "pass" and executed_steps >= 10,
+        },
+        "retrieval": evidence,
+        "agent_decision": agent_decision,
+        "ai_decision_matrix": ai_matrix,
+        "planner_trace": {"initial_plan": plan, "decisions": decisions, "executed_steps": executed_steps},
+        "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
+        "agentarts_trace": {},
+        "extension_reviews": [],
+        "extension_workflow_runs": [],
+        "ai_reasoning": {},
+        "data_mode": "SIMULATED",
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
 async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     llm_service = LLMService()
     agentarts = AgentArtsBridge()
@@ -226,6 +481,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         if not agentarts.enabled:
             return {"mode": "local-fallback", "reason": "AgentArts 未配置"}
         safe_payload = sanitize_agent_payload(payload)
+        started_at = time.perf_counter()
         try:
             endpoint = agentarts.endpoint_for(agent_id)
             emit(db, run_id, "agentarts.called", agent_id, f"调用 AgentArts · {AGENT_NAMES.get(agent_id, agent_id)}", "已向华为云 AgentArts Runtime 提交结构化任务。", {
@@ -254,12 +510,20 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             if parsed:
                 response["parsed"] = parsed
             agentarts_trace[trace_id or agent_id] = response
+            db.record_agent_performance(
+                agent_id, run_id, trace_id or "agentarts_invoke", True,
+                (time.perf_counter() - started_at) * 1000, "",
+            )
             emit(db, run_id, "agentarts.completed", agent_id, f"AgentArts 返回 · {AGENT_NAMES.get(agent_id, agent_id)}", "已完成云端智能体调用，结果等待确定性规则复核。", {
                 "session_id": run_id,
             })
             return response
         except Exception as exc:
             fallback = {"mode": "local-fallback-after-agentarts-error", "error": str(exc)[:240]}
+            db.record_agent_performance(
+                agent_id, run_id, trace_id or "agentarts_invoke", False,
+                (time.perf_counter() - started_at) * 1000, type(exc).__name__,
+            )
             agentarts_trace[trace_id or agent_id] = fallback
             RetryQueueRepository(db).enqueue(
                 "agentarts", {"agent_id": agent_id, "payload": safe_payload, "session_id": run_id},
@@ -506,6 +770,31 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "documents": [{"id": item["id"], "title": item["title"], "score": item["score"]} for item in evidence],
         })
         await pace(0.25)
+        planner = LLMPlanner()
+        if planner.enabled:
+            try:
+                planner_result = await run_planner_orchestration(
+                    db, run_id, request, scenario, materials, destinations, warehouses,
+                    routes, vehicles, inventory, evidence, schedule, planner, llm_service,
+                )
+                planner_result["memory_context"] = memory_context
+                planner_result["memory_writes"] = []
+                planner_result["llm_status"] = llm_service.status
+                planner_result["planner_status"] = planner.status
+                terminal_status = "awaiting_approval" if planner_result["delivery"]["status"] == "ready" else "needs_human"
+                db.update_run(run_id, terminal_status, planner_result)
+                emit(
+                    db, run_id, "awaiting.approval" if terminal_status == "awaiting_approval" else "human.escalation",
+                    "orchestrator", "LLM ReAct 编排完成" if terminal_status == "awaiting_approval" else "LLM ReAct 编排转人工",
+                    planner_result["delivery"]["summary"],
+                    {"status": terminal_status, "planner_steps": planner_result["planner_trace"]["executed_steps"]},
+                )
+                return
+            except Exception:
+                logger.exception("LLM planner orchestration failed for run %s; falling back to fixed workflow", run_id)
+                emit(db, run_id, "llm.thinking", "planner", "LLM Planner执行失败，自动回退", "保留确定性工具流程，确保演示和调度不中断。", {"fallback": "fixed-workflow"})
+        else:
+            emit(db, run_id, "llm.thinking", "planner", "LLM Planner未启用", "使用固定安全流程；配置LLM后可启用ReAct规划。", {"fallback": "fixed-workflow"})
 
         pipeline_state: dict = {"demand": None, "plans": None, "verification": None, "demand_workflows_done": False, "execution_inventory": None, "execution_evidence": [], "inventory_source": "database snapshot", "prompt_adaptations": [], "decision_weights": request.get("weights", {}), "active_prompt_versions": {"demand_agent": "v1.3", "matching_agent": "v1.4", "verifier_agent": "v1.5", "delivery_agent": "v1.2"}}
         core_runs: list[dict] = []

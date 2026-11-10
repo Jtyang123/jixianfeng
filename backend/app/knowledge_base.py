@@ -20,6 +20,7 @@ from openpyxl import load_workbook
 from .config import (
     EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_BATCH_SIZE, EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT,
+    LOCAL_EMBEDDING_ENABLED, LOCAL_EMBEDDING_MODEL,
 )
 from .database import Database, now_iso
 
@@ -230,16 +231,30 @@ class EmbeddingService:
             self.provider in {"openai", "openai-compatible", "remote"}
             and EMBEDDING_BASE_URL and EMBEDDING_MODEL
         )
+        self.local_model = None
+        if LOCAL_EMBEDDING_ENABLED:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self.local_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+                self.provider = "sentence-transformers"
+                self.model = LOCAL_EMBEDDING_MODEL
+                self.dimensions = int(self.local_model.get_sentence_embedding_dimension())
+            except Exception:
+                logger.warning("Local sentence-transformers model unavailable; using configured fallback", exc_info=True)
 
     @property
     def status(self) -> dict:
+        semantic = bool(self.local_model or self.remote)
+        provider = "sentence-transformers" if self.local_model else (self.provider if self.remote else "hash")
+        model = LOCAL_EMBEDDING_MODEL if self.local_model else (self.model if self.remote else "domain-hash-v1")
         return {
-            "provider": self.provider if self.remote else "hash",
-            "model": self.model if self.remote else "domain-hash-v1",
+            "provider": provider,
+            "model": model,
             "dimensions": self.dimensions,
             "remote_configured": self.remote,
-            "semantic_retrieval": self.remote,
-            "default_mode": "remote-semantic" if self.remote else "offline-lexical-hash",
+            "local_model_configured": bool(self.local_model),
+            "semantic_retrieval": semantic,
+            "default_mode": "local-sentence-transformers" if self.local_model else ("remote-semantic" if self.remote else "offline-lexical-hash"),
         }
 
     def _hash_embedding(self, text: str) -> tuple[list[float], dict]:
@@ -250,6 +265,13 @@ class EmbeddingService:
         items = [str(text or "") for text in texts]
         if not items:
             return []
+        if self.local_model is not None:
+            try:
+                vectors = self.local_model.encode(items, normalize_embeddings=True, show_progress_bar=False)
+                meta = {"provider": "sentence-transformers", "model": LOCAL_EMBEDDING_MODEL, "dimensions": self.dimensions, "mode": "local"}
+                return [([float(value) for value in vector], dict(meta)) for vector in vectors]
+            except Exception:
+                logger.warning("Local sentence-transformers encoding failed; using fallback", exc_info=True)
         if self.remote:
             vectors: list[list[float]] = []
             try:
@@ -275,6 +297,15 @@ class EmbeddingService:
         return [self._hash_embedding(text) for text in items]
 
     def embed(self, text: str) -> tuple[list[float], dict]:
+        if self.local_model is not None:
+            try:
+                vector = self.local_model.encode([str(text or "")], normalize_embeddings=True, show_progress_bar=False)[0]
+                return [float(value) for value in vector], {
+                    "provider": "sentence-transformers", "model": LOCAL_EMBEDDING_MODEL,
+                    "dimensions": self.dimensions, "mode": "local",
+                }
+            except Exception:
+                logger.warning("Local sentence-transformers encoding failed; using fallback", exc_info=True)
         if self.remote:
             try:
                 headers = {"Content-Type": "application/json"}

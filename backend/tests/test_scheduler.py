@@ -67,6 +67,8 @@ def test_scheduler_uses_latency_failure_and_backlog_feedback():
             "pending_calls": 3,
             "load_score": 95,
             "success_rate": 0.5,
+            "historical_success_rate": 0.5,
+            "historical_samples": 10,
         }
     })
     item = next(row for row in loaded["dispatch"] if row["agent_id"] == "matching_agent")
@@ -75,4 +77,5 @@ def test_scheduler_uses_latency_failure_and_backlog_feedback():
     assert item["failure_penalty"] > 0
     assert item["backlog_penalty"] > 0
     assert item["historical_success_rate"] == 0.5
-    assert loaded["priority_formula"] == "base_priority - latency_penalty - failure_penalty - backlog_penalty"
+    assert item["history_success_bonus"] == -5
+    assert loaded["priority_formula"] == "base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus"

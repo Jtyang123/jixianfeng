@@ -765,6 +765,13 @@ def verify_plans(
                     })
                     seen_blockers.add(code)
 
+        if closed_set and not plan.get("assignments"):
+            blockers.append({
+                "code": "ROAD-ALL-CLOSED",
+                "type": "??",
+                "message": "??????????????????????",
+                "evidence": f"???? {len(closed_set)} ?",
+            })
         coverage = _num(plan["metrics"]["coverage"])
         if coverage < 0.99:
             blockers.append({

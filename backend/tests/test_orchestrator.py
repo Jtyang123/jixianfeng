@@ -114,6 +114,67 @@ def test_background_demand_task_is_cancelled_when_pipeline_fails(tmp_path: Path,
     assert fake.demand_started is True
     assert fake.demand_cancelled is True
 
+class FakeLLMPlanner:
+    enabled = True
+
+    @property
+    def status(self):
+        return {"enabled": True, "role": "planning-and-replanning", "model": "test-planner"}
+
+    async def create_plan(self, user_request, available_tools):
+        return {
+            "mode": "llm-planner", "summary": "测试计划",
+            "steps": [
+                {"id": "S1", "tool": "demand_plan", "reason": "标准化", "input": {}, "expected_output": "demand"},
+                {"id": "S2", "tool": "generate_plans", "reason": "生成", "input": {}, "expected_output": "plans"},
+                {"id": "S3", "tool": "verify_plans", "reason": "核验", "input": {}, "expected_output": "verification"},
+                {"id": "S4", "tool": "delivery_package", "reason": "交付", "input": {}, "expected_output": "delivery"},
+            ],
+        }
+
+    async def decide(self, step_result, remaining_steps, current_context):
+        if step_result.get("tool") == "delivery_package":
+            return {"mode": "llm-planner", "decision": "stop", "next_tool": None, "reason": "交付完成", "repair_policy": ""}
+        next_tool = remaining_steps[0]["tool"] if remaining_steps else None
+        return {"mode": "llm-planner", "decision": "continue", "next_tool": next_tool, "reason": "继续计划", "repair_policy": ""}
+
+
+def test_llm_react_planner_drives_tool_sequence(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "planner-orchestrator.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("heatwave-iii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": [],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"], "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    run_id = "RUN-LLM-PLANNER"
+    db.create_run(run_id, scenario["id"], request)
+    monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: FakeLLMPlanner())
+    monkeypatch.setattr(orchestrator_module, "LLMService", FakeLLM)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "awaiting_approval", run.get("result")
+    assert run["result"]["runtime"] == "llm-planner"
+    assert run["result"]["planner_trace"]["executed_steps"] == 4
+    assert run["result"]["planner_trace"]["decisions"][-1]["decision"]["decision"] == "stop"
+    event_types = [event["type"] for event in db.events_after(run_id)]
+    assert "llm.thinking" in event_types
+
 def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "parallel-orchestrator.db", database_url="")
     db.initialize()

@@ -574,3 +574,36 @@ def test_tool_registry_function_calling_and_mcp(tmp_path: Path):
     assert invalid_type.status_code == 200
     assert invalid_type.json()["error"]["code"] == -32602
     assert "integer" in invalid_type.json()["error"]["message"]
+def test_request_validation_and_state_edge_cases(tmp_path: Path):
+    test_db = Database(tmp_path / "api-edge.db", database_url="")
+    test_db.initialize()
+    api_module.db = test_db
+    api_module.ops = OperationsRepository(test_db)
+    client = TestClient(app)
+    client.__enter__()
+    base_event = {
+        "type": "暴雨洪涝", "severity": "II级", "location": "测试区域",
+        "affected_population": 1000, "closed_route_ids": [],
+    }
+    empty = client.post("/api/runs", json={
+        "scenario_id": "rainstorm-ii", "event": base_event, "demand_items": [],
+    })
+    assert empty.status_code == 422
+    invalid_material = client.post("/api/runs", json={
+        "scenario_id": "rainstorm-ii", "event": base_event,
+        "demand_items": [{"material_id": 999999, "quantity": 1, "priority": "P1", "deadline_hours": 8}],
+    })
+    assert invalid_material.status_code == 400
+    assert "物资不存在" in invalid_material.json()["detail"]
+
+    test_db.create_run("RUN-BAD-APPROVAL", "rainstorm-ii", {"scenario_id": "rainstorm-ii"})
+    bad_approval = client.post("/api/runs/RUN-BAD-APPROVAL/approve", json={"note": "错误状态审批"})
+    assert bad_approval.status_code == 409
+
+    missing_column = client.post(
+        "/api/inventory/import",
+        files={"file": ("inventory.csv", "warehouse_code,quantity\nWH-A,10\n", "text/csv")},
+    )
+    assert missing_column.status_code == 400
+    assert missing_column.json()["detail"]
+    client.__exit__(None, None, None)

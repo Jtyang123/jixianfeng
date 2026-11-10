@@ -310,6 +310,12 @@ class AgentRegistryService:
                 "pending_calls": pending[agent_id],
                 "load_score": load_score,
             }
+        for agent_id, performance in self.db.agent_performance_summary().items():
+            item = result.setdefault(agent_id, {})
+            item.update(performance)
+            if performance.get("historical_samples"):
+                item["success_rate"] = performance["historical_success_rate"]
+                item["average_latency_ms"] = performance["historical_average_latency_ms"]
         return result
 
 
@@ -322,20 +328,25 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict]) -> dict:
         failure_penalty = min(15, round(float(load.get("failure_rate", 0)) * 30))
         backlog_penalty = min(20, int(load.get("pending_calls", 0)) * 5)
         penalty = latency_penalty + failure_penalty + backlog_penalty
+        history_samples = int(load.get("historical_samples", 0) or 0)
+        history_success = float(load.get("historical_success_rate", load.get("success_rate", 0)) or 0)
+        history_bonus = 5 if history_samples >= 3 and history_success >= 0.9 else (-5 if history_samples >= 3 and history_success < 0.6 else 0)
         copy["base_priority"] = copy.get("priority", 0)
         copy["latency_penalty"] = latency_penalty
         copy["failure_penalty"] = failure_penalty
         copy["backlog_penalty"] = backlog_penalty
         copy["load_penalty"] = penalty
-        copy["effective_priority"] = max(1, copy["base_priority"] - penalty)
+        copy["history_success_bonus"] = history_bonus
+        copy["effective_priority"] = max(1, copy["base_priority"] - penalty + history_bonus)
         copy["load_score"] = load.get("load_score", 0)
-        copy["historical_success_rate"] = load.get("success_rate", None)
+        copy["historical_success_rate"] = history_success if history_samples else None
+        copy["historical_samples"] = history_samples
         copy["average_latency_ms"] = load.get("average_latency_ms", 0)
         dispatch.append(copy)
     dispatch.sort(key=lambda item: item["effective_priority"], reverse=True)
     enriched = dict(schedule)
     enriched["dispatch"] = dispatch
     enriched["engine"] = "load-aware capability-weighted DAG scheduler"
-    enriched["priority_formula"] = "base_priority - latency_penalty - failure_penalty - backlog_penalty"
+    enriched["priority_formula"] = "base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus"
     enriched["agent_load"] = metrics
     return enriched

@@ -99,6 +99,8 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "")
 EMBEDDING_DIMENSIONS = max(64, min(4096, int(os.getenv("EMBEDDING_DIMENSIONS", "256"))))
 EMBEDDING_TIMEOUT = max(1.0, float(os.getenv("EMBEDDING_TIMEOUT", "20")))
 EMBEDDING_BATCH_SIZE = max(1, min(256, int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))))
+LOCAL_EMBEDDING_ENABLED = os.getenv("LOCAL_EMBEDDING_ENABLED", "false").strip().lower() == "true"
+LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
 
 RESERVATION_TTL_HOURS = max(1, int(os.getenv("RESERVATION_TTL_HOURS", "24")))
 RESERVATION_SWEEP_INTERVAL_SECONDS = max(5.0, float(os.getenv("RESERVATION_SWEEP_INTERVAL_SECONDS", "60")))

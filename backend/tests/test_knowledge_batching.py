@@ -2,7 +2,7 @@ import threading
 from pathlib import Path
 
 from app.database import Database
-from app.knowledge_base import KnowledgeRepository, embed_text
+from app.knowledge_base import EmbeddingService, KnowledgeRepository, embed_text
 
 
 def test_stale_chunk_embeddings_are_backfilled_in_one_batch(tmp_path: Path):
@@ -44,3 +44,12 @@ def test_stale_chunk_embeddings_are_backfilled_in_one_batch(tmp_path: Path):
     assert len(calls[0]) == 10
     repository.search("flood route", top_k=4)
     assert len(calls) == 1
+
+def test_offline_embedding_uses_deterministic_hash_fallback():
+    service = EmbeddingService()
+    service.local_model = None
+    service.remote = False
+    vector, meta = service.embed("flood route backup")
+    assert len(vector) == service.dimensions
+    assert meta["provider"] == "hash"
+    assert service.status["semantic_retrieval"] is False

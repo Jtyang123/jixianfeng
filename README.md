@@ -144,9 +144,9 @@ AGENTARTS_AGENT_ENDPOINTS_JSON={"demand_agent":"https://.../invocations"}
 
 # 可选：OpenAI-compatible LLM 推理层
 LLM_ENABLED=true
-LLM_BASE_URL=https://your-llm-endpoint/v1
-LLM_API_KEY=your-key
-LLM_MODEL=your-model
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-xxx
+LLM_MODEL=deepseek-chat
 ```
 
 AgentArts SDK 运行时源码位于 `agentarts_service/`，使用官方 `POST /invocations` 和 `GET /ping` 契约。部署后可通过 `GET /api/agentarts/check` 检查连接。未配置 LLM/AgentArts 时使用确定性的本地回退，不影响库存、规划、核验和回环演示。四个核心 Agent 的角色、输入输出和工具权限见 `docs/AGENT_DESIGN.md`。
@@ -254,7 +254,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 73 项测试；本机无 PostgreSQL 环境时结果为 `70 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 83 项测试；本机无 PostgreSQL 环境时结果为 `80 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

@@ -224,3 +224,38 @@ def test_explicit_shortage_scenario_is_seeded(tmp_path: Path):
     assert scenario is not None
     assert scenario["default_demand"]
     assert any(item["material_code"] == "MAT-MED-001" and item["quantity"] > 720 for item in scenario["default_demand"])
+def _single_demand(quantity=1000):
+    return {"items": [{
+        "material_id": 1, "material_code": "MAT-WATER-001", "material_name": "饮用水",
+        "base_unit": "瓶", "quantity": quantity, "priority": "P0", "deadline_hours": 12,
+        "destination_id": "DST-01", "destination_name": "测试安置点", "unit_weight_kg": 0.55,
+    }]}
+
+
+def test_large_inventory_generates_feasible_plans(tmp_path: Path):
+    db = Database(tmp_path / "large-inventory.db", database_url="")
+    db.initialize()
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    for row in inventory:
+        row["quantity"] = float(row["quantity"]) * 20
+        row["locked_quantity"] = 0
+    demand = _single_demand()
+    plans = generate_plans(demand, inventory, db.warehouse_rows(), db.route_rows(), db.vehicle_rows(), 2, [])
+    verification = verify_plans(plans, demand, inventory, db.route_rows(), db.vehicle_rows(), [])
+    assert verification["verdict"] == "pass"
+    assert all(plan["metrics"]["coverage"] == 1.0 for plan in plans)
+
+
+def test_all_routes_closed_returns_explicit_road_blocker(tmp_path: Path):
+    db = Database(tmp_path / "all-routes-closed.db", database_url="")
+    db.initialize()
+    inventory = db.inventory_rows(db.latest_snapshot()["id"])
+    closed = [route["id"] for route in db.route_rows()]
+    directive = {"policies": {"route_policy": "exclude_closed_routes"}}
+    plans = generate_plans(
+        _single_demand(), inventory, db.warehouse_rows(), db.route_rows(), db.vehicle_rows(),
+        2, closed, rework_directive=directive,
+    )
+    verification = verify_plans(plans, _single_demand(), inventory, db.route_rows(), db.vehicle_rows(), closed)
+    assert verification["verdict"] == "rework"
+    assert any(code.startswith("ROAD-") for code in verification["blocker_summary"])

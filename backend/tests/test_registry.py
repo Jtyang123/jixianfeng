@@ -52,3 +52,14 @@ def test_fully_cloud_metrics_exclude_fallback_runs(tmp_path: Path):
     assert set(runtime) == set(agent_ids)
     assert all(item["sample_count"] == 1 for item in runtime.values())
     assert all(item["success_rate"] == 1.0 for item in runtime.values())
+def test_agent_performance_table_aggregates_success_and_latency(tmp_path: Path):
+    db = Database(tmp_path / "performance.db", database_url="")
+    db.initialize()
+    db.record_agent_performance("matching_agent", "RUN-1", "invoke", True, 1200)
+    db.record_agent_performance("matching_agent", "RUN-2", "invoke", True, 1800)
+    db.record_agent_performance("matching_agent", "RUN-3", "invoke", False, 3000, "TimeoutError")
+    summary = db.agent_performance_summary()["matching_agent"]
+    assert summary["historical_samples"] == 3
+    assert summary["historical_success_rate"] == 0.6667
+    assert summary["historical_average_latency_ms"] == 2000
+    assert summary["historical_error_types"]["TimeoutError"] == 1

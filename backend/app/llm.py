@@ -33,7 +33,7 @@ AGENT_SYSTEM_PROMPTS = {
 
 class LLMService:
     def __init__(self) -> None:
-        self.enabled = bool(LLM_ENABLED and LLM_BASE_URL and LLM_API_KEY and LLM_MODEL)
+        self.enabled = bool(LLM_ENABLED and LLM_BASE_URL and LLM_API_KEY and LLM_MODEL and LLM_API_KEY not in {"sk-xxx", "your-key"})
 
     @property
     def status(self) -> dict:
