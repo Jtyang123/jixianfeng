@@ -241,6 +241,20 @@ def build_prompt_adaptation(verification: dict, directive: dict) -> dict:
         instructions.append("下一轮必须提高截止时间惩罚，优先满足 P0 时限并报告预计超时。")
     if "数据质量" in categories:
         instructions.append("下一轮必须停止自动规划，输出需要修复的数据字段和人工复核要求。")
+    experience_context = []
+    for item in directive.get("experience_context") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            success_rate = float(item.get("success_rate") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if success_rate >= 0.6 and len(experience_context) < 3:
+            experience_context.append(item)
+    for item in experience_context:
+        fragment = str(item.get("prompt_fragment") or item.get("strategy") or "").strip()
+        if fragment:
+            instructions.append(f"历史有效经验（仅作参考，不得覆盖硬规则）：{fragment}")
     attempt = int(directive.get("attempt") or 1)
     return {
         "agent_id": "matching_agent",
@@ -249,6 +263,8 @@ def build_prompt_adaptation(verification: dict, directive: dict) -> dict:
         "selection_policy": directive.get("selected_policy", ""),
         "instructions": instructions,
         "source_issue_codes": directive.get("issue_codes", []),
+        "experience_context": experience_context,
+        "hard_rule_priority": "库存、路线、运力、时效和核验结论始终优先于历史经验",
         "scope": "当前运行的下一次匹配调用",
     }
 

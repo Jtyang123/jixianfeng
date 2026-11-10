@@ -6,6 +6,7 @@ from pathlib import Path
 from app import orchestrator as orchestrator_module
 from app.database import Database
 from app.knowledge_base import KnowledgeRepository
+from app.memory import MemoryRepository
 from app.registry import AgentRegistryService
 from app.scheduler import AGENTS
 from app.workflow_engine import WorkflowRepository
@@ -480,6 +481,13 @@ def test_cross_run_memory_is_saved_without_unsafe_override(tmp_path: Path):
     assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
     assert second["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
     assert second["memory_context"]["matching_agent"]["successful_repair_policy"]["value"]["policy"] == "route_failover"
+    assert second["rework_directives"][0]["experience_context"][0]["policy_id"] == "route_failover"
+    repair_memories = [
+        item for item in MemoryRepository(db).list_memories("matching_agent", limit=100)
+        if item["memory_key"].startswith("repair_experience:")
+    ]
+    assert repair_memories
+    assert repair_memories[0]["value"]["success_rate"] == 1.0
     memory_events = [event["type"] for event in db.events_after("RUN-MEMORY-2")]
     assert "memory.loaded" in memory_events
     assert "memory.saved" in memory_events

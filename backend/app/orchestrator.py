@@ -296,6 +296,44 @@ async def maybe_a2a_cross_warehouse(
         }
 
 
+
+def _load_repair_experiences(memory_repo: MemoryRepository, verification: dict, scenario_tag: str) -> list[dict]:
+    codes = [str(code) for code in verification.get("blocker_summary", []) if str(code)]
+    return memory_repo.find_repair_experiences(codes, scenario_tag, min_success_rate=0.6, limit=3)
+
+
+def _record_repair_experiences(
+    memory_repo: MemoryRepository,
+    directives: list[dict],
+    scenario_tag: str,
+    success: bool,
+    run_id: str,
+) -> list[dict]:
+    strategy_by_policy = {
+        "route_failover": "排除事件封闭路线，比较主备通道的 ETA 与风险后再分配。",
+        "multi_warehouse": "保留总库存核验，同时按分仓可用量拆分并校验跨仓调拨。",
+        "fleet_rebalance": "按仓库可用车辆、载重与趟次重新平衡运力。",
+        "deadline_first": "提高截止时间惩罚，优先保障 P0 时限并显式报告超时。",
+        "data_quality_repair": "暂停自动调度，列出缺失或冲突字段并请求人工补全。",
+    }
+    records: list[dict] = []
+    for directive in directives:
+        policy_id = str(directive.get("selected_policy") or "")
+        issue_codes = [str(code) for code in directive.get("issue_codes", []) if str(code)]
+        if not policy_id or not issue_codes:
+            continue
+        strategy = strategy_by_policy.get(policy_id, str(directive.get("reason") or policy_id))
+        records.extend(memory_repo.record_repair_experience(
+            issue_codes=issue_codes,
+            scenario_tag=scenario_tag,
+            policy_id=policy_id,
+            strategy=strategy,
+            prompt_fragment=strategy,
+            success=success,
+            source_run_id=run_id,
+        ))
+    return records
+
 async def run_planner_orchestration(
     db: Database,
     run_id: str,
@@ -329,6 +367,7 @@ async def run_planner_orchestration(
         "escalate_human": "orchestrator",
     }
     tool_repository = ToolRepository(db)
+    experience_repo = MemoryRepository(db)
 
     async def timed_planner_call(operation, func, *args):
         started = time.perf_counter()
@@ -554,6 +593,10 @@ async def run_planner_orchestration(
                 last_decision = {"decision": "human", "reason": "达到自适应重算上限或没有安全修复策略。", "next_tool": "escalate_human"}
                 break
             directive = build_rework_directive(verification, attempt + 1, selected_policy=selected_policy)
+            experience_context = _load_repair_experiences(
+                experience_repo, verification, str(scenario.get("id") or "generic")
+            )
+            directive["experience_context"] = experience_context
             adaptation = build_prompt_adaptation(verification, directive)
             directive["prompt_adaptation"] = adaptation
             rework_directives.append(directive)
@@ -561,13 +604,18 @@ async def run_planner_orchestration(
             attempt += 1
             current_plan = await timed_planner_call(
                 "create_plan", planner.create_plan,
-                {**planner_request, "feedback": {"issue_codes": verification.get("blocker_summary", []), "required_fixes": verification.get("required_fixes", [])}},
+                {**planner_request, "feedback": {
+                    "issue_codes": verification.get("blocker_summary", []),
+                    "required_fixes": verification.get("required_fixes", []),
+                    "experience_context": experience_context,
+                }},
                 available_tools,
             )
             emit(db, run_id, "llm.thinking", "planner", "LLM触发重规划", "核验未通过，基于问题代码重新生成工具计划。", {
                 "blockers": verification.get("blocker_summary", []),
                 "repair_policy": selected_policy,
                 "adaptive_prompt": adaptation,
+                "experience_hits": len(experience_context),
             })
             step_index = 0
             continue
@@ -627,6 +675,10 @@ async def run_planner_orchestration(
         agent_decision, {}, final_verification, [], llm_service.status, {},
         planner_decision=planner_decision,
     )
+    experience_writes = _record_repair_experiences(
+        experience_repo, rework_directives, str(scenario.get("id") or "generic"),
+        final_verification.get("verdict") == "pass", run_id,
+    )
     return {
         "run_id": run_id,
         "runtime": "llm-planner",
@@ -662,6 +714,7 @@ async def run_planner_orchestration(
         "ai_decision_matrix": ai_matrix,
         "planner_decision": planner_decision,
         "planner_trace": {"initial_plan": plan, "decisions": decisions, "executed_steps": executed_steps},
+        "repair_experience_writes": experience_writes,
         "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
         "agentarts_trace": {},
         "extension_reviews": [],
@@ -869,6 +922,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "allowed_policies": allowed,
             "runtime_prompt": pipeline_state.get("active_prompt_versions", {}).get("matching_agent", "v1.4"),
             "memory": memory_context.get("matching_agent", {}),
+            "experience_context": _load_repair_experiences(
+                memory_repo, verification, str(scenario.get("id") or "generic")
+            ),
             "constraints": [
                 "只能从 allowed_policies 中选择一个 id",
                 "不得选择不存在或不允许的策略",
@@ -1137,6 +1193,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 directive = build_rework_directive(
                     verification, next_attempt, selected_policy=policy_selection["selected_policy"]
                 )
+                directive["experience_context"] = _load_repair_experiences(
+                    memory_repo, verification, str(scenario.get("id") or "generic")
+                )
                 prompt_adaptation = build_prompt_adaptation(verification, directive)
                 pipeline_state["prompt_adaptations"].append(prompt_adaptation)
                 pipeline_state["active_prompt_versions"]["matching_agent"] = prompt_adaptation["active_version"]
@@ -1293,6 +1352,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 policy_selection = await select_rework_policy(verification, next_attempt)
                 next_directive = build_rework_directive(
                     verification, next_attempt, selected_policy=policy_selection["selected_policy"]
+                )
+                next_directive["experience_context"] = _load_repair_experiences(
+                    memory_repo, verification, str(scenario.get("id") or "generic")
                 )
                 prompt_adaptation = build_prompt_adaptation(verification, next_directive)
                 pipeline_state["prompt_adaptations"].append(prompt_adaptation)
@@ -1527,6 +1589,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             blocker_history[code] = int(blocker_history.get(code, 0)) + 1
         memory_writes.append(memory_repo.remember(
             "verifier_agent", "blocker_history", blocker_history, 0.9, run_id,
+        ))
+        memory_writes.extend(_record_repair_experiences(
+            memory_repo, rework_directives, str(scenario.get("id") or "generic"),
+            final_verification.get("verdict") == "pass", run_id,
         ))
         if final_verification.get("verdict") == "pass" and rework_directives:
             selected_policy = str(rework_directives[-1].get("selected_policy") or "")

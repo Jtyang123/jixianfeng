@@ -127,6 +127,118 @@ class MemoryRepository:
             ).fetchone()
         return self._public(dict(row))
 
+    @staticmethod
+    def _repair_experience_key(scenario_tag: str, issue_code: str, policy_id: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9_.:-]+", "-", f"{scenario_tag}:{issue_code}:{policy_id}").strip("-")
+        return f"repair_experience:{safe}"[:240]
+
+    def record_repair_experience(
+        self,
+        issue_codes: list[str],
+        scenario_tag: str,
+        policy_id: str,
+        strategy: str,
+        prompt_fragment: str,
+        success: bool,
+        source_run_id: str,
+        agent_id: str = "matching_agent",
+    ) -> list[dict]:
+        """Persist successful/failed repair outcomes for future prompt context only."""
+        policy_id = str(policy_id or "").strip()
+        codes = sorted({str(code).strip() for code in issue_codes if str(code).strip()})
+        if not codes or not policy_id:
+            return []
+        scenario = str(scenario_tag or "generic").strip() or "generic"
+        results: list[dict] = []
+        with self.db.connect() as conn:
+            for code in codes:
+                memory_key = self._repair_experience_key(scenario, code, policy_id)
+                row = conn.execute(
+                    "SELECT * FROM agent_memory WHERE agent_id = ? AND memory_key = ?",
+                    (agent_id, memory_key),
+                ).fetchone()
+                try:
+                    previous = json.loads(row["value_json"] or "{}") if row else {}
+                except (TypeError, json.JSONDecodeError):
+                    previous = {}
+                adoptions = max(0, int(previous.get("adoptions") or 0)) + 1
+                successes = max(0, int(previous.get("successes") or 0)) + (1 if success else 0)
+                rate = round(successes / adoptions, 4)
+                value = {
+                    "issue_code": code,
+                    "scenario_tag": scenario,
+                    "policy_id": policy_id,
+                    "strategy": str(strategy or "")[:500],
+                    "prompt_fragment": str(prompt_fragment or "")[:1000],
+                    "adoptions": adoptions,
+                    "successes": successes,
+                    "success_rate": rate,
+                    "last_outcome": "success" if success else "failure",
+                }
+                now = now_iso()
+                payload = json.dumps(value, ensure_ascii=False)
+                confidence = round(max(0.0, min(1.0, max(0.5, rate))), 2)
+                if row:
+                    conn.execute(
+                        """UPDATE agent_memory
+                           SET value_json=?, confidence=?, source_run_id=?, updated_at=?
+                           WHERE agent_id=? AND memory_key=?""",
+                        (payload, confidence, source_run_id, now, agent_id, memory_key),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO agent_memory
+                           (agent_id, memory_key, value_json, confidence, source_run_id, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (agent_id, memory_key, payload, confidence, source_run_id, now, now),
+                    )
+                saved = conn.execute(
+                    "SELECT * FROM agent_memory WHERE agent_id = ? AND memory_key = ?",
+                    (agent_id, memory_key),
+                ).fetchone()
+                results.append(self._public(dict(saved)))
+        return results
+
+    def find_repair_experiences(
+        self,
+        issue_codes: list[str],
+        scenario_tag: str,
+        min_success_rate: float = 0.6,
+        limit: int = 3,
+    ) -> list[dict]:
+        """Return high-confidence historical repair strategies for prompt injection."""
+        wanted = {str(code).strip() for code in issue_codes if str(code).strip()}
+        if not wanted:
+            return []
+        scenario = str(scenario_tag or "generic").strip() or "generic"
+        matches: list[dict] = []
+        for item in self.list_memories("matching_agent", limit=500):
+            if not str(item.get("memory_key") or "").startswith("repair_experience:"):
+                continue
+            value = item.get("value") if isinstance(item.get("value"), dict) else {}
+            if str(value.get("issue_code") or "") not in wanted:
+                continue
+            if str(value.get("scenario_tag") or "") not in {scenario, "generic"}:
+                continue
+            rate = float(value.get("success_rate") or 0.0)
+            if rate < min_success_rate:
+                continue
+            matches.append({
+                **value,
+                "memory_key": item.get("memory_key", ""),
+                "confidence": item.get("confidence", 0.0),
+                "recency_score": item.get("recency_score", 0.0),
+            })
+        matches.sort(
+            key=lambda item: (
+                float(item.get("success_rate") or 0.0),
+                int(item.get("adoptions") or 0),
+                float(item.get("recency_score") or 0.0),
+            ),
+            reverse=True,
+        )
+        return matches[:max(1, min(int(limit), 10))]
+
     def delete(self, agent_id: str, memory_key: str) -> bool:
         with self.db.connect() as conn:
             existing = conn.execute(
