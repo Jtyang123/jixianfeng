@@ -163,6 +163,9 @@ def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, mo
         ],
         "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
     }
+    water_id = by_code["MAT-WATER-001"]["id"]
+    with db.connect() as conn:
+        conn.execute("UPDATE inventory SET quantity=3000, locked_quantity=0 WHERE material_id=?", (water_id,))
     run_id = "RUN-LLM-PLANNER"
     db.create_run(run_id, scenario["id"], request)
     monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: FakeLLMPlanner())
@@ -182,6 +185,10 @@ def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, mo
     events = db.events_after(run_id)
     event_types = [event["type"] for event in events]
     assert "llm.thinking" in event_types
+    assert "a2a.message" in event_types
+    a2a_history = db.list_a2a_messages(run_id)
+    assert len(a2a_history) == 2
+    assert {item["message_type"] for item in a2a_history} == {"request", "reply"}
     started_agents = {
         event["agent_id"] for event in events
         if event["type"] == "agent.started" and event["agent_id"] in {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}

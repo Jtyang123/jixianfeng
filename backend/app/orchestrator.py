@@ -9,9 +9,10 @@ from uuid import uuid4
 
 import httpx
 
+from .a2a import A2ABus
 from .agentarts import AgentArtsBridge
 from .agents import allowed_rework_policies, apply_llm_priority_adjustments, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, normalize_llm_weight_profile, verify_plans
-from .config import AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
+from .config import A2A_ENABLED, AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
 from .database import Database
 from .knowledge_base import KnowledgeRepository, sanitize_agent_payload
 from .local_agents import invoke_local_registered_agent
@@ -232,6 +233,69 @@ async def pace(seconds: float) -> None:
         await asyncio.sleep(delay)
 
 
+def _cross_warehouse_candidates(demand_plan: dict, inventory: list[dict]) -> list[dict]:
+    required = {}
+    for item in demand_plan.get("items", []):
+        material_id = int(item["material_id"])
+        required[material_id] = required.get(material_id, 0.0) + float(item.get("quantity") or 0)
+    available: dict[int, dict[str, float]] = {}
+    for row in inventory:
+        if row.get("status") != "available":
+            continue
+        material_id = int(row["material_id"])
+        qty = max(0.0, float(row.get("quantity") or 0) - float(row.get("locked_quantity") or 0))
+        available.setdefault(material_id, {})
+        available[material_id][str(row["warehouse_id"])] = available[material_id].get(str(row["warehouse_id"]), 0.0) + qty
+    candidates = []
+    for material_id, needed in required.items():
+        warehouses = available.get(material_id, {})
+        total = sum(warehouses.values())
+        largest = max(warehouses.values() or [0.0])
+        if total + 0.001 >= needed > largest + 0.001:
+            candidates.append({
+                "material_id": material_id, "required": round(needed, 2),
+                "total_available": round(total, 2), "largest_single_warehouse": round(largest, 2),
+                "warehouse_count": len([qty for qty in warehouses.values() if qty > 0]),
+            })
+    return candidates
+
+
+async def maybe_a2a_cross_warehouse(
+    bus: A2ABus, demand_plan: dict, inventory: list[dict], emit_fallback
+) -> dict:
+    candidates = _cross_warehouse_candidates(demand_plan, inventory)
+    if not candidates:
+        return {"used": False, "reason": "no-cross-warehouse-request"}
+    try:
+        request_message = await bus.send(
+            "demand_agent", "matching_agent", "request",
+            {
+                "question": "单仓库存不足时，能否从多个仓库协同调拨并完成跨仓分配？",
+                "materials": candidates,
+            },
+        )
+        reply_message = await bus.reply(
+            request_message, "matching_agent",
+            {
+                "feasible": True,
+                "method": "multi-warehouse-allocation",
+                "materials": candidates,
+                "constraint": "必须按仓库可用量、车辆载重和路线时效复核；A2A 只提供协调意见，不覆盖硬规则。",
+            },
+        )
+        return {
+            "used": True, "mode": "a2a", "feasible": True,
+            "request_id": request_message["message_id"], "reply_id": reply_message["message_id"],
+            "correlation_id": request_message["correlation_id"], "materials": candidates,
+        }
+    except Exception as exc:
+        emit_fallback(exc)
+        return {
+            "used": True, "mode": "blackboard-fallback", "feasible": None,
+            "reason": str(exc)[:240], "materials": candidates,
+        }
+
+
 async def run_planner_orchestration(
     db: Database,
     run_id: str,
@@ -247,6 +311,7 @@ async def run_planner_orchestration(
     schedule: dict,
     planner,
     llm_service,
+    a2a_bus: A2ABus | None = None,
 ) -> dict:
     available_tools = [
         "demand_plan", "knowledge_search", "inventory_query", "route_query",
@@ -353,6 +418,12 @@ async def run_planner_orchestration(
         result: dict
         if tool == "demand_plan":
             result = ensure_demand()
+            if a2a_bus is not None:
+                a2a_result = await maybe_a2a_cross_warehouse(
+                    a2a_bus, result, inventory,
+                    lambda exc: emit(db, run_id, "a2a.fallback", "a2a", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                )
+                result = {**result, "a2a_exchange": a2a_result}
         elif tool == "inventory_query":
             result = {
                 "items": len(inventory),
@@ -928,12 +999,21 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "documents": [{"id": item["id"], "title": item["title"], "score": item["score"]} for item in evidence],
         })
         await pace(0.25)
+        a2a_bus = A2ABus(
+            db, run_id, enabled=A2A_ENABLED,
+            event_sink=lambda message: emit(
+                db, run_id, "a2a.message", "a2a",
+                f"{message['sender']} → {message['receiver']} · {message['message_type']}",
+                str(message.get("content") or {}),
+                message,
+            ),
+        )
         planner = LLMPlanner()
         if planner.enabled:
             try:
                 planner_result = await run_planner_orchestration(
                     db, run_id, request, scenario, materials, destinations, warehouses,
-                    routes, vehicles, inventory, evidence, schedule, planner, llm_service,
+                    routes, vehicles, inventory, evidence, schedule, planner, llm_service, a2a_bus,
                 )
                 planner_result["memory_context"] = memory_context
                 planner_result["memory_writes"] = []
@@ -969,6 +1049,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     await pace(0.45)
                     demand_plan = build_demand_plan(request, materials, destinations)
                     demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
+                    demand_plan["a2a_exchange"] = await maybe_a2a_cross_warehouse(
+                        a2a_bus, demand_plan, inventory,
+                        lambda exc: emit(db, run_id, "a2a.fallback", "a2a", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                    )
                     ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
                     llm_decisions["demand_priority"] = apply_llm_priority_adjustments(demand_plan, ai_reasoning["demand_agent"])
                     demand_remote_task = track_background_task(call_agentarts("demand_agent", {"summary": demand_plan["summary"], "items": demand_plan["items"], "evidence": evidence}))

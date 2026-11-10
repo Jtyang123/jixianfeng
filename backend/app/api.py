@@ -247,6 +247,11 @@ def audit_logs(request: Request, limit: int = 200) -> list[dict]:
     return auth_service.list_audit_logs(limit=max(1, min(limit, 500)))
 
 
+@router.get("/a2a/messages")
+def a2a_messages(run_id: str, limit: int = 100) -> list[dict]:
+    return db.list_a2a_messages(run_id, limit=max(1, min(limit, 500)))
+
+
 @router.get("/agents")
 def list_agents(request: Request) -> list[dict]:
     return registry_service.list_agents()

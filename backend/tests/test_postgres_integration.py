@@ -26,6 +26,7 @@ def _db() -> Database:
 
 def _reset_runtime(db: Database) -> None:
     with db.connect() as conn:
+        conn.execute("DELETE FROM a2a_messages")
         conn.execute("DELETE FROM inventory_reservations")
         conn.execute("DELETE FROM agent_events")
         conn.execute("DELETE FROM dispatch_tasks")

@@ -421,6 +421,22 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, status);
 
+                CREATE TABLE IF NOT EXISTS a2a_messages (
+                    message_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    receiver TEXT NOT NULL,
+                    message_type TEXT NOT NULL,
+                    content_json TEXT NOT NULL DEFAULT '{}',
+                    reply_to TEXT NOT NULL DEFAULT '',
+                    correlation_id TEXT NOT NULL DEFAULT '',
+                    timestamp TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_a2a_messages_run
+                ON a2a_messages(run_id, timestamp);
+
                 CREATE TABLE IF NOT EXISTS agent_performance (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     agent_id TEXT NOT NULL,
@@ -597,7 +613,7 @@ class Database:
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
-                "agent_memory", "retry_jobs", "inventory_reservations",
+                "agent_memory", "a2a_messages", "retry_jobs", "inventory_reservations",
                 "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
@@ -1284,6 +1300,42 @@ class Database:
                        WHERE id=?""",
                     (status, _json(result), now_iso(), run_id),
                 )
+
+    def create_a2a_message(self, message: dict) -> dict:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO a2a_messages
+                   (message_id, run_id, sender, receiver, message_type, content_json,
+                    reply_to, correlation_id, timestamp, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    message["message_id"], message["run_id"], message["sender"], message["receiver"],
+                    message["message_type"], _json(message.get("content") or {}),
+                    message.get("reply_to", ""), message.get("correlation_id", ""),
+                    message["timestamp"], message.get("status", "queued"),
+                ),
+            )
+        return dict(message)
+
+    def update_a2a_message_status(self, message_id: str, status: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE a2a_messages SET status=? WHERE message_id=?", (status, message_id))
+
+    def list_a2a_messages(self, run_id: str, limit: int = 100) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM a2a_messages WHERE run_id=? ORDER BY timestamp DESC, message_id DESC LIMIT ?",
+                (run_id, max(1, min(int(limit), 500))),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["content"] = json.loads(item.pop("content_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                item["content"] = {}
+            result.append(item)
+        return result
 
     def record_agent_performance(
         self, agent_id: str, run_id: str, operation: str, success: bool,
