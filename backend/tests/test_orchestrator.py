@@ -125,10 +125,11 @@ class FakeLLMPlanner:
         return {
             "mode": "llm-planner", "summary": "测试计划",
             "steps": [
-                {"id": "S1", "tool": "demand_plan", "reason": "标准化", "input": {}, "expected_output": "demand"},
-                {"id": "S2", "tool": "generate_plans", "reason": "生成", "input": {}, "expected_output": "plans"},
-                {"id": "S3", "tool": "verify_plans", "reason": "核验", "input": {}, "expected_output": "verification"},
-                {"id": "S4", "tool": "delivery_package", "reason": "交付", "input": {}, "expected_output": "delivery"},
+                {"id": "S1", "tool": "demand_plan", "reason": "normalize", "input": {}, "expected_output": "demand"},
+                {"id": "S2", "tool": "verify_plans", "reason": "invalid order", "input": {}, "expected_output": "verification"},
+                {"id": "S3", "tool": "generate_plans", "reason": "generate", "input": {}, "expected_output": "plans"},
+                {"id": "S4", "tool": "verify_plans", "reason": "verify", "input": {}, "expected_output": "verification"},
+                {"id": "S5", "tool": "delivery_package", "reason": "deliver", "input": {}, "expected_output": "delivery"},
             ],
         }
 
@@ -139,7 +140,7 @@ class FakeLLMPlanner:
         return {"mode": "llm-planner", "decision": "continue", "next_tool": next_tool, "reason": "继续计划", "repair_policy": ""}
 
 
-def test_llm_react_planner_drives_tool_sequence(tmp_path: Path, monkeypatch):
+def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "planner-orchestrator.db", database_url="")
     db.initialize()
     scenario = db.get_scenario("heatwave-iii")
@@ -171,6 +172,7 @@ def test_llm_react_planner_drives_tool_sequence(tmp_path: Path, monkeypatch):
     assert run["status"] == "awaiting_approval", run.get("result")
     assert run["result"]["runtime"] == "llm-planner"
     assert run["result"]["planner_trace"]["executed_steps"] == 4
+    assert len(run["result"]["rounds"]) == 1
     assert run["result"]["planner_trace"]["decisions"][-1]["decision"]["decision"] == "stop"
     event_types = [event["type"] for event in db.events_after(run_id)]
     assert "llm.thinking" in event_types

@@ -284,9 +284,43 @@ async def run_planner_orchestration(
         elif tool == "verify_plans":
             demand_plan = ensure_demand()
             if not plans:
-                last_decision = {"decision": "replan", "reason": "核验前缺少候选方案，要求重新规划。", "next_tool": "generate_plans"}
-                emit(db, run_id, "llm.thinking", "planner", "前置条件不足，触发重规划", last_decision["reason"], last_decision)
-                break
+                remaining_tools = current_plan.get("steps", [])[step_index + 1:]
+                generate_index = next(
+                    (step_index + 1 + offset for offset, item in enumerate(remaining_tools) if item.get("tool") == "generate_plans"),
+                    None,
+                )
+                if generate_index is not None:
+                    step_index = generate_index
+                    last_decision = {
+                        "decision": "continue",
+                        "reason": "\u6838\u9a8c\u524d\u7f3a\u5c11\u5019\u9009\u65b9\u6848\uff0c\u8df3\u5230\u5f53\u524d\u8ba1\u5212\u540e\u7eed\u7684\u65b9\u6848\u751f\u6210\u6b65\u9aa4\u3002",
+                        "next_tool": "generate_plans",
+                    }
+                    emit(db, run_id, "llm.thinking", "planner", "\u524d\u7f6e\u6761\u4ef6\u4e0d\u8db3\uff0c\u8df3\u8f6c\u65b9\u6848\u751f\u6210", last_decision["reason"], {
+                        "action": "jump_to_generate", "attempt": attempt,
+                    })
+                    continue
+                if attempt >= 3:
+                    last_decision = {"decision": "human", "reason": "\u7f3a\u5c11\u5019\u9009\u65b9\u6848\u4e14\u5df2\u8fbe\u5230\u91cd\u89c4\u5212\u4e0a\u9650\u3002", "next_tool": "escalate_human"}
+                    emit(db, run_id, "llm.thinking", "planner", "\u524d\u7f6e\u6761\u4ef6\u4e0d\u8db3\uff0c\u8f6c\u4eba\u5de5", last_decision["reason"], {
+                        "action": "replan", "attempt": attempt,
+                    })
+                    break
+                attempt += 1
+                current_plan = await planner.create_plan(
+                    {**planner_request, "feedback": {"missing": "plans", "required_action": "generate_plans"}},
+                    available_tools,
+                )
+                step_index = 0
+                last_decision = {
+                    "decision": "replan",
+                    "reason": "\u6838\u9a8c\u524d\u7f3a\u5c11\u5019\u9009\u65b9\u6848\uff0c\u91cd\u65b0\u751f\u6210\u5305\u542b\u65b9\u6848\u751f\u6210\u6b65\u9aa4\u7684\u8ba1\u5212\u3002",
+                    "next_tool": "generate_plans",
+                }
+                emit(db, run_id, "llm.thinking", "planner", "\u524d\u7f6e\u6761\u4ef6\u4e0d\u8db3\uff0c\u91cd\u65b0\u89c4\u5212", last_decision["reason"], {
+                    "action": "replan", "attempt": attempt,
+                })
+                continue
             verification = verify_plans(
                 plans, demand_plan, inventory, routes, vehicles,
                 request.get("event", {}).get("closed_route_ids", []),
