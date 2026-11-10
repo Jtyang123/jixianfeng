@@ -539,3 +539,25 @@ def test_executor_priorities_use_effective_priority_values():
     priorities = orchestrator_module.build_executor_priorities(schedule)
     assert priorities == {"matching_agent": 61, "verifier_agent": 99}
     assert priorities["matching_agent"] < schedule["dispatch"][0]["priority"]
+
+def test_audit_only_delivery_is_not_marked_applied_in_d6():
+    traces = {
+        "delivery_agent": {
+            "mode": "agentarts",
+            "parsed": {"summary": "stale summary"},
+            "review_status": "audit-only",
+            "discarded_fields": ["summary", "risk_alerts"],
+        }
+    }
+    matrix = orchestrator_module.build_ai_decision_matrix(
+        {"applied": False, "source": "deterministic-scorer"},
+        traces,
+        {"reports": []},
+        [],
+        {"enabled": True},
+        {},
+    )
+    d6 = next(item for item in matrix if item["id"] == "D6")
+    assert d6["applied"] is False
+    assert d6["source"] == "agentarts-audit-only"
+    assert d6["discarded_fields"] == ["summary", "risk_alerts"]

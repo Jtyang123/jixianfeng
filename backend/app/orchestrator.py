@@ -87,6 +87,10 @@ def build_ai_decision_matrix(
     rework_parsed = rework_trace.get("parsed") if isinstance(rework_trace, dict) else None
     verifier_parsed = verifier_trace.get("parsed") if isinstance(verifier_trace, dict) else None
     delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
+    delivery_audit_only = isinstance(delivery_trace, dict) and str(delivery_trace.get("review_status") or "") == "audit-only"
+    d6_applied = bool(delivery_parsed) and not delivery_audit_only
+    d6_source = "agentarts-audit-only" if (delivery_parsed and delivery_audit_only) else (delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template")
+    d6_discarded_fields = delivery_trace.get("discarded_fields", []) if isinstance(delivery_trace, dict) else []
     demand_priority_decision = llm_decisions.get("demand_priority") or {}
     weight_decision = llm_decisions.get("matching_weights") or {}
     planner_decision = planner_decision or {}
@@ -179,9 +183,9 @@ def build_ai_decision_matrix(
         {
             "id": "D6", "decision": "交付摘要组织", "level": "AI 生成",
             "ai_role": "将已核验事实组织成可读摘要",
-            "applied": bool(delivery_parsed) and str(delivery_trace.get("review_status") or "") != "audit-only",
-            "source": "agentarts-audit-only" if (delivery_parsed and str(delivery_trace.get("review_status") or "") == "audit-only") else (delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template"),
-            "discarded_fields": delivery_trace.get("discarded_fields", []) if isinstance(delivery_trace, dict) else [],
+            "applied": d6_applied,
+            "source": d6_source,
+            "discarded_fields": d6_discarded_fields,
             "boundary": "仅使用已核验数字和事实",
             "fallback": "本地交付模板与证据链",
             "local_equivalent": "确定性交付模板、方案对比、执行清单、风险提示与证据引用",
