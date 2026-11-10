@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections import defaultdict
 from datetime import datetime
 from statistics import mean
 from typing import Any, Awaitable, Callable
 
-from .config import AGENT_RUNTIME
+from .config import AGENT_RUNTIME, AGENT_TASK_CAPABILITY_MAP_JSON
 
 
 AGENTS = [
@@ -134,6 +135,62 @@ WORKFLOW = {
     "max_loop_attempts": 3,
     "stop_condition": "无硬阻断且核验评分不低于 80，或资源约束无法自动修复/达到三轮上限时转人工研判",
 }
+
+
+DEFAULT_TASK_CAPABILITY_MAP = {
+    "demand": ["需求拆分", "灾害语义理解", "优先级判定"],
+    "matching": ["多目标规划", "仓库分配", "备用路线选择"],
+    "verify": ["交叉核验", "硬阻断识别", "风险评分"],
+    "delivery": ["方案比较", "执行摘要", "报告生成"],
+}
+
+
+def task_capability_map() -> dict[str, list[str]]:
+    if not AGENT_TASK_CAPABILITY_MAP_JSON:
+        return DEFAULT_TASK_CAPABILITY_MAP
+    try:
+        parsed = json.loads(AGENT_TASK_CAPABILITY_MAP_JSON)
+    except json.JSONDecodeError:
+        return DEFAULT_TASK_CAPABILITY_MAP
+    if not isinstance(parsed, dict):
+        return DEFAULT_TASK_CAPABILITY_MAP
+    return {str(key): [str(item) for item in value] for key, value in parsed.items() if isinstance(value, list)}
+
+
+def _capability_match(agent: dict, required: list[str]) -> float:
+    capabilities = [str(item) for item in (agent.get("capabilities") or agent.get("skills") or [])]
+    if not required:
+        return 0.0
+    hits = sum(1 for item in required if any(item == capability or item in capability for capability in capabilities))
+    return round(hits / len(required), 4)
+
+
+def rank_agents_for_task(task_type: str, agents: list[dict], metrics: dict[str, dict]) -> list[dict]:
+    required = task_capability_map().get(task_type, [])
+    profiles = []
+    for agent in agents:
+        agent_id = str(agent.get("id") or "")
+        load = metrics.get(agent_id, {})
+        samples = int(load.get("historical_samples", load.get("sample_count", 0)) or 0)
+        success = float(load.get("historical_success_rate", load.get("success_rate", 0.5)) or 0.5)
+        current_load = max(0.0, min(1.0, float(load.get("load_score", 0) or 0) / 100.0))
+        match = _capability_match(agent, required)
+        score = round(match * 0.4 + success * 0.3 + (1.0 - current_load) * 0.3, 4)
+        profiles.append({
+            "agent_id": agent_id,
+            "task_type": task_type,
+            "required_capabilities": required,
+            "capability_match": match,
+            "history_success_rate": success if samples else None,
+            "current_load": round(current_load, 4),
+            "match_score": score,
+            "has_history": samples > 0,
+        })
+    return sorted(
+        profiles,
+        key=lambda item: (item["has_history"], item["match_score"], item["agent_id"]),
+        reverse=True,
+    )
 
 
 class AsyncPriorityExecutor:
@@ -268,6 +325,15 @@ def build_dynamic_schedule(request: dict, closed_routes: list[str], demand_count
         {"agent_id": "verifier_agent", "priority": 99, "batch": "gated", "reason": "安全关键节点，必须全量硬规则核验"},
         {"agent_id": "delivery_agent", "priority": 70, "batch": "post-approval", "reason": "只消费已核验事实"},
     ]
+    task_types = {
+        "demand_agent": "demand",
+        "rag_retrieve": "demand",
+        "matching_agent": "matching",
+        "verifier_agent": "verify",
+        "delivery_agent": "delivery",
+    }
+    for item in priorities:
+        item["task_type"] = task_types.get(item["agent_id"], "")
     return {
         "engine": "capability-weighted DAG scheduler",
         "runtime": AGENT_RUNTIME,

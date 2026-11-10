@@ -976,7 +976,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "agents": {agent_id: list(items) for agent_id, items in memory_context.items()},
             "scope": "仅作上下文与安全 tie-break，不覆盖硬规则",
         })
-        schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics)
+        schedule = apply_agent_load(build_dynamic_schedule(request, closed_routes, len(request["demand_items"])), runtime_metrics, agents=registry.list_agents())
         agent_executor = AsyncPriorityExecutor(
             build_executor_priorities(schedule),
             max_workers=3,

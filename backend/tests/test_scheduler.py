@@ -1,7 +1,7 @@
 import asyncio
 
 from app.registry import apply_agent_load
-from app.scheduler import AsyncPriorityExecutor, build_dynamic_schedule
+from app.scheduler import AsyncPriorityExecutor, build_dynamic_schedule, rank_agents_for_task
 
 
 def test_async_priority_executor_runs_higher_priority_first_and_records_metrics():
@@ -78,4 +78,29 @@ def test_scheduler_uses_latency_failure_and_backlog_feedback():
     assert item["backlog_penalty"] > 0
     assert item["historical_success_rate"] == 0.5
     assert item["history_success_bonus"] == -5
-    assert loaded["priority_formula"] == "base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus"
+    assert "with-history: match_score*100" in loaded["priority_formula"]
+    assert item["allocation_mode"] in {"capability-load-match", "priority-fallback"}
+    assert item["candidate_ranking"]
+
+def test_capability_profile_ranks_match_then_load_balance():
+    agents = [
+        {"id": "agent-a", "capabilities": ["需求拆分", "灾害语义理解", "优先级判定"], "priority": 90},
+        {"id": "agent-b", "capabilities": ["需求拆分", "灾害语义理解", "优先级判定"], "priority": 80},
+        {"id": "agent-c", "capabilities": [], "priority": 99},
+    ]
+    metrics = {
+        "agent-a": {"historical_samples": 10, "historical_success_rate": 0.6, "load_score": 90, "pending_calls": 4},
+        "agent-b": {"historical_samples": 10, "historical_success_rate": 0.9, "load_score": 10, "pending_calls": 0},
+        "agent-c": {"historical_samples": 0, "load_score": 0, "pending_calls": 0},
+    }
+    ranked = rank_agents_for_task("demand", agents, metrics)
+    assert ranked[0]["agent_id"] == "agent-b"
+    assert ranked[0]["capability_match"] == 1.0
+    assert ranked[-1]["agent_id"] == "agent-c"
+
+
+def test_capability_scheduler_falls_back_without_history():
+    schedule = build_dynamic_schedule({"event": {"severity": "II级", "affected_population": 1000}}, [], 2)
+    loaded = apply_agent_load(schedule, {}, agents=[])
+    assert all(item["allocation_mode"] == "priority-fallback" for item in loaded["dispatch"])
+    assert all(item["effective_priority"] == item["base_priority"] for item in loaded["dispatch"])

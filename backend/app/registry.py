@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 from .database import Database, now_iso
+from .scheduler import AGENTS, rank_agents_for_task
 
 
 class AgentRegistryError(ValueError):
@@ -319,8 +320,9 @@ class AgentRegistryService:
         return result
 
 
-def apply_agent_load(schedule: dict, metrics: dict[str, dict]) -> dict:
+def apply_agent_load(schedule: dict, metrics: dict[str, dict], agents: list[dict] | None = None) -> dict:
     dispatch = []
+    agent_rows = agents if agents is not None else AGENTS
     for item in schedule.get("dispatch", []):
         copy = dict(item)
         load = metrics.get(copy["agent_id"], {})
@@ -337,7 +339,20 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict]) -> dict:
         copy["backlog_penalty"] = backlog_penalty
         copy["load_penalty"] = penalty
         copy["history_success_bonus"] = history_bonus
-        copy["effective_priority"] = max(1, copy["base_priority"] - penalty + history_bonus)
+        task_type = str(copy.get("task_type") or "")
+        ranking = rank_agents_for_task(task_type, agent_rows, metrics) if task_type else []
+        profile = next((row for row in ranking if row["agent_id"] == copy["agent_id"]), None)
+        copy["candidate_ranking"] = ranking
+        copy["capability_match"] = profile.get("capability_match", 0.0) if profile else 0.0
+        copy["match_score"] = profile.get("match_score", 0.0) if profile else 0.0
+        copy["current_load"] = profile.get("current_load", 0.0) if profile else 0.0
+        copy["rate_limited"] = bool(copy["current_load"] >= 0.9 or int(load.get("pending_calls", 0)) >= 3)
+        if profile and profile.get("has_history"):
+            copy["allocation_mode"] = "capability-load-match"
+            copy["effective_priority"] = 1 if copy["rate_limited"] else max(1, round(profile["match_score"] * 100))
+        else:
+            copy["allocation_mode"] = "priority-fallback"
+            copy["effective_priority"] = max(1, copy["base_priority"] - penalty + history_bonus)
         copy["load_score"] = load.get("load_score", 0)
         copy["historical_success_rate"] = history_success if history_samples else None
         copy["historical_samples"] = history_samples
@@ -347,6 +362,7 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict]) -> dict:
     enriched = dict(schedule)
     enriched["dispatch"] = dispatch
     enriched["engine"] = "load-aware capability-weighted DAG scheduler"
-    enriched["priority_formula"] = "base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus"
+    enriched["priority_formula"] = "no-history: base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus; with-history: match_score*100"
+    enriched["capability_map"] = {item["agent_id"]: item.get("required_capabilities", []) for item in dispatch}
     enriched["agent_load"] = metrics
     return enriched
