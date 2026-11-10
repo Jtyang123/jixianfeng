@@ -22,6 +22,7 @@ def find_corrupted_strings(paths):
 def test_source_contains_no_corrupted_chinese_placeholder():
     root = Path(__file__).resolve().parents[2]
     paths = list((root / "backend" / "app").glob("*.py"))
+    paths += list((root / "backend" / "benchmark").glob("*.py"))
     paths += list((root / "frontend" / "src").rglob("*.vue"))
     paths += list((root / "frontend" / "src").rglob("*.js"))
     problems = find_corrupted_strings(paths)

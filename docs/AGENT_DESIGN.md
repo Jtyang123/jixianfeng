@@ -67,6 +67,34 @@ queued
 - **LLM ReAct 模式（配置真实 LLM 后）**：Planner 决定工具集合、执行顺序、结果判断和重规划；A01-A04 的确定性工具仍负责需求拆分、方案计算、独立核验和交付事实。该模式下 AgentArts 不参与同一次运行。
 
 基准测试与压测结果只代表默认模式。引用性能数字时必须注明运行模式，不得把默认模式和 LLM ReAct 模式的数据混在一起。
+## A2A Agent 通信
+
+- 消息字段：`message_id`、`sender`、`receiver`、`message_type`、`content`、`reply_to`、`correlation_id`、`timestamp`、`status`。
+- 支持 `request`、`reply`、`broadcast` 三种消息；请求与应答通过 `correlation_id` 关联，回复通过 `reply_to` 指向请求消息。
+- 消息同时进入内存队列和数据库 `a2a_messages`，`GET /api/a2a/messages` 可追溯历史；SSE 使用 `a2a.message` 推送。
+- 当跨仓调拨协作需要 A02 补充信息时，A01 可发送请求并等待 A02 应答；异常时发送 `a2a.fallback` 并回退到黑板产物，不阻断主流程。
+
+## 能力画像调度
+
+任务能力映射由 `AGENT_TASK_CAPABILITY_MAP_JSON` 配置。调度候选分按以下公式计算：
+
+```text
+匹配分 = 能力标签匹配度 × 0.4 + 历史成功率 × 0.3 + (1 - 当前负载) × 0.3
+```
+
+历史数据来自运行记录和 `agent_performance`。有历史时优先选择匹配分高且负载低的 Agent；无历史时回退现有优先级。高负载候选会标记 `rate_limited`，但不会绕过核验门控。
+
+## 修复经验库
+
+- 存储复用 `agent_memory`，键为 `repair_experience:<场景>:<问题代码>:<策略>`。
+- 记录字段包括策略描述、Prompt 片段、采纳次数、成功次数和成功率。
+- 下一轮生成前检索当前阻断代码，只注入成功率不低于 0.6 的“历史有效经验”作为参考。
+- 经验只影响 Prompt 上下文，不得修改库存、路线、运力、时效和核验 verdict。
+
+## 端到端并发基准
+
+`backend/benchmark/run_perf_benchmark.py` 在默认确定性模式下运行 1/5/10/20 个完整任务，每个档位重复两轮并比较关键字段一致性。每档统计成功率、平均耗时、P95、平均得分、LLM 调用次数和工具调用次数，并同时运行单 Agent 贪心基线。结果输出到 `data/benchmark_latest.json`，通过 `GET /api/benchmark/report` 读取。该基准是单进程 asyncio 任务级并发，不等同于多实例集群压测。
+
 ## AgentArts 映射
 
 | 本地 Agent | AgentArts 配置建议 |

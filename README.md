@@ -18,11 +18,15 @@
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
 - Agent 注册表：动态注册、版本切换；配置端点时调用 AgentArts，未配置端点时自动使用离线角色执行器
 - 跨运行记忆：PostgreSQL/SQLite 持久化置信度、阻断历史、成功修复策略和推荐方案；只作为允许策略集合内的 tie-break
+- A2A Agent 通信：请求/应答/广播消息持久化，SSE 实时展示 `a2a.message`，通道异常时自动回退 blackboard
+- 能力画像调度：按任务能力标签、历史成功率、平均耗时和当前负载计算匹配分，并保留无历史时的优先级回退
+- 修复经验库：按问题代码与场景沉淀历史修复策略，只向 Prompt 注入高成功率参考，不改变硬规则
 - 置信度与 Prompt 证据：需求置信度按可解释因子计算，反馈循环生成 `v1.4+adaptive.rN` Prompt 补丁并进入下一轮上下文
 - 可视化与代码化工作流：节点卡片、拖拽连线、往返 JSON 同步、可替换主干 DAG、工作流内 loop/tool 节点、条件/并行/投票/子工作流，以及 3 个可实例化模板
 - 可上传知识库：多格式上传、自动分块、可替换远程 embedding（离线哈希回退，未配置时明确不宣称语义检索）+ BM25 + 确定性重排；返回页码/章节/字符区间引用定位
 - 七项 AI 决策证据：需求假设、P0-P3 相邻调整、修复策略、已核验方案推荐、LLM 权重建议、核验解释和交付摘要；每项都有安全边界与确定性等价能力
 - 量化评估：道路中断、正常条件、库存缺口、无可用车辆、西部走廊和南部环线共 6 个场景、120 个默认样本，其中 2 套独立路网；另含 30 秒持续压测、1/5/10/20 并发、平台队列压测和故障注入
+- 端到端并发基准：`backend/benchmark/run_perf_benchmark.py` 对 1/5/10/20 任务执行两轮一致性对比，并同时统计单 Agent 贪心基线的安全率、P95、得分和工具调用数
 - AgentArts 运行观测：HTTP 连接复用、任务完成即返回、匹配与核验复核并行；本机近期完整运行约 32–47 秒，仅作观测值，不作为 SLA
 - 平台级运行调度：PostgreSQL/SQLite 持久化队列、动态优先级、并发上限、租约心跳、重启恢复和幂等提交
 - 库存一致性：审批时原子预留 `locked_quantity`，并发审批不会重复承诺同一批库存，并支持释放预留
@@ -138,6 +142,18 @@ python tools\build_submission.py
 配置 `LLM_ENABLED=true`、真实 `LLM_API_KEY` 和模型地址后，Planner 负责决定“调用哪些工具、按什么顺序调用、结果是否符合预期、是否重新规划”；库存、方案、成本、ETA、核验和交付数字仍由确定性工具计算。该模式下 AgentArts 不参与本次运行，避免两条推理链重复决策。
 
 > 基准测试与压测数据均在默认模式下产生；LLM ReAct 模式的延迟、成功率和调用次数需要单独统计，不能与默认模式数据混合引用。
+
+四角色固定主干只是默认模式中的安全执行链，不代表平台只有这一种运行时。
+
+### A2A、调度与经验库接口
+
+- `GET /api/a2a/messages?run_id=<运行ID>&limit=100`：按运行查询 A2A 消息历史。消息包含 `message_id`、`sender`、`receiver`、`message_type`、`content`、`reply_to`、`correlation_id`、`timestamp`、`status`。
+- SSE 事件 `a2a.message`：推送请求、应答和广播消息；`a2a.fallback`：A2A 不可用时说明已回退 blackboard，主流程继续。
+- 能力调度配置：`AGENT_TASK_CAPABILITY_MAP_JSON` 可覆盖任务类型到能力标签的映射；系统按“能力匹配度 × 0.4 + 历史成功率 × 0.3 + (1 - 当前负载) × 0.3”排序，无历史数据时回退现有优先级。
+- 修复经验库复用 `agent_memory`，键为 `repair_experience:<场景>:<问题代码>:<策略>`；仅向 Prompt 注入成功率不低于 0.6 的参考片段，库存、路线、运力、时效与核验结论不变。
+- `GET /api/benchmark/report`：返回最近一次端到端并发基准 JSON；无报告时返回 `status=empty` 和运行命令提示。
+- 独立运行基准：`cd backend && ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark`。默认输出到 `data/benchmark_latest.json`，可用 `PERF_BENCHMARK_REPORT` 覆盖路径。
+
 ## AgentArts 接入
 
 默认 `AGENT_RUNTIME=local`，保证断网演示稳定。
@@ -265,7 +281,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 91 项测试；本机无 PostgreSQL 环境时结果为 `88 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 104 项测试；本机无 PostgreSQL 环境时结果为 `101 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .agentarts import AgentArtsBridge
 from .auth import AuthService
+from benchmark.run_perf_benchmark import load_latest_benchmark_report
 from .config import (
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_REQUIRED, BASE_DIR,
     RESERVATION_SWEEP_ENABLED, RETRY_MAX_ATTEMPTS, RETRY_WORKER_ENABLED, RUN_WORKER_CONCURRENCY,
@@ -541,6 +542,11 @@ def manifest() -> dict:
     data["agentarts"] = AgentArtsBridge().status
     data["mcp"] = {"endpoint": "/api/mcp", "protocol_version": "2024-11-05", "methods": ["initialize", "tools/list", "tools/call"]}
     return data
+
+
+@router.get("/benchmark/report")
+def benchmark_report() -> dict:
+    return load_latest_benchmark_report()
 
 
 @router.post("/evaluation/diagnostics")

@@ -55,6 +55,7 @@ if AGENTARTS_AUTH_PREFIX and not AGENTARTS_AUTH_PREFIX.endswith(" "):
 AGENTARTS_TIMEOUT = float(os.getenv("AGENTARTS_TIMEOUT", "20"))
 AGENT_TASK_CAPABILITY_MAP_JSON = os.getenv("AGENT_TASK_CAPABILITY_MAP_JSON", "").strip()
 A2A_ENABLED = os.getenv("A2A_ENABLED", "true").strip().lower() == "true"
+PERF_BENCHMARK_REPORT = os.getenv("PERF_BENCHMARK_REPORT", "data/benchmark_latest.json").strip()
 AMAP_WEB_SERVICE_KEY = os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
 OSRM_TIMEOUT = float(os.getenv("OSRM_TIMEOUT", "20"))
