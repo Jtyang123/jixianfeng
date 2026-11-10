@@ -75,8 +75,9 @@ def test_api_run_flow(tmp_path: Path):
     assert run["result"]["loop_metrics"]["converged"] is True
     assert run["result"]["loop_metrics"]["score_gain"] > 0
     ai_matrix = run["result"]["ai_decision_matrix"]
-    assert len(ai_matrix) == 7
-    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6", "D7"}
+    assert len(ai_matrix) == 8
+    assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"}
+    assert next(item for item in ai_matrix if item["id"] == "D8")["applied"] is False
     assert all(item["boundary"] and item["fallback"] and item["local_equivalent"] for item in ai_matrix)
     assert next(item for item in ai_matrix if item["id"] == "D4")["boundary"] == "硬规则结论不可被模型覆盖"
     assert run["result"]["demand"]["confidence_factors"]

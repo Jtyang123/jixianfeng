@@ -174,6 +174,11 @@ def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, mo
     assert run["result"]["planner_trace"]["executed_steps"] == 4
     assert len(run["result"]["rounds"]) == 1
     assert run["result"]["planner_trace"]["decisions"][-1]["decision"]["decision"] == "stop"
+    decisions_by_id = {item["id"]: item for item in run["result"]["ai_decision_matrix"]}
+    assert decisions_by_id["D8"]["applied"] is True
+    assert decisions_by_id["D8"]["source"] == "llm-planner"
+    assert decisions_by_id["D3"]["applied"] is False
+    assert decisions_by_id["D3"]["source"] == "deterministic-scorer"
     event_types = [event["type"] for event in db.events_after(run_id)]
     assert "llm.thinking" in event_types
 
@@ -276,6 +281,9 @@ def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, mon
     assert decisions["D2"]["applied"] is False
     assert decisions["D2"]["source"] == "deterministic-single-policy"
     assert decisions["D3"]["applied"] is True
+    assert decisions["D6"]["applied"] is False
+    assert decisions["D6"]["source"] == "agentarts-audit-only"
+    assert decisions["D6"]["discarded_fields"]
     assert run["result"]["prompt_adaptations"]
     assert run["result"]["prompt_adaptations"][0]["active_version"].startswith("v1.4+adaptive")
     assert run["result"]["loop_metrics"]["adaptive_prompt_versions"]

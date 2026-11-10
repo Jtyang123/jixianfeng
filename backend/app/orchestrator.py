@@ -67,6 +67,7 @@ def new_run_id() -> str:
 def build_ai_decision_matrix(
     agent_decision: dict, traces: dict, verification: dict, extension_reviews: list[dict],
     llm_status: dict, llm_decisions: dict | None = None,
+    planner_decision: dict | None = None,
 ) -> list[dict]:
     llm_decisions = llm_decisions or {}
     demand_trace = traces.get("demand_agent") or {}
@@ -80,6 +81,21 @@ def build_ai_decision_matrix(
     delivery_parsed = delivery_trace.get("parsed") if isinstance(delivery_trace, dict) else None
     demand_priority_decision = llm_decisions.get("demand_priority") or {}
     weight_decision = llm_decisions.get("matching_weights") or {}
+    planner_decision = planner_decision or {}
+    chosen_by = str(agent_decision.get("chosen_by") or "")
+    d3_applied = bool(agent_decision.get("applied"))
+    d3_source = agent_decision.get("source", "deterministic-fallback")
+    d3_boundary = "??????????????????"
+    if chosen_by == "deterministic-scorer":
+        d3_applied = False
+        d3_source = "deterministic-scorer"
+        d3_boundary = "?????????????????????LLM?????????"
+    planner_repair_policies = [str(item) for item in planner_decision.get("repair_policies", []) if item]
+    d2_applied = bool(rework_parsed) and rework_trace.get("mode") == "agentarts"
+    d2_source = rework_trace.get("mode", "deterministic-fallback") if isinstance(rework_trace, dict) else "deterministic-fallback"
+    if planner_decision.get("applied") and planner_repair_policies:
+        d2_applied = True
+        d2_source = "llm-planner"
     demand_priority_applied = bool(demand_priority_decision.get("applied"))
     demand_priority_advisory = {}
     demand_narrative_applied = False
@@ -110,8 +126,8 @@ def build_ai_decision_matrix(
         {
             "id": "D2", "decision": "修复策略优先级选择", "level": "AI 决策",
             "ai_role": "从当前问题允许的策略集合中选择下一条修复路径",
-            "applied": bool(rework_parsed) and rework_trace.get("mode") == "agentarts",
-            "source": rework_trace.get("mode", "deterministic-fallback") if isinstance(rework_trace, dict) else "deterministic-fallback",
+            "applied": d2_applied,
+            "source": d2_source,
             "boundary": "只能选择 allowed_policies，硬修复项仍由规则层强制执行",
             "fallback": "按道路、库存、运力、时效问题代码选择默认策略",
             "local_equivalent": "问题代码到允许策略的确定性映射；历史成功策略仅在允许集合内做 tie-break",
@@ -119,9 +135,9 @@ def build_ai_decision_matrix(
         {
             "id": "D3", "decision": "已核验方案推荐", "level": "AI 决策",
             "ai_role": "在通过硬规则的方案中选择最终推荐方案",
-            "applied": bool(agent_decision.get("applied")),
-            "source": agent_decision.get("source", "deterministic-fallback"),
-            "boundary": "只能从已通过独立核验的方案集合中选择",
+            "applied": d3_applied,
+            "source": d3_source,
+            "boundary": d3_boundary,
             "fallback": "按速度、成本和风险权重排序",
             "local_equivalent": "对已核验方案按速度、成本、风险权重确定性排序",
         },
@@ -155,12 +171,26 @@ def build_ai_decision_matrix(
         {
             "id": "D6", "decision": "交付摘要组织", "level": "AI 生成",
             "ai_role": "将已核验事实组织成可读摘要",
-            "applied": bool(delivery_parsed),
-            "source": delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template",
+            "applied": bool(delivery_parsed) and str(delivery_trace.get("review_status") or "") != "audit-only",
+            "source": "agentarts-audit-only" if (delivery_parsed and str(delivery_trace.get("review_status") or "") == "audit-only") else (delivery_trace.get("mode", "local-template") if isinstance(delivery_trace, dict) else "local-template"),
+            "discarded_fields": delivery_trace.get("discarded_fields", []) if isinstance(delivery_trace, dict) else [],
             "boundary": "仅使用已核验数字和事实",
             "fallback": "本地交付模板与证据链",
             "local_equivalent": "确定性交付模板、方案对比、执行清单、风险提示与证据引用",
         },
+        {
+            "id": "D8", "decision": "任务计划与工具编排", "level": "AI 决策",
+            "ai_role": "决定调用哪些工具、按什么顺序调用、是否重规划",
+            "applied": bool(planner_decision.get("applied")),
+            "source": planner_decision.get("source", "deterministic-fallback"),
+            "steps_executed": planner_decision.get("steps_executed", 0),
+            "replans": planner_decision.get("replans", 0),
+            "repair_policies": planner_repair_policies,
+            "boundary": "只能决定调用哪些工具、按什么顺序、是否重规划；不得计算或修改任何数字",
+            "fallback": "固定四步安全流程（需求→生成→核验→交付）",
+            "local_equivalent": "确定性 A01→A02→A03→门控→A04 主干工作流",
+        },
+
     ]
     return sorted(matrix, key=lambda item: int(item["id"][1:]))
 
@@ -431,9 +461,20 @@ async def run_planner_orchestration(
         "recommended_plan_id": recommended.get("plan_id"),
         "recommended_strategy": None,
         "rationale": last_decision.get("reason", ""),
-        "source": "llm-planner",
+        "source": "deterministic-scorer",
+        "chosen_by": "deterministic-scorer",
     }
-    ai_matrix = build_ai_decision_matrix(agent_decision, {}, final_verification, [], llm_service.status, {})
+    planner_decision = {
+        "applied": plan.get("mode") == "llm-planner",
+        "source": "llm-planner" if plan.get("mode") == "llm-planner" else "deterministic-fallback",
+        "steps_executed": executed_steps,
+        "replans": len(rework_directives),
+        "repair_policies": [item.get("selected_policy") for item in rework_directives if item.get("selected_policy")],
+    }
+    ai_matrix = build_ai_decision_matrix(
+        agent_decision, {}, final_verification, [], llm_service.status, {},
+        planner_decision=planner_decision,
+    )
     return {
         "run_id": run_id,
         "runtime": "llm-planner",
@@ -467,6 +508,7 @@ async def run_planner_orchestration(
         "retrieval": evidence,
         "agent_decision": agent_decision,
         "ai_decision_matrix": ai_matrix,
+        "planner_decision": planner_decision,
         "planner_trace": {"initial_plan": plan, "decisions": decisions, "executed_steps": executed_steps},
         "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
         "agentarts_trace": {},
@@ -1286,6 +1328,9 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 "note": "云端交付 Agent 仅作并行审计；最终摘要、风险与动作只从最终核验包生成。",
             }
             delivery["agentarts_interpretation"] = interpretation
+            delivery_trace_entry = agentarts_trace.setdefault("delivery_agent", {})
+            delivery_trace_entry["review_status"] = "audit-only"
+            delivery_trace_entry["discarded_fields"] = interpretation.get("discarded_fields", [])
             reasoning = ai_reasoning.setdefault("delivery_agent", {})
             if isinstance(reasoning, dict):
                 reasoning["agentarts_interpretation"] = interpretation
