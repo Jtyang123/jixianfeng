@@ -1588,6 +1588,25 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 "completed": core_result["completed"], "metrics": core_result["metrics"],
                 "loop_mode": True,
             })
+            workflow_run = workflow_repo.get_run(core_result["run_id"]) or {}
+            stage_by_agent = {
+                "demand_agent": "demand", "matching_agent": "matching",
+                "verifier_agent": "verification", "verification_vote": "verification",
+                "core-verifier-a": "verification", "core-verifier-b": "verification",
+                "delivery_agent": "delivery",
+            }
+            for node_run in workflow_run.get("nodes", []):
+                node_stage = stage_by_agent.get(str(node_run.get("agent_id") or ""))
+                if not node_stage:
+                    continue
+                stage_metrics.append({
+                    "stage": node_stage,
+                    "started_at": node_run.get("started_at") or "",
+                    "ended_at": node_run.get("completed_at") or "",
+                    "duration_ms": round(float(node_run.get("execution_ms") or 0), 2),
+                    "agent_id": str(node_run.get("agent_id") or ""),
+                    "attempt": 1,
+                })
             loop_node = next(node for node in core_definition["nodes"] if node.get("type") == "loop")
             loop_output = core_result["outputs"].get(loop_node["id"], {})
             for iteration in loop_output.get("iterations", []):
@@ -1644,6 +1663,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 stage_by_agent = {
                     "demand_agent": "demand", "matching_agent": "matching",
                     "verifier_agent": "verification", "verification_vote": "verification",
+                    "core-verifier-a": "verification", "core-verifier-b": "verification",
                     "delivery_agent": "delivery",
                 }
                 for node_run in workflow_run.get("nodes", []):
