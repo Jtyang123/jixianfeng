@@ -37,6 +37,9 @@ const resultSectionRef = ref(null)
 const error = ref('')
 const approved = ref(false)
 const dispatchTasks = ref([])
+const a2aMessages = ref([])
+const a2aLoading = ref(false)
+const a2aError = ref('')
 const materialToAdd = ref('')
 let eventSource = null
 let statusPoller = null
@@ -97,6 +100,17 @@ const approvalDisplay = computed(() => approvalPresentation(runResult.value?.del
 const scoreDelta = computed(() => scoreDeltaLabel(runResult.value?.loop_metrics?.score_gain))
 const firstRound = computed(() => runResult.value?.rounds?.[0])
 const secondRound = computed(() => runResult.value?.rounds?.[1])
+const eventPresentation = {
+  'llm.thinking': { label: 'LLM 思考', icon: SlidersHorizontal },
+  'a2a.message': { label: 'A2A 协商', icon: Route },
+  'memory.saved': { label: '记忆写入', icon: PackageOpen },
+  'memory.loaded': { label: '记忆加载', icon: Clock3 },
+  'scheduler.decided': { label: '调度决策', icon: Gauge },
+}
+const featuredEvents = computed(() => events.value.filter((event) => eventPresentation[event.type]).slice(-8))
+const injectedExperiences = computed(() => (runResult.value?.rework_directives || []).flatMap((item) => item.experience_context || []))
+const loadedMemoryEntries = computed(() => Object.entries(runResult.value?.memory_context || {}).flatMap(([agentId, entries]) => Object.entries(entries || {}).map(([key, value]) => ({ agentId, key, value: value?.value ?? value }))))
+const memoryWrites = computed(() => runResult.value?.memory_writes || [])
 const closedRoutes = computed(() => runResult.value?.closed_routes || selectedScenario.value?.closed_routes || [])
 const demandSummary = computed(() => demandItems.value.map((item) => {
   const material = materialMap.value[item.material_id]
@@ -154,6 +168,30 @@ function stockOf(id) {
 }
 function lockedStockOf(id) {
   return inventoryData.value.summary?.find((item) => item.material_id === id)?.locked_quantity || 0
+}
+function a2aTypeLabel(type) {
+  return { request: '请求', reply: '应答', broadcast: '广播' }[type] || '协商'
+}
+function contentSummary(content) {
+  if (!content || typeof content !== 'object') return '无内容'
+  if (Array.isArray(content.allocated) && content.allocated.length) {
+    return `分仓建议 ${content.allocated.length} 条，缺口 ${content.shortfall ?? 0}`
+  }
+  const text = JSON.stringify(content)
+  return text.length > 140 ? `${text.slice(0, 140)}…` : text
+}
+async function loadA2ADetails(id) {
+  if (!id) return
+  a2aLoading.value = true
+  a2aError.value = ''
+  try {
+    a2aMessages.value = await api.a2a(id)
+  } catch (exc) {
+    a2aMessages.value = []
+    a2aError.value = exc.message
+  } finally {
+    a2aLoading.value = false
+  }
 }
 function switchRunSource(source) {
   if (source === 'demo') {
@@ -346,6 +384,7 @@ async function finishRun(id) {
     runResult.value = run.result
     dispatchTasks.value = taskRows
     running.value = false
+    await loadA2ADetails(id)
     approved.value = run.approved === 1 || run.status === 'approved'
     const recommended = run.result?.delivery?.recommended_plan?.plan_id
     selectedPlanId.value = recommended || run.result?.final_verification?.reports?.[0]?.plan_id || ''
@@ -375,6 +414,8 @@ async function startRun() {
   approved.value = false
   runResult.value = null
   events.value = []
+  a2aMessages.value = []
+  a2aError.value = ''
   selectedPlanId.value = ''
   resultTab.value = 'detail'
   running.value = true
@@ -435,6 +476,7 @@ async function restoreRunFromQuery() {
     runResult.value = run.result
     approved.value = Boolean(run.approved)
     dispatchTasks.value = taskRows
+    await loadA2ADetails(requestedRunId)
     running.value = ['queued', 'running'].includes(run.status)
     const recommended = run.result?.delivery?.recommended_plan?.plan_id
     selectedPlanId.value = recommended || run.result?.final_verification?.reports?.[0]?.plan_id || ''
@@ -621,6 +663,14 @@ onBeforeUnmount(() => {
               <span><Truck :size="15" />{{ formatNumber(totalWeight, 1) }} kg</span>
               <span><Clock3 :size="15" />云端智能体并行推理中</span>
               <button v-if="runResult" class="view-result-action" @click="scrollToResult">查看结果 <ChevronDown :size="14" /></button>
+            </div>
+          </div>
+          <div v-if="featuredEvents.length" class="chain-events">
+            <div v-for="(event, index) in featuredEvents" :key="event.seq || event.id || index" class="chain-event">
+              <component :is="eventPresentation[event.type].icon" :size="15" />
+              <span>{{ eventPresentation[event.type].label }}</span>
+              <strong>{{ event.title }}</strong>
+              <small>{{ event.agent_id }}</small>
             </div>
           </div>
         </div>
@@ -871,6 +921,45 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+        <details class="runtime-details">
+          <summary><Route :size="17" /><strong>A2A 协商</strong><span>{{ a2aMessages.length }} 条消息</span></summary>
+          <div v-if="a2aLoading" class="runtime-empty">正在加载 A2A 协商记录…</div>
+          <div v-else-if="a2aError" class="inline-error">{{ a2aError }}</div>
+          <div v-else-if="!a2aMessages.length" class="runtime-empty">本次运行没有触发跨仓 A2A 协商。</div>
+          <div v-else class="a2a-message-list">
+            <div v-for="message in a2aMessages" :key="message.message_id" class="a2a-message-row">
+              <div><strong>{{ message.sender }} → {{ message.receiver }}</strong><span>{{ a2aTypeLabel(message.message_type) }}</span></div>
+              <p>{{ contentSummary(message.content) }}</p>
+              <em>{{ message.status }}</em>
+            </div>
+          </div>
+        </details>
+        <details class="runtime-details">
+          <summary><PackageOpen :size="17" /><strong>记忆使用</strong><span>{{ injectedExperiences.length }} 条注入 · {{ memoryWrites.length }} 条写入</span></summary>
+          <div class="memory-detail-grid">
+            <div>
+              <h4>本次注入的经验</h4>
+              <ul v-if="injectedExperiences.length">
+                <li v-for="(item, index) in injectedExperiences" :key="`${item.memory_key || item.policy_id}-${index}`">
+                  {{ item.scenario_tag || '当前场景' }} · {{ item.policy_id || '修复策略' }} · 成功率 {{ ((item.success_rate || 0) * 100).toFixed(0) }}% · 得分增益 {{ item.score_gain ?? item.effect ?? 0 }}
+                </li>
+              </ul>
+              <p v-else class="runtime-empty">本次没有注入历史修复经验。</p>
+              <h4>已加载的记忆键</h4>
+              <ul v-if="loadedMemoryEntries.length">
+                <li v-for="item in loadedMemoryEntries" :key="`${item.agentId}-${item.key}`">{{ item.agentId }} · {{ item.key }}</li>
+              </ul>
+              <p v-else class="runtime-empty">运行上下文没有历史记忆。</p>
+            </div>
+            <div>
+              <h4>本次写入的键</h4>
+              <ul v-if="memoryWrites.length">
+                <li v-for="(item, index) in memoryWrites" :key="`${item.agent_id}-${item.memory_key}-${index}`">{{ item.agent_id }} · {{ item.memory_key }}</li>
+              </ul>
+              <p v-else class="runtime-empty">本次运行没有写入长期记忆。</p>
+            </div>
+          </div>
+        </details>
       </section>
 
       <section v-else-if="!running" class="preflight-section">

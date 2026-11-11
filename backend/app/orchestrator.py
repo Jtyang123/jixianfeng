@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import httpx
 
-from .a2a import A2ABus
+from .a2a import A2ABus, A2AError
 from .agentarts import AgentArtsBridge
 from .agents import allowed_rework_policies, apply_llm_priority_adjustments, build_delivery_package, build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans, normalize_agentarts_decision, normalize_llm_weight_profile, verify_plans
 from .config import A2A_ENABLED, AGENTARTS_TIMEOUT, AGENT_RUNTIME, DEMO_PACING_FACTOR, RETRY_MAX_ATTEMPTS
@@ -234,10 +234,13 @@ async def pace(seconds: float) -> None:
 
 
 def _cross_warehouse_candidates(demand_plan: dict, inventory: list[dict]) -> list[dict]:
-    required = {}
+    required: dict[int, float] = {}
+    required_weight: dict[int, float] = {}
     for item in demand_plan.get("items", []):
         material_id = int(item["material_id"])
-        required[material_id] = required.get(material_id, 0.0) + float(item.get("quantity") or 0)
+        quantity = float(item.get("quantity") or 0)
+        required[material_id] = required.get(material_id, 0.0) + quantity
+        required_weight[material_id] = required_weight.get(material_id, 0.0) + quantity * float(item.get("unit_weight_kg") or 0)
     available: dict[int, dict[str, float]] = {}
     for row in inventory:
         if row.get("status") != "available":
@@ -253,48 +256,159 @@ def _cross_warehouse_candidates(demand_plan: dict, inventory: list[dict]) -> lis
         largest = max(warehouses.values() or [0.0])
         if total + 0.001 >= needed > largest + 0.001:
             candidates.append({
-                "material_id": material_id, "required": round(needed, 2),
-                "total_available": round(total, 2), "largest_single_warehouse": round(largest, 2),
+                "material_id": material_id,
+                "required": round(needed, 2),
+                "required_weight_kg": round(required_weight.get(material_id, 0.0), 2),
+                "total_available": round(total, 2),
+                "largest_single_warehouse": round(largest, 2),
                 "warehouse_count": len([qty for qty in warehouses.values() if qty > 0]),
             })
     return candidates
 
 
+def _build_cross_warehouse_reply(candidates: list[dict], inventory: list[dict], vehicles: list[dict] | None) -> dict:
+    available: dict[int, dict[str, float]] = {}
+    for row in inventory:
+        if row.get("status") != "available":
+            continue
+        material_id = int(row["material_id"])
+        qty = max(0.0, float(row.get("quantity") or 0) - float(row.get("locked_quantity") or 0))
+        if qty <= 0:
+            continue
+        available.setdefault(material_id, {})
+        warehouse_id = str(row["warehouse_id"])
+        available[material_id][warehouse_id] = available[material_id].get(warehouse_id, 0.0) + qty
+
+    allocated: list[dict] = []
+    allocation_details: list[dict] = []
+    total_shortfall = 0.0
+    load_by_warehouse: dict[str, float] = {}
+    for candidate in candidates:
+        material_id = int(candidate["material_id"])
+        remaining = float(candidate.get("required") or 0)
+        unit_weight = float(candidate.get("required_weight_kg") or 0) / max(remaining, 0.001)
+        rows = sorted(available.get(material_id, {}).items(), key=lambda item: item[1], reverse=True)
+        material_allocated = []
+        for warehouse_id, warehouse_available in rows:
+            if remaining <= 0.001:
+                break
+            qty = round(min(remaining, warehouse_available), 2)
+            if qty <= 0:
+                continue
+            allocated.append({"material_id": material_id, "warehouse_id": warehouse_id, "qty": qty})
+            material_allocated.append({"warehouse_id": warehouse_id, "qty": qty})
+            load_by_warehouse[warehouse_id] = load_by_warehouse.get(warehouse_id, 0.0) + qty * unit_weight
+            remaining -= qty
+        shortfall = round(max(0.0, remaining), 2)
+        total_shortfall += shortfall
+        allocation_details.append({
+            "material_id": material_id,
+            "required": round(float(candidate.get("required") or 0), 2),
+            "allocated": material_allocated,
+            "shortfall": shortfall,
+        })
+
+    capacity_by_warehouse: dict[str, float] = {}
+    for vehicle in vehicles or []:
+        if vehicle.get("status") != "available":
+            continue
+        warehouse_id = str(vehicle.get("warehouse_id") or "")
+        capacity_by_warehouse[warehouse_id] = capacity_by_warehouse.get(warehouse_id, 0.0) + float(vehicle.get("capacity_kg") or 0)
+    warehouse_loads = [
+        {
+            "warehouse_id": warehouse_id,
+            "load_kg": round(load, 2),
+            "capacity_kg": round(capacity_by_warehouse.get(warehouse_id, 0.0), 2),
+            "within_capacity": load <= capacity_by_warehouse.get(warehouse_id, 0.0) + 0.001,
+        }
+        for warehouse_id, load in sorted(load_by_warehouse.items())
+    ]
+    vehicle_feasible = bool(warehouse_loads) and all(item["within_capacity"] for item in warehouse_loads)
+    feasible = total_shortfall <= 0.001 and vehicle_feasible
+    return {
+        "feasible": feasible,
+        "method": "multi-warehouse-greedy-allocation",
+        "allocated": allocated,
+        "allocation_details": allocation_details,
+        "shortfall": round(total_shortfall, 2),
+        "vehicle_feasible": vehicle_feasible,
+        "warehouse_loads": warehouse_loads,
+        "constraint": "必须按仓库可用量、车辆载重和路线时效复核；A2A 只提供协调意见，不覆盖硬规则。",
+    }
+
+
+async def _matching_agent_consumer(
+    bus: A2ABus,
+    inventory: list[dict],
+    vehicles: list[dict],
+    stop_event: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        request_message = await bus.receive("matching_agent", timeout=0.1)
+        if not request_message or request_message.get("message_type") != "request":
+            continue
+        candidates = [
+            item for item in (request_message.get("content") or {}).get("materials", [])
+            if isinstance(item, dict)
+        ]
+        reply_content = _build_cross_warehouse_reply(candidates, inventory, vehicles)
+        await bus.reply(request_message, "matching_agent", reply_content)
+
+
 async def maybe_a2a_cross_warehouse(
-    bus: A2ABus, demand_plan: dict, inventory: list[dict], emit_fallback
+    bus: A2ABus,
+    demand_plan: dict,
+    inventory: list[dict],
+    emit_fallback,
+    vehicles: list[dict] | None = None,
 ) -> dict:
     candidates = _cross_warehouse_candidates(demand_plan, inventory)
     if not candidates:
         return {"used": False, "reason": "no-cross-warehouse-request"}
+    stop_event = asyncio.Event()
+    consumer = asyncio.create_task(
+        _matching_agent_consumer(bus, inventory, vehicles or [], stop_event),
+        name="matching-agent-a2a-consumer",
+    )
     try:
-        request_message = await bus.send(
-            "demand_agent", "matching_agent", "request",
+        reply_message = await bus.request(
+            "demand_agent", "matching_agent",
             {
                 "question": "单仓库存不足时，能否从多个仓库协同调拨并完成跨仓分配？",
                 "materials": candidates,
             },
+            timeout=5.0,
         )
-        reply_message = await bus.reply(
-            request_message, "matching_agent",
-            {
-                "feasible": True,
-                "method": "multi-warehouse-allocation",
-                "materials": candidates,
-                "constraint": "必须按仓库可用量、车辆载重和路线时效复核；A2A 只提供协调意见，不覆盖硬规则。",
-            },
-        )
+        if reply_message is None:
+            raise A2AError("A2A 协商超时")
+        content = reply_message.get("content") or {}
         return {
-            "used": True, "mode": "a2a", "feasible": True,
-            "request_id": request_message["message_id"], "reply_id": reply_message["message_id"],
-            "correlation_id": request_message["correlation_id"], "materials": candidates,
+            "used": True,
+            "mode": "a2a",
+            "feasible": bool(content.get("feasible")),
+            "request_id": reply_message.get("reply_to", ""),
+            "reply_id": reply_message.get("message_id", ""),
+            "correlation_id": reply_message.get("correlation_id", ""),
+            "materials": candidates,
+            "allocated": content.get("allocated", []),
+            "allocation_details": content.get("allocation_details", []),
+            "shortfall": content.get("shortfall", 0),
+            "warehouse_loads": content.get("warehouse_loads", []),
         }
     except Exception as exc:
         emit_fallback(exc)
         return {
-            "used": True, "mode": "blackboard-fallback", "feasible": None,
-            "reason": str(exc)[:240], "materials": candidates,
+            "used": True,
+            "mode": "blackboard-fallback",
+            "feasible": None,
+            "reason": str(exc)[:240],
+            "materials": candidates,
+            "allocated": [],
         }
-
+    finally:
+        stop_event.set()
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
 
 
 def _load_repair_experiences(memory_repo: MemoryRepository, verification: dict, scenario_tag: str) -> list[dict]:
@@ -305,6 +419,7 @@ def _load_repair_experiences(memory_repo: MemoryRepository, verification: dict, 
 def _record_repair_experiences(
     memory_repo: MemoryRepository,
     directives: list[dict],
+    rounds: list[dict],
     scenario_tag: str,
     success: bool,
     run_id: str,
@@ -317,11 +432,14 @@ def _record_repair_experiences(
         "data_quality_repair": "暂停自动调度，列出缺失或冲突字段并请求人工补全。",
     }
     records: list[dict] = []
-    for directive in directives:
+    for index, directive in enumerate(directives):
         policy_id = str(directive.get("selected_policy") or "")
         issue_codes = [str(code) for code in directive.get("issue_codes", []) if str(code)]
         if not policy_id or not issue_codes:
             continue
+        before_score = float((rounds[index] if index < len(rounds) else {}).get("verification", {}).get("score", 0) or 0)
+        after_score = float((rounds[index + 1] if index + 1 < len(rounds) else rounds[-1] if rounds else {}).get("verification", {}).get("score", before_score) or before_score)
+        is_last = index == len(directives) - 1
         strategy = strategy_by_policy.get(policy_id, str(directive.get("reason") or policy_id))
         records.extend(memory_repo.record_repair_experience(
             issue_codes=issue_codes,
@@ -329,10 +447,13 @@ def _record_repair_experiences(
             policy_id=policy_id,
             strategy=strategy,
             prompt_fragment=strategy,
-            success=success,
+            success=bool(success and is_last),
             source_run_id=run_id,
+            effect=after_score - before_score,
+            superseded=not is_last,
         ))
     return records
+
 
 async def run_planner_orchestration(
     db: Database,
@@ -350,11 +471,8 @@ async def run_planner_orchestration(
     planner,
     llm_service,
     a2a_bus: A2ABus | None = None,
+    post_verification_runner=None,
 ) -> dict:
-    available_tools = [
-        "demand_plan", "knowledge_search", "inventory_query", "route_query",
-        "vehicle_query", "generate_plans", "verify_plans", "delivery_package", "escalate_human",
-    ]
     tool_agent_map = {
         "demand_plan": "demand_agent",
         "knowledge_search": "demand_agent",
@@ -367,6 +485,12 @@ async def run_planner_orchestration(
         "escalate_human": "orchestrator",
     }
     tool_repository = ToolRepository(db)
+    tool_repository.ensure_builtins()
+    registered_tools = {
+        item["id"] for item in tool_repository.list_tools(enabled_only=True)
+    }
+    available_tools = [tool_id for tool_id in tool_agent_map if tool_id in registered_tools]
+    available_tool_set = set(available_tools)
     experience_repo = MemoryRepository(db)
 
     async def timed_planner_call(operation, func, *args):
@@ -455,12 +579,15 @@ async def run_planner_orchestration(
         })
         step_started = time.perf_counter()
         result: dict
-        if tool == "demand_plan":
+        if tool not in available_tool_set:
+            result = {"error": f"工具不存在或未启用：{tool}"}
+        elif tool == "demand_plan":
             result = ensure_demand()
             if a2a_bus is not None:
                 a2a_result = await maybe_a2a_cross_warehouse(
                     a2a_bus, result, inventory,
-                    lambda exc: emit(db, run_id, "a2a.fallback", "a2a", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                    lambda exc: emit(db, run_id, "a2a.fallback", "demand_agent", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                    vehicles,
                 )
                 result = {**result, "a2a_exchange": a2a_result}
         elif tool == "inventory_query":
@@ -655,6 +782,33 @@ async def run_planner_orchestration(
         delivery = build_delivery_package(final_verification, scenario, db.latest_snapshot(), request.get("weights", {}))
     else:
         final_verification = verification or {"verdict": "rework", "score": 0, "reports": [], "blocker_summary": [], "required_fixes": []}
+    extension_reviews: list[dict] = []
+    extension_workflow_runs: list[dict] = []
+    planner_agentarts_trace: dict = {}
+    if final_verification.get("verdict") == "pass" and post_verification_runner and plans:
+        try:
+            extension_result = await post_verification_runner(demand_plan or {}, plans, final_verification)
+            extension_reviews = list(extension_result.get("extension_reviews") or [])
+            extension_workflow_runs = list(extension_result.get("extension_workflow_runs") or [])
+            planner_agentarts_trace = dict(extension_result.get("agentarts_trace") or {})
+        except Exception as exc:
+            logger.exception("post-verification extension review failed for run %s", run_id)
+            extension_workflow_runs.append({
+                "workflow_id": "post_verification-extension",
+                "workflow_name": "核验后扩展审查",
+                "stage": "post_verification",
+                "status": "failed",
+                "error": str(exc)[:500],
+            })
+    delivery["extension_reviews"] = extension_reviews
+    for review in extension_reviews:
+        parsed = review.get("parsed") or {}
+        risks = parsed.get("risks") or parsed.get("warnings") or parsed.get("risk_alerts") or []
+        if isinstance(risks, str):
+            risks = [risks]
+        for risk in risks:
+            risk_text = risk if isinstance(risk, str) else json.dumps(risk, ensure_ascii=False)
+            delivery.setdefault("risk_alerts", []).append(f"{review.get('agent_name', review.get('agent_id', '扩展 Agent'))}：{risk_text}")
     recommended = delivery.get("recommended_plan") or {}
     agent_decision = {
         "applied": bool(recommended),
@@ -672,11 +826,11 @@ async def run_planner_orchestration(
         "repair_policies": [item.get("selected_policy") for item in rework_directives if item.get("selected_policy")],
     }
     ai_matrix = build_ai_decision_matrix(
-        agent_decision, {}, final_verification, [], llm_service.status, {},
+        agent_decision, planner_agentarts_trace, final_verification, extension_reviews, llm_service.status, {},
         planner_decision=planner_decision,
     )
     experience_writes = _record_repair_experiences(
-        experience_repo, rework_directives, str(scenario.get("id") or "generic"),
+        experience_repo, rework_directives, rounds, str(scenario.get("id") or "generic"),
         final_verification.get("verdict") == "pass", run_id,
     )
     return {
@@ -716,9 +870,9 @@ async def run_planner_orchestration(
         "planner_trace": {"initial_plan": plan, "decisions": decisions, "executed_steps": executed_steps},
         "repair_experience_writes": experience_writes,
         "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
-        "agentarts_trace": {},
-        "extension_reviews": [],
-        "extension_workflow_runs": [],
+        "agentarts_trace": planner_agentarts_trace,
+        "extension_reviews": extension_reviews,
+        "extension_workflow_runs": extension_workflow_runs,
         "ai_reasoning": {},
         "data_mode": "SIMULATED",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -997,6 +1151,48 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 emit(db, run_id, "workflow.failed", "orchestrator", "扩展工作流执行失败", str(exc)[:240], {
                     "workflow_id": workflow_record["id"], "stage": stage_name,
                 })
+
+    async def run_post_verification_extensions(stage_demand: dict, stage_plans: list[dict], stage_verification: dict) -> dict:
+        review_start = len(extension_reviews)
+        workflow_run_start = len(extension_workflow_runs)
+        await run_stage_workflows("post_verification", {
+            "scenario": scenario,
+            "demand": stage_demand,
+            "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in stage_plans],
+            "verification": stage_verification,
+        })
+        if not extension_workflows and extension_agents:
+            async def run_extension(agent: dict) -> dict:
+                agent_id = agent["id"]
+                emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
+                response = await invoke_extension_agent(agent_id, {
+                    "scenario": scenario,
+                    "demand": stage_demand,
+                    "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in stage_plans],
+                    "verification": {
+                        "verdict": stage_verification["verdict"],
+                        "score": stage_verification["score"],
+                        "blockers": stage_verification["blocker_summary"],
+                        "warnings": stage_verification.get("warnings", []),
+                    },
+                })
+                emit(db, run_id, "agent.completed", agent_id, f"扩展审查完成 · {agent['name']}", "扩展意见已写入交付包，不能覆盖确定性硬规则。")
+                return {
+                    "agent_id": agent_id,
+                    "agent_name": agent["name"],
+                    "role": agent.get("role", ""),
+                    "mode": response.get("mode", ""),
+                    "parsed": response.get("parsed"),
+                    "text": response.get("text", ""),
+                }
+
+            extension_reviews.extend(await asyncio.gather(*(run_extension(agent) for agent in extension_agents)))
+        return {
+            "extension_reviews": extension_reviews[review_start:],
+            "extension_workflow_runs": extension_workflow_runs[workflow_run_start:],
+            "agentarts_trace": dict(agentarts_trace),
+        }
+
     try:
         db.set_run_status(run_id, "running")
         emit(db, run_id, "run.started", "orchestrator", "推演任务启动", "已加载事件、需求与最新资源快照。", {
@@ -1058,7 +1254,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         a2a_bus = A2ABus(
             db, run_id, enabled=A2A_ENABLED,
             event_sink=lambda message: emit(
-                db, run_id, "a2a.message", "a2a",
+                db, run_id, "a2a.message", message["sender"],
                 f"{message['sender']} → {message['receiver']} · {message['message_type']}",
                 str(message.get("content") or {}),
                 message,
@@ -1070,9 +1266,10 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 planner_result = await run_planner_orchestration(
                     db, run_id, request, scenario, materials, destinations, warehouses,
                     routes, vehicles, inventory, evidence, schedule, planner, llm_service, a2a_bus,
+                    run_post_verification_extensions,
                 )
                 planner_result["memory_context"] = memory_context
-                planner_result["memory_writes"] = []
+                planner_result["memory_writes"] = planner_result.get("repair_experience_writes", [])
                 planner_result["llm_status"] = llm_service.status
                 planner_result["planner_status"] = planner.status
                 terminal_status = "awaiting_approval" if planner_result["delivery"]["status"] == "ready" else "needs_human"
@@ -1107,7 +1304,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     demand_plan["evidence_refs"] = list(dict.fromkeys(demand_plan["evidence_refs"] + [item["id"] for item in evidence]))
                     demand_plan["a2a_exchange"] = await maybe_a2a_cross_warehouse(
                         a2a_bus, demand_plan, inventory,
-                        lambda exc: emit(db, run_id, "a2a.fallback", "a2a", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                        lambda exc: emit(db, run_id, "a2a.fallback", "demand_agent", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
+                        vehicles,
                     )
                     ai_reasoning["demand_agent"] = await llm_service.reflect("demand_agent", demand_plan, evidence)
                     llm_decisions["demand_priority"] = apply_llm_priority_adjustments(demand_plan, ai_reasoning["demand_agent"])
@@ -1490,38 +1688,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
             "verification": final_verification,
         })
-        await run_stage_workflows("post_verification", {
-            "scenario": scenario,
-            "demand": demand_plan,
-            "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
-            "verification": final_verification,
-        })
-        if not extension_workflows and extension_agents:
-            async def run_extension(agent: dict) -> dict:
-                agent_id = agent["id"]
-                emit(db, run_id, "agent.started", agent_id, f"扩展审查开始 · {agent['name']}", "动态注册 Agent 已进入核验后的扩展审查节点。")
-                response = await invoke_extension_agent(agent_id, {
-                    "scenario": scenario,
-                    "demand": demand_plan,
-                    "plans": [{"plan_id": plan["plan_id"], "name": plan["name"], "metrics": plan["metrics"]} for plan in final_plans],
-                    "verification": {
-                        "verdict": final_verification["verdict"],
-                        "score": final_verification["score"],
-                        "blockers": final_verification["blocker_summary"],
-                        "warnings": final_verification.get("warnings", []),
-                    },
-                })
-                emit(db, run_id, "agent.completed", agent_id, f"扩展审查完成 · {agent['name']}", "扩展意见已写入交付包，不能覆盖确定性硬规则。")
-                return {
-                    "agent_id": agent_id,
-                    "agent_name": agent["name"],
-                    "role": agent.get("role", ""),
-                    "mode": response.get("mode", ""),
-                    "parsed": response.get("parsed"),
-                    "text": response.get("text", ""),
-                }
-
-            extension_reviews.extend(await asyncio.gather(*(run_extension(agent) for agent in extension_agents)))
+        await run_post_verification_extensions(demand_plan, final_plans, final_verification)
         await pace(0.4)
         delivery = build_delivery_package(
             final_verification, scenario, snapshot, pipeline_state.get("decision_weights") or request.get("weights", {}),
@@ -1591,7 +1758,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "verifier_agent", "blocker_history", blocker_history, 0.9, run_id,
         ))
         memory_writes.extend(_record_repair_experiences(
-            memory_repo, rework_directives, str(scenario.get("id") or "generic"),
+            memory_repo, rework_directives, rounds, str(scenario.get("id") or "generic"),
             final_verification.get("verdict") == "pass", run_id,
         ))
         if final_verification.get("verdict") == "pass" and rework_directives:

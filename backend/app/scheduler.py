@@ -169,10 +169,15 @@ def rank_agents_for_task(task_type: str, agents: list[dict], metrics: dict[str, 
     required = task_capability_map().get(task_type, [])
     profiles = []
     for agent in agents:
+        if agent.get("enabled") is False:
+            continue
         agent_id = str(agent.get("id") or "")
         load = metrics.get(agent_id, {})
         samples = int(load.get("historical_samples", load.get("sample_count", 0)) or 0)
-        success = float(load.get("historical_success_rate", load.get("success_rate", 0.5)) or 0.5)
+        raw_success = load.get("historical_success_rate")
+        if raw_success is None:
+            raw_success = load.get("success_rate")
+        success = 0.5 if raw_success is None else max(0.0, min(1.0, float(raw_success)))
         current_load = max(0.0, min(1.0, float(load.get("load_score", 0) or 0) / 100.0))
         match = _capability_match(agent, required)
         score = round(match * 0.4 + success * 0.3 + (1.0 - current_load) * 0.3, 4)
@@ -181,14 +186,15 @@ def rank_agents_for_task(task_type: str, agents: list[dict], metrics: dict[str, 
             "task_type": task_type,
             "required_capabilities": required,
             "capability_match": match,
-            "history_success_rate": success if samples else None,
+            "history_success_rate": success,
+            "history_samples": samples,
             "current_load": round(current_load, 4),
             "match_score": score,
             "has_history": samples > 0,
         })
     return sorted(
         profiles,
-        key=lambda item: (item["has_history"], item["match_score"], item["agent_id"]),
+        key=lambda item: (item["match_score"], -item["current_load"], item["agent_id"]),
         reverse=True,
     )
 
@@ -320,14 +326,12 @@ def build_dynamic_schedule(request: dict, closed_routes: list[str], demand_count
     urgency = 1.0 if request.get("event", {}).get("severity") in {"I级", "II级"} else 0.7
     priorities = [
         {"agent_id": "demand_agent", "priority": 96, "batch": "parallel", "reason": "P0物资依赖需求标准化结果"},
-        {"agent_id": "rag_retrieve", "priority": 94, "batch": "parallel", "reason": "规则检索与需求理解可并行执行"},
         {"agent_id": "matching_agent", "priority": round(88 * urgency), "batch": "sequential", "reason": f"场景复杂度 {complexity}，需要多目标生成"},
         {"agent_id": "verifier_agent", "priority": 99, "batch": "gated", "reason": "安全关键节点，必须全量硬规则核验"},
         {"agent_id": "delivery_agent", "priority": 70, "batch": "post-approval", "reason": "只消费已核验事实"},
     ]
     task_types = {
         "demand_agent": "demand",
-        "rag_retrieve": "demand",
         "matching_agent": "matching",
         "verifier_agent": "verify",
         "delivery_agent": "delivery",

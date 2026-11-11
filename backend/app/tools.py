@@ -48,6 +48,31 @@ BUILTIN_TOOLS = [
         "description": "返回内置应急调度规则目录和证据编号。",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
+    {
+        "id": "demand_plan", "name": "需求标准化", "kind": "builtin",
+        "description": "LLM Planner 专用：根据事件、安置点和物资选择生成结构化需求。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+    },
+    {
+        "id": "generate_plans", "name": "多目标方案生成", "kind": "builtin",
+        "description": "LLM Planner 专用：调用确定性方案生成器。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+    },
+    {
+        "id": "verify_plans", "name": "独立方案核验", "kind": "builtin",
+        "description": "LLM Planner 专用：调用确定性硬规则核验器。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+    },
+    {
+        "id": "delivery_package", "name": "交付包生成", "kind": "builtin",
+        "description": "LLM Planner 专用：从已核验方案生成交付包。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+    },
+    {
+        "id": "escalate_human", "name": "转人工研判", "kind": "builtin",
+        "description": "LLM Planner 专用：没有安全路径时转人工处理。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+    },
 ]
 
 

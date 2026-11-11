@@ -586,12 +586,22 @@ def _solve_adaptively(
     vehicles: list[dict],
     closed_routes: list[str],
     max_attempts: int = 3,
+    call_counter: dict | None = None,
 ) -> tuple[list[dict], dict, list[dict], list[dict]]:
+    def count_tool(name: str) -> None:
+        if call_counter is None:
+            return
+        call_counter["tool_calls"] = int(call_counter.get("tool_calls", 0)) + 1
+        breakdown = call_counter.setdefault("tool_call_breakdown", {})
+        breakdown[name] = int(breakdown.get(name, 0)) + 1
+
+    count_tool("generate_plans")
     plans = generate_plans(demand, inventory, warehouses, routes, vehicles, 1, closed_routes)
     rounds: list[dict] = []
     directives: list[dict] = []
     while len(rounds) < max_attempts:
         attempt = len(rounds) + 1
+        count_tool("verify_plans")
         verification = verify_plans(plans, demand, inventory, routes, vehicles, closed_routes)
         rounds.append({"attempt": attempt, "plans": plans, "verification": verification})
         if verification["verdict"] == "pass":
@@ -601,6 +611,7 @@ def _solve_adaptively(
         if not directive["can_retry"]:
             break
         directives.append(directive)
+        count_tool("generate_plans")
         plans = generate_plans(
             demand, inventory, warehouses, routes, vehicles,
             attempt=next_attempt, closed_routes=closed_routes, rework_directive=directive,

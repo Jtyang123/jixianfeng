@@ -14,6 +14,8 @@ const diagnostics = ref(null)
 const diagnosticsLoading = ref(false)
 const diagnosticsError = ref('')
 const queueMetrics = ref(null)
+const performanceReport = ref(null)
+const performanceError = ref('')
 
 const maxScore = computed(() => Math.max(...(benchmark.value?.comparison?.map((item) => item.score) || [100])))
 const featureChecks = computed(() => [
@@ -30,12 +32,21 @@ const featureChecks = computed(() => [
   { label: '独立布局与长稳证据', status: true, evidence: '西部走廊与南部环线两套独立路网 + 可配置 30 秒持续提交 + 端到端运行样本分区' },
 ])
 
+async function loadPerformanceReport() {
+  performanceError.value = ''
+  try {
+    performanceReport.value = await api.benchmarkReport()
+  } catch (exc) {
+    performanceError.value = exc.message
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
   try {
     const [bench, platform, latest, queue] = await Promise.all([
-      api.benchmark(), api.manifest(), api.latestDiagnostics(), api.queueMetrics(),
+      api.benchmark(), api.manifest(), api.latestDiagnostics(), api.queueMetrics(), loadPerformanceReport(),
     ])
     benchmark.value = bench
     manifest.value = platform
@@ -82,6 +93,29 @@ onMounted(load)
           <article><span>正在运行</span><strong>{{ queueMetrics.running }}</strong><small>平台并发上限 {{ queueMetrics.concurrency_limit }}</small></article>
           <article><span>最久等待</span><strong>{{ formatNumber(queueMetrics.oldest_wait_ms, 1) }} ms</strong><small>优先级按等级、P0-P3、时限和人口计算</small></article>
           <article><span>重试队列</span><strong>{{ Object.values(queueMetrics.retry_jobs || {}).reduce((sum, value) => sum + value, 0) }}</strong><small>{{ queueMetrics.engine }}</small></article>
+        </div>
+      </section>
+
+      <section class="content-card performance-benchmark-card">
+        <div class="workflow-head"><div><div class="eyebrow">END-TO-END CONCURRENCY</div><h2>1 / 5 / 10 / 20 并发基准</h2><p>每个档位使用同一组固定样本，预热一轮后计时；安全结果率、P95、吞吐与一致性均来自最近一次真实运行。</p></div><Gauge :size="20" /></div>
+        <div v-if="performanceError" class="inline-error">{{ performanceError }}</div>
+        <div v-else-if="performanceReport?.status !== 'ready'" class="benchmark-note">
+          <Activity :size="16" /><span>暂无性能基准报告。运行 <code>cd backend &amp;&amp; ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark</code> 后刷新。</span>
+        </div>
+        <div v-else class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>并发档位</th><th>固定样本</th><th>安全结果率</th><th>平均耗时</th><th>P95</th><th>吞吐</th><th>一致性</th></tr></thead>
+            <tbody><tr v-for="item in performanceReport.results" :key="item.concurrency">
+              <td><strong>{{ item.concurrency }}</strong></td>
+              <td>{{ item.samples }}</td>
+              <td>{{ (item.safe_outcome_rate * 100).toFixed(1) }}%</td>
+              <td>{{ item.average_latency_ms }} ms</td>
+              <td>{{ item.p95_latency_ms }} ms</td>
+              <td>{{ item.throughput_runs_per_second }} 次/秒</td>
+              <td>{{ (item.consistency * 100).toFixed(1) }}%</td>
+            </tr></tbody>
+          </table>
+          <div class="benchmark-note"><Activity :size="16" /><span>{{ performanceReport.warmup_policy }} 总样本 {{ performanceReport.fixed_samples_per_level }}；当前报告版本 {{ performanceReport.report_version }}。</span></div>
         </div>
       </section>
 

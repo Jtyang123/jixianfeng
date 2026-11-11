@@ -9,6 +9,7 @@ from app.knowledge_base import KnowledgeRepository
 from app.memory import MemoryRepository
 from app.registry import AgentRegistryService
 from app.scheduler import AGENTS
+from app.tools import ToolRepository
 from app.workflow_engine import WorkflowRepository
 
 
@@ -117,12 +118,14 @@ def test_background_demand_task_is_cancelled_when_pipeline_fails(tmp_path: Path,
 
 class FakeLLMPlanner:
     enabled = True
+    last_available_tools = []
 
     @property
     def status(self):
         return {"enabled": True, "role": "planning-and-replanning", "model": "test-planner"}
 
     async def create_plan(self, user_request, available_tools):
+        type(self).last_available_tools = list(available_tools)
         return {
             "mode": "llm-planner", "summary": "测试计划",
             "steps": [
@@ -139,6 +142,23 @@ class FakeLLMPlanner:
             return {"mode": "llm-planner", "decision": "stop", "next_tool": None, "reason": "交付完成", "repair_policy": ""}
         next_tool = remaining_steps[0]["tool"] if remaining_steps else None
         return {"mode": "llm-planner", "decision": "continue", "next_tool": next_tool, "reason": "继续计划", "repair_policy": ""}
+
+
+class FakeLLMPlannerWithUnknownTool(FakeLLMPlanner):
+    last_unknown_error = ""
+
+    async def create_plan(self, user_request, available_tools):
+        plan = await super().create_plan(user_request, available_tools)
+        plan["steps"].insert(0, {
+            "id": "S0", "tool": "ghost_tool", "reason": "测试未注册工具",
+            "input": {}, "expected_output": "error",
+        })
+        return plan
+
+    async def decide(self, step_result, remaining_steps, current_context):
+        if step_result.get("tool") == "ghost_tool":
+            type(self).last_unknown_error = str((step_result.get("result") or {}).get("error") or "")
+        return await super().decide(step_result, remaining_steps, current_context)
 
 
 def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, monkeypatch):
@@ -211,6 +231,87 @@ def test_planner_jumps_verify_to_later_generate_and_completes(tmp_path: Path, mo
         ).fetchone()["count"]
     assert tool_call_count == run["result"]["planner_trace"]["executed_steps"]
     assert planner_performance_count >= run["result"]["planner_trace"]["executed_steps"] + 1
+
+def test_planner_mode_runs_post_verification_extensions_and_registered_tools(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "planner-extension.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("heatwave-iii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": scenario["closed_routes"],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"],
+                "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    water_id = by_code["MAT-WATER-001"]["id"]
+    with db.connect() as conn:
+        conn.execute("UPDATE inventory SET quantity=3000, locked_quantity=0 WHERE material_id=?", (water_id,))
+    registry = AgentRegistryService(db)
+    registry.sync_builtin_agents(AGENTS)
+    registry.register_agent({
+        "id": "risk_extension",
+        "name": "核验后风险扩展 Agent",
+        "role": "risk-review",
+        "description": "核验后追加风险审查",
+        "capabilities": ["风险复核"],
+        "version": "v1",
+        "endpoint": "https://example.com/risk-extension/invocations",
+        "model": "test",
+        "prompt_version": "v1",
+    })
+    WorkflowRepository(db).save_workflow("planner-post-review", {
+        "name": "Planner 核验后扩展审查",
+        "stage": "post_verification",
+        "definition": {
+            "nodes": [{
+                "id": "A05",
+                "type": "agent",
+                "agent_id": "risk_extension",
+                "depends_on": [],
+                "on_error": "continue",
+            }]
+        },
+    })
+    tools = ToolRepository(db)
+    tools.ensure_builtins()
+    tools.save_tool("knowledge_search", {
+        "name": "知识库混合检索", "kind": "builtin", "enabled": False,
+        "input_schema": {"type": "object", "properties": {}},
+    })
+    run_id = "RUN-LLM-PLANNER-EXTENSION"
+    db.create_run(run_id, scenario["id"], request)
+    fake = FakeAgentArts()
+    monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: fake)
+    monkeypatch.setattr(orchestrator_module, "LLMService", FakeLLM)
+    monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: FakeLLMPlannerWithUnknownTool())
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "awaiting_approval", run.get("result")
+    assert "demand_plan" in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "generate_plans" in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "verify_plans" in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "delivery_package" in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "knowledge_search" not in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "rag_retrieve" not in FakeLLMPlannerWithUnknownTool.last_available_tools
+    assert "不存在或未启用" in FakeLLMPlannerWithUnknownTool.last_unknown_error
+    assert {item["agent_id"] for item in run["result"]["extension_reviews"]} == {"risk_extension"}
+    assert {item["stage"] for item in run["result"]["extension_workflow_runs"]} == {"post_verification"}
+    assert "risk_extension" in run["result"]["agentarts_trace"]
+    assert run["result"]["delivery"]["extension_reviews"][0]["agent_id"] == "risk_extension"
+
 
 def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "parallel-orchestrator.db", database_url="")
@@ -478,6 +579,10 @@ def test_cross_run_memory_is_saved_without_unsafe_override(tmp_path: Path):
 
     first = db.get_run("RUN-MEMORY-1")["result"]
     second = db.get_run("RUN-MEMORY-2")["result"]
+    dispatch = first["orchestration"]["dispatch"]
+    assert dispatch
+    assert all(item["allocation_mode"] == "capability-load-match" for item in dispatch)
+    assert all(item["preferred_agent_id"] != "rag_retrieve" for item in dispatch)
     assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
     assert second["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
     assert second["memory_context"]["matching_agent"]["successful_repair_policy"]["value"]["policy"] == "route_failover"

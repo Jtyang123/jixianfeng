@@ -184,6 +184,8 @@ export const api = {
   checkAgentArts: () => request('/api/agentarts/check'),
   manifest: () => request('/api/platform/manifest'),
   benchmark: () => request('/api/evaluation/benchmark'),
+  benchmarkReport: () => request('/api/benchmark/report'),
+  a2a: (runId, limit = 100) => request(`/api/a2a/messages?run_id=${encodeURIComponent(runId)}&limit=${encodeURIComponent(limit)}`),
   latestDiagnostics: () => request('/api/evaluation/diagnostics'),
   runDiagnostics: () => request('/api/evaluation/diagnostics', { method: 'POST' }),
   materials: (search = '', category = '') => {

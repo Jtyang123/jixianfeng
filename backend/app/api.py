@@ -295,6 +295,23 @@ def list_memory(agent_id: str | None = None, limit: int = 100) -> list[dict]:
     return MemoryRepository(db).list_memories(agent_id=agent_id, limit=limit)
 
 
+@router.post("/memory/cleanup")
+def cleanup_memory(request: Request) -> dict:
+    current = _require_admin(request)
+    result = MemoryRepository(db).cleanup_expired()
+    auth_service.audit(
+        "memory_cleanup", "POST", "/api/memory/cleanup", 200, current,
+        resource_type="agent_memory", detail=json.dumps(result, ensure_ascii=False),
+    )
+    return result
+
+
+@router.get("/memory/cleanup-audit")
+def memory_cleanup_audit(request: Request, limit: int = 100) -> list[dict]:
+    _require_admin(request)
+    return MemoryRepository(db).list_cleanup_audit(limit=limit)
+
+
 @router.delete("/memory/{agent_id}/{memory_key}")
 def delete_memory(agent_id: str, memory_key: str, request: Request) -> dict:
     current = _require_admin(request)

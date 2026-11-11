@@ -63,15 +63,51 @@ def test_a2a_disabled_bus_raises_for_blackboard_fallback(tmp_path: Path):
     with pytest.raises(A2AError):
         asyncio.run(bus.send("demand_agent", "matching_agent", "request", {"x": 1}))
 
+def test_a2a_cross_warehouse_uses_independent_consumer_and_real_allocation(tmp_path: Path):
+    db = Database(tmp_path / "a2a-negotiation.db", database_url="")
+    db.initialize()
+    events = []
+    bus = A2ABus(db, "RUN-A2A-NEGOTIATION", event_sink=events.append)
+    task_ids = {}
+    original_send = bus.send
+
+    async def tracked_send(sender, receiver, message_type, content, reply_to="", correlation_id=""):
+        task_ids[message_type] = id(asyncio.current_task())
+        return await original_send(sender, receiver, message_type, content, reply_to, correlation_id)
+
+    bus.send = tracked_send
+    demand_plan = {"items": [{"material_id": 1, "quantity": 10, "unit_weight_kg": 2}]}
+    inventory = [
+        {"warehouse_id": "WH-A", "material_id": 1, "quantity": 4, "locked_quantity": 0, "status": "available"},
+        {"warehouse_id": "WH-B", "material_id": 1, "quantity": 8, "locked_quantity": 0, "status": "available"},
+    ]
+    vehicles = [
+        {"warehouse_id": "WH-A", "capacity_kg": 20, "status": "available"},
+        {"warehouse_id": "WH-B", "capacity_kg": 40, "status": "available"},
+    ]
+    result = asyncio.run(
+        maybe_a2a_cross_warehouse(bus, demand_plan, inventory, lambda exc: None, vehicles)
+    )
+    history = bus.history()
+    reply = next(item for item in history if item["message_type"] == "reply")
+    assert result["mode"] == "a2a"
+    assert result["feasible"] is True
+    assert result["allocated"] == [
+        {"material_id": 1, "warehouse_id": "WH-B", "qty": 8.0},
+        {"material_id": 1, "warehouse_id": "WH-A", "qty": 2.0},
+    ]
+    assert reply["content"]["allocated"] == result["allocated"]
+    assert reply["content"]["shortfall"] == 0
+    assert task_ids["request"] != task_ids["reply"]
+    assert {item["sender"] for item in events} == {"demand_agent", "matching_agent"}
+
+
 def test_a2a_failure_falls_back_to_blackboard(tmp_path: Path):
     db = Database(tmp_path / "a2a-fallback.db", database_url="")
     db.initialize()
 
-    class FailingBus:
-        async def send(self, *args, **kwargs):
-            raise RuntimeError("A2A unavailable")
-
     fallback_events = []
+    bus = A2ABus(db, "RUN-A2A-FALLBACK", enabled=False)
     demand_plan = {
         "items": [{"material_id": 1, "quantity": 10}],
     }
@@ -81,13 +117,13 @@ def test_a2a_failure_falls_back_to_blackboard(tmp_path: Path):
     ]
     result = asyncio.run(
         maybe_a2a_cross_warehouse(
-            FailingBus(), demand_plan, inventory, fallback_events.append
+            bus, demand_plan, inventory, fallback_events.append
         )
     )
     assert result["mode"] == "blackboard-fallback"
     assert result["used"] is True
     assert result["feasible"] is None
-    assert fallback_events and "A2A unavailable" in str(fallback_events[0])
+    assert fallback_events and "未启用" in str(fallback_events[0])
 
 
 def test_reset_demo_clears_a2a_history(tmp_path: Path):

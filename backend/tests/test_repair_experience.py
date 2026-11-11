@@ -3,6 +3,7 @@ from pathlib import Path
 from app.agents import build_demand_plan, build_prompt_adaptation, build_rework_directive, generate_plans
 from app.database import Database
 from app.memory import MemoryRepository
+from app.orchestrator import _record_repair_experiences
 
 
 def _road_verification() -> dict:
@@ -21,13 +22,15 @@ def test_repair_experience_records_and_updates_success_rate(tmp_path: Path):
         repo.record_repair_experience(
             ["ROAD-R-A"], "rainstorm-ii", "route_failover",
             "排除封闭路线并比较主备通道。", "下一轮先排除事件封闭路线。",
-            True, run_id,
+            True, run_id, effect=12.5,
         )
     matches = repo.find_repair_experiences(["ROAD-R-A"], "rainstorm-ii")
     assert len(matches) == 1
     assert matches[0]["adoptions"] == 2
     assert matches[0]["successes"] == 2
     assert matches[0]["success_rate"] == 1.0
+    assert matches[0]["effect"] == 12.5
+    assert matches[0]["score_gain"] == 12.5
 
 
 def test_repair_experience_prefers_high_success_and_skips_low_success(tmp_path: Path):
@@ -38,16 +41,16 @@ def test_repair_experience_prefers_high_success_and_skips_low_success(tmp_path: 
         repo.record_repair_experience(
             ["ROAD-R-A"], "rainstorm-ii", "route_failover",
             "路线故障转移", "排除封闭路线并优先后备通道。",
-            True, f"RUN-HIGH-{index}",
+            True, f"RUN-HIGH-{index}", effect=10.0,
         )
     repo.record_repair_experience(
         ["ROAD-R-A"], "rainstorm-ii", "fleet_rebalance",
-        "运力再平衡", "仅调整车队。", True, "RUN-LOW-1",
+        "运力再平衡", "仅调整车队。", True, "RUN-LOW-1", effect=1.0,
     )
     for index in range(2):
         repo.record_repair_experience(
             ["ROAD-R-A"], "rainstorm-ii", "fleet_rebalance",
-            "运力再平衡", "仅调整车队。", False, f"RUN-LOW-FAIL-{index}",
+            "运力再平衡", "仅调整车队。", False, f"RUN-LOW-FAIL-{index}", effect=0.0,
         )
     matches = repo.find_repair_experiences(["ROAD-R-A"], "rainstorm-ii", min_success_rate=0.6)
     assert [item["policy_id"] for item in matches] == ["route_failover"]
@@ -112,3 +115,28 @@ def test_experience_context_cannot_override_route_hard_rule(tmp_path: Path):
         assignment["route_id"] not in closed
         for plan in plans for assignment in plan.get("assignments", [])
     )
+
+
+def test_repair_experience_attributes_superseded_and_last_directive(tmp_path: Path):
+    db = Database(tmp_path / "repair-experience-attribution.db", database_url="")
+    db.initialize()
+    repo = MemoryRepository(db)
+    directives = [
+        {"selected_policy": "route_failover", "issue_codes": ["ROAD-R-A"], "reason": "第一轮修复"},
+        {"selected_policy": "multi_warehouse", "issue_codes": ["ROAD-R-A"], "reason": "第二轮修复"},
+    ]
+    rounds = [
+        {"verification": {"score": 40}},
+        {"verification": {"score": 70}},
+        {"verification": {"score": 100}},
+    ]
+    records = _record_repair_experiences(repo, directives, rounds, "rainstorm-ii", True, "RUN-ATTR")
+    by_policy = {item["value"]["policy_id"]: item["value"] for item in records}
+    assert by_policy["route_failover"]["superseded"] is True
+    assert by_policy["route_failover"]["success_rate"] == 0.0
+    assert by_policy["route_failover"]["effect"] == 30.0
+    assert by_policy["multi_warehouse"]["superseded"] is False
+    assert by_policy["multi_warehouse"]["success_rate"] == 1.0
+    assert by_policy["multi_warehouse"]["score_gain"] == 30.0
+    ranked = repo.find_repair_experiences(["ROAD-R-A"], "rainstorm-ii", min_success_rate=0.0)
+    assert ranked[0]["policy_id"] == "multi_warehouse"

@@ -322,39 +322,58 @@ class AgentRegistryService:
 
 def apply_agent_load(schedule: dict, metrics: dict[str, dict], agents: list[dict] | None = None) -> dict:
     dispatch = []
-    agent_rows = agents if agents is not None else AGENTS
+    agent_rows = [item for item in (agents or AGENTS) if item.get("enabled", True)]
+    task_types = {
+        str(item.get("task_type") or "")
+        for item in schedule.get("dispatch", [])
+        if str(item.get("task_type") or "")
+    }
+    rankings = {
+        task_type: rank_agents_for_task(task_type, agent_rows, metrics)
+        for task_type in task_types
+    }
     for item in schedule.get("dispatch", []):
         copy = dict(item)
-        load = metrics.get(copy["agent_id"], {})
+        preferred_agent_id = str(copy.get("agent_id") or "")
+        task_type = str(copy.get("task_type") or "")
+        ranking = rankings.get(task_type, [])
+        replaceable = [row for row in ranking if float(row.get("capability_match") or 0) > 0]
+        assigned_agent_id = replaceable[0]["agent_id"] if replaceable else preferred_agent_id
+        load = metrics.get(assigned_agent_id, {})
         latency_penalty = min(12, round(float(load.get("average_latency_ms", 0)) / 1200))
         failure_penalty = min(15, round(float(load.get("failure_rate", 0)) * 30))
         backlog_penalty = min(20, int(load.get("pending_calls", 0)) * 5)
         penalty = latency_penalty + failure_penalty + backlog_penalty
-        history_samples = int(load.get("historical_samples", 0) or 0)
-        history_success = float(load.get("historical_success_rate", load.get("success_rate", 0)) or 0)
+        history_samples = int(load.get("historical_samples", load.get("sample_count", 0)) or 0)
+        raw_history_success = load.get("historical_success_rate")
+        if raw_history_success is None:
+            raw_history_success = load.get("success_rate")
+        history_success = 0.5 if raw_history_success is None else float(raw_history_success)
         history_bonus = 5 if history_samples >= 3 and history_success >= 0.9 else (-5 if history_samples >= 3 and history_success < 0.6 else 0)
+        profile = next((row for row in ranking if row["agent_id"] == assigned_agent_id), None)
+        copy["preferred_agent_id"] = preferred_agent_id
+        copy["assigned_agent_id"] = assigned_agent_id
+        copy["agent_id"] = assigned_agent_id
+        copy["assignment_changed"] = assigned_agent_id != preferred_agent_id
         copy["base_priority"] = copy.get("priority", 0)
         copy["latency_penalty"] = latency_penalty
         copy["failure_penalty"] = failure_penalty
         copy["backlog_penalty"] = backlog_penalty
         copy["load_penalty"] = penalty
         copy["history_success_bonus"] = history_bonus
-        task_type = str(copy.get("task_type") or "")
-        ranking = rank_agents_for_task(task_type, agent_rows, metrics) if task_type else []
-        profile = next((row for row in ranking if row["agent_id"] == copy["agent_id"]), None)
         copy["candidate_ranking"] = ranking
         copy["capability_match"] = profile.get("capability_match", 0.0) if profile else 0.0
         copy["match_score"] = profile.get("match_score", 0.0) if profile else 0.0
         copy["current_load"] = profile.get("current_load", 0.0) if profile else 0.0
         copy["rate_limited"] = bool(copy["current_load"] >= 0.9 or int(load.get("pending_calls", 0)) >= 3)
-        if profile and profile.get("has_history"):
+        if profile:
             copy["allocation_mode"] = "capability-load-match"
             copy["effective_priority"] = 1 if copy["rate_limited"] else max(1, round(profile["match_score"] * 100))
         else:
             copy["allocation_mode"] = "priority-fallback"
             copy["effective_priority"] = max(1, copy["base_priority"] - penalty + history_bonus)
         copy["load_score"] = load.get("load_score", 0)
-        copy["historical_success_rate"] = history_success if history_samples else None
+        copy["historical_success_rate"] = history_success if history_samples else 0.5
         copy["historical_samples"] = history_samples
         copy["average_latency_ms"] = load.get("average_latency_ms", 0)
         dispatch.append(copy)
@@ -362,7 +381,9 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict], agents: list[dict
     enriched = dict(schedule)
     enriched["dispatch"] = dispatch
     enriched["engine"] = "load-aware capability-weighted DAG scheduler"
-    enriched["priority_formula"] = "no-history: base_priority - latency_penalty - failure_penalty - backlog_penalty + history_success_bonus; with-history: match_score*100"
-    enriched["capability_map"] = {item["agent_id"]: item.get("required_capabilities", []) for item in dispatch}
+    enriched["priority_formula"] = "capability_match*0.4 + success_rate*0.3 + (1-current_load)*0.3, scaled to 100"
+    enriched["capability_map"] = {
+        item["assigned_agent_id"]: item.get("required_capabilities", []) for item in dispatch
+    }
     enriched["agent_load"] = metrics
     return enriched

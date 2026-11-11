@@ -388,6 +388,11 @@ _EMBEDDING_SERVICE = EmbeddingService()
 _CORPUS_CACHE: dict[tuple[str, int], dict] = {}
 
 
+def get_embedding_service() -> EmbeddingService:
+    """Return the shared embedding service used by knowledge and memory stores."""
+    return _EMBEDDING_SERVICE
+
+
 class KnowledgeRepository:
     def __init__(self, db: Database) -> None:
         self.db = db

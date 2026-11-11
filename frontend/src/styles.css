@@ -1492,3 +1492,26 @@ input[type="checkbox"], input[type="radio"] {
 .view-result-action { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; color: var(--teal); background: var(--teal-soft); border: 1px solid #c9e1d9; border-radius: 8px; font-size: 10px; font-weight: 700; }
 .view-result-action:hover { background: #dff1eb; border-color: #a9d2c7; }
 .result-section { scroll-margin-top: 86px; }
+
+
+.chain-events { display: grid; gap: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,253,248,.88); }
+.chain-event { display: grid; grid-template-columns: 18px 76px minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; font-size: 9px; }
+.chain-event span { color: var(--muted); }
+.chain-event strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.chain-event small { color: var(--muted); font-family: var(--mono); }
+.runtime-details { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,253,248,.8); }
+.runtime-details > summary { display: flex; align-items: center; gap: 8px; padding: 12px 14px; cursor: pointer; list-style: none; }
+.runtime-details > summary::-webkit-details-marker { display: none; }
+.runtime-details > summary span { margin-left: auto; color: var(--muted); font-size: 9px; }
+.runtime-empty { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 10px; }
+.a2a-message-list { display: grid; gap: 8px; padding: 0 14px 14px; }
+.a2a-message-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 12px; align-items: center; padding: 10px; border-radius: 9px; background: var(--surface-soft); }
+.a2a-message-row div { display: flex; gap: 8px; align-items: center; }
+.a2a-message-row p { margin: 0; color: var(--muted); font-size: 10px; }
+.a2a-message-row em { color: var(--muted); font-size: 9px; font-style: normal; }
+.memory-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 0 14px 14px; }
+.memory-detail-grid h4 { margin: 6px 0; font-size: 10px; }
+.memory-detail-grid ul { margin: 0 0 10px; padding-left: 16px; color: var(--muted); font-size: 10px; line-height: 1.7; }
+@media (max-width: 760px) {
+  .chain-event, .a2a-message-row, .memory-detail-grid { grid-template-columns: 1fr; }
+}

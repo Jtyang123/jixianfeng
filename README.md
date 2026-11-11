@@ -17,7 +17,7 @@
 - 评估中心：独立贪心基线、六场景分布、重复计算一致性、1/5/10/20 并发、平台队列压测、30 秒持续压测、6 类故障注入与 Wilson 95% 区间
 - 华为云：四个角色均可接入真实 AgentArts `/invocations`；未配置时自动使用本地四智能体回退
 - Agent 注册表：动态注册、版本切换；配置端点时调用 AgentArts，未配置端点时自动使用离线角色执行器
-- 跨运行记忆：PostgreSQL/SQLite 持久化置信度、阻断历史、成功修复策略和推荐方案；只作为允许策略集合内的 tie-break
+- 跨运行记忆：PostgreSQL/SQLite 持久化置信度、阻断历史、成功修复策略和推荐方案；支持向量 + 关键词混合检索、时效衰减、预算截断和带审计的过期清理，只作为允许策略集合内的 tie-break
 - A2A Agent 通信：请求/应答/广播消息持久化，SSE 实时展示 `a2a.message`，通道异常时自动回退 blackboard
 - 能力画像调度：按任务能力标签、历史成功率、平均耗时和当前负载计算匹配分，并保留无历史时的优先级回退
 - 修复经验库：按问题代码与场景沉淀历史修复策略，只向 Prompt 注入高成功率参考，不改变硬规则
@@ -151,6 +151,7 @@ python tools\build_submission.py
 - SSE 事件 `a2a.message`：推送请求、应答和广播消息；`a2a.fallback`：A2A 不可用时说明已回退 blackboard，主流程继续。
 - 能力调度配置：`AGENT_TASK_CAPABILITY_MAP_JSON` 可覆盖任务类型到能力标签的映射；系统按“能力匹配度 × 0.4 + 历史成功率 × 0.3 + (1 - 当前负载) × 0.3”排序，无历史数据时回退现有优先级。
 - 修复经验库复用 `agent_memory`，键为 `repair_experience:<场景>:<问题代码>:<策略>`；仅向 Prompt 注入成功率不低于 0.6 的参考片段，库存、路线、运力、时效与核验结论不变。
+- 记忆管理：`POST /api/memory/cleanup` 执行低置信度/被替代经验的带审计清理；`GET /api/memory/cleanup-audit` 查看清理记录。阈值由 `MEMORY_RETENTION_DAYS`、`MEMORY_MIN_CONFIDENCE`、`MEMORY_CONTEXT_BUDGET_ITEMS`、`MEMORY_CONTEXT_BUDGET_CHARS` 配置。
 - `GET /api/benchmark/report`：返回最近一次端到端并发基准 JSON；无报告时返回 `status=empty` 和运行命令提示。
 - 独立运行基准：`cd backend && ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark`。默认输出到 `data/benchmark_latest.json`，可用 `PERF_BENCHMARK_REPORT` 覆盖路径。
 
@@ -281,7 +282,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 104 项测试；本机无 PostgreSQL 环境时结果为 `101 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 116 项测试；本机无 PostgreSQL 环境时结果为 `113 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

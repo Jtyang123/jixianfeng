@@ -456,14 +456,32 @@ class Database:
                     agent_id TEXT NOT NULL,
                     memory_key TEXT NOT NULL,
                     value_json TEXT NOT NULL DEFAULT '{}',
+                    embedding_json TEXT NOT NULL DEFAULT '[]',
+                    embedding_provider TEXT NOT NULL DEFAULT '',
+                    embedding_model TEXT NOT NULL DEFAULT '',
+                    embedding_dim INTEGER NOT NULL DEFAULT 0,
                     confidence REAL NOT NULL DEFAULT 0.5,
                     source_run_id TEXT NOT NULL DEFAULT '',
+                    last_accessed_at TEXT,
+                    hit_count INTEGER NOT NULL DEFAULT 0,
+                    low_confidence_streak INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(agent_id, memory_key)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_memory_agent ON agent_memory(agent_id, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS memory_cleanup_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    memory_key TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    value_json TEXT NOT NULL DEFAULT '{}',
+                    deleted_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_cleanup_audit_time ON memory_cleanup_audit(deleted_at DESC);
                 CREATE TABLE IF NOT EXISTS knowledge_documents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -604,6 +622,7 @@ class Database:
             self._ensure_scenario_columns(conn)
             self._ensure_event_columns(conn)
             self._ensure_route_columns(conn)
+            self._ensure_memory_columns(conn)
             self._ensure_knowledge_columns(conn)
             self._ensure_document_columns(conn)
             self._ensure_workflow_columns(conn)
@@ -613,7 +632,7 @@ class Database:
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
-                "agent_memory", "a2a_messages", "retry_jobs", "inventory_reservations",
+                "agent_memory", "memory_cleanup_audit", "a2a_messages", "retry_jobs", "inventory_reservations",
                 "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
@@ -648,6 +667,27 @@ class Database:
             conn.execute("UPDATE warehouses SET lat = ?, lng = ? WHERE id = ? AND (lat IS NULL OR lng IS NULL)", (lat, lng, wh_id))
         for dst_id, (lat, lng) in destination_coords.items():
             conn.execute("UPDATE destinations SET lat = ?, lng = ? WHERE id = ? AND (lat IS NULL OR lng IS NULL)", (lat, lng, dst_id))
+
+    def _ensure_memory_columns(self, conn) -> None:
+        if self.engine == "postgresql":
+            columns = {row["column_name"] for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", ("agent_memory",)
+            ).fetchall()}
+        else:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(agent_memory)").fetchall()}
+        additions = {
+            "embedding_json": "TEXT NOT NULL DEFAULT '[]'",
+            "embedding_provider": "TEXT NOT NULL DEFAULT ''",
+            "embedding_model": "TEXT NOT NULL DEFAULT ''",
+            "embedding_dim": "INTEGER NOT NULL DEFAULT 0",
+            "last_accessed_at": "TEXT",
+            "hit_count": "INTEGER NOT NULL DEFAULT 0",
+            "low_confidence_streak": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, sql_type in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE agent_memory ADD COLUMN {name} {sql_type}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_memory_embedding ON agent_memory(embedding_provider, embedding_dim)")
 
     def _ensure_knowledge_columns(self, conn) -> None:
         if self.engine == "postgresql":

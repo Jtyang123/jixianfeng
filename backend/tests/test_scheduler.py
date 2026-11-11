@@ -78,8 +78,8 @@ def test_scheduler_uses_latency_failure_and_backlog_feedback():
     assert item["backlog_penalty"] > 0
     assert item["historical_success_rate"] == 0.5
     assert item["history_success_bonus"] == -5
-    assert "with-history: match_score*100" in loaded["priority_formula"]
-    assert item["allocation_mode"] in {"capability-load-match", "priority-fallback"}
+    assert "capability_match*0.4" in loaded["priority_formula"]
+    assert item["allocation_mode"] == "capability-load-match"
     assert item["candidate_ranking"]
 
 def test_capability_profile_ranks_match_then_load_balance():
@@ -99,8 +99,35 @@ def test_capability_profile_ranks_match_then_load_balance():
     assert ranked[-1]["agent_id"] == "agent-c"
 
 
-def test_capability_scheduler_falls_back_without_history():
+def test_capability_scheduler_uses_cold_start_profile_without_history():
     schedule = build_dynamic_schedule({"event": {"severity": "II级", "affected_population": 1000}}, [], 2)
     loaded = apply_agent_load(schedule, {}, agents=[])
-    assert all(item["allocation_mode"] == "priority-fallback" for item in loaded["dispatch"])
-    assert all(item["effective_priority"] == item["base_priority"] for item in loaded["dispatch"])
+    assert all(item["allocation_mode"] == "capability-load-match" for item in loaded["dispatch"])
+    assert all(item["historical_success_rate"] == 0.5 for item in loaded["dispatch"])
+    assert all(item["preferred_agent_id"] == item["assigned_agent_id"] for item in loaded["dispatch"])
+    assert all(item["preferred_agent_id"] != "rag_retrieve" for item in loaded["dispatch"])
+
+
+def test_capability_scheduler_can_assign_a_ranked_replacement_agent():
+    schedule = build_dynamic_schedule({"event": {"severity": "II级", "affected_population": 1000}}, [], 2)
+    agents = [
+        {"id": "demand_agent", "capabilities": ["需求拆分", "灾害语义理解", "优先级判定"]},
+        {"id": "demand_backup", "capabilities": ["需求拆分", "灾害语义理解", "优先级判定"]},
+        {"id": "matching_agent", "capabilities": ["多目标规划", "仓库分配", "备用路线选择"]},
+        {"id": "verifier_agent", "capabilities": ["交叉核验", "硬阻断识别", "风险评分"]},
+        {"id": "delivery_agent", "capabilities": ["方案比较", "执行摘要", "报告生成"]},
+    ]
+    metrics = {
+        "demand_backup": {
+            "historical_samples": 5,
+            "historical_success_rate": 1.0,
+            "load_score": 0,
+            "pending_calls": 0,
+        },
+    }
+    loaded = apply_agent_load(schedule, metrics, agents=agents)
+    item = next(row for row in loaded["dispatch"] if row["preferred_agent_id"] == "demand_agent")
+    assert item["assigned_agent_id"] == "demand_backup"
+    assert item["agent_id"] == "demand_backup"
+    assert item["assignment_changed"] is True
+    assert item["candidate_ranking"][0]["agent_id"] == "demand_backup"

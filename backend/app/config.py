@@ -105,6 +105,13 @@ EMBEDDING_BATCH_SIZE = max(1, min(256, int(os.getenv("EMBEDDING_BATCH_SIZE", "64
 LOCAL_EMBEDDING_ENABLED = os.getenv("LOCAL_EMBEDDING_ENABLED", "false").strip().lower() == "true"
 LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
 
+MEMORY_DECAY_DAYS = max(1.0, float(os.getenv("MEMORY_DECAY_DAYS", "30")))
+MEMORY_RETENTION_DAYS = max(1, int(os.getenv("MEMORY_RETENTION_DAYS", "90")))
+MEMORY_MIN_CONFIDENCE = max(0.0, min(1.0, float(os.getenv("MEMORY_MIN_CONFIDENCE", "0.35"))))
+MEMORY_CONTEXT_BUDGET_ITEMS = max(1, min(200, int(os.getenv("MEMORY_CONTEXT_BUDGET_ITEMS", "20"))))
+MEMORY_CONTEXT_BUDGET_CHARS = max(500, min(100000, int(os.getenv("MEMORY_CONTEXT_BUDGET_CHARS", "8000"))))
+MEMORY_ENTRY_SUMMARY_CHARS = max(120, min(5000, int(os.getenv("MEMORY_ENTRY_SUMMARY_CHARS", "600"))))
+
 RESERVATION_TTL_HOURS = max(1, int(os.getenv("RESERVATION_TTL_HOURS", "24")))
 RESERVATION_SWEEP_INTERVAL_SECONDS = max(5.0, float(os.getenv("RESERVATION_SWEEP_INTERVAL_SECONDS", "60")))
 RESERVATION_SWEEP_ENABLED = os.getenv("RESERVATION_SWEEP_ENABLED", "true").strip().lower() == "true"
