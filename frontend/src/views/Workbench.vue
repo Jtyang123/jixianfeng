@@ -109,7 +109,16 @@ const eventPresentation = {
 }
 const featuredEvents = computed(() => events.value.filter((event) => eventPresentation[event.type]).slice(-8))
 const schedulerEvent = computed(() => [...events.value].reverse().find((event) => event.type === 'scheduler.decided') || null)
-const stageMetrics = computed(() => runResult.value?.stage_metrics || [])
+const stageMetrics = computed(() => {
+  const order = ['demand', 'retrieval', 'matching', 'verification', 'a2a', 'delivery']
+  const grouped = new Map()
+  for (const item of runResult.value?.stage_metrics || []) {
+    const current = grouped.get(item.stage) || { stage: item.stage, duration_ms: 0, agent_id: item.agent_id, attempt: item.attempt }
+    current.duration_ms += Number(item.duration_ms || 0)
+    grouped.set(item.stage, current)
+  }
+  return order.filter((stage) => grouped.has(stage)).map((stage) => grouped.get(stage))
+})
 const stageTotalMs = computed(() => stageMetrics.value.reduce((sum, item) => sum + Number(item.duration_ms || 0), 0))
 const maxStageMs = computed(() => Math.max(...stageMetrics.value.map((item) => Number(item.duration_ms || 0)), 1))
 const failureRootCauses = computed(() => runResult.value?.failure_root_causes || [])

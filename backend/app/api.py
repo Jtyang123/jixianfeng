@@ -1439,8 +1439,21 @@ def run_stages(run_id: str) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
     result = run.get("result") or {}
-    stages = result.get("stage_metrics") or []
-    total_ms = round(sum(float(item.get("duration_ms") or 0) for item in stages), 2)
+    raw_stages = result.get("stage_metrics") or []
+    stage_order = ["demand", "retrieval", "matching", "verification", "a2a", "delivery"]
+    aggregated = []
+    for stage_name in stage_order:
+        rows = [item for item in raw_stages if item.get("stage") == stage_name]
+        if not rows:
+            continue
+        aggregated.append({
+            "stage": stage_name,
+            "duration_ms": round(sum(float(item.get("duration_ms") or 0) for item in rows), 2),
+            "agent_id": ", ".join(sorted({str(item.get("agent_id") or "") for item in rows if item.get("agent_id")})),
+            "attempts": sorted({int(item.get("attempt") or 0) for item in rows}),
+            "records": len(rows),
+        })
+    total_ms = round(sum(float(item.get("duration_ms") or 0) for item in aggregated), 2)
     wall_ms = 0.0
     try:
         created = datetime.fromisoformat(str(run.get("created_at") or ""))
@@ -1459,7 +1472,7 @@ def run_stages(run_id: str) -> dict:
                 **item,
                 "percentage": round(float(item.get("duration_ms") or 0) / total_ms, 4) if total_ms else 0.0,
             }
-            for item in stages
+            for item in aggregated
         ],
     }
 

@@ -82,7 +82,8 @@ def test_api_run_flow(tmp_path: Path):
     stage_response = client.get(f"/api/runs/{run_id}/stages")
     assert stage_response.status_code == 200
     stage_data = stage_response.json()
-    assert {item["stage"] for item in stage_data["stages"]} >= {"demand", "retrieval", "matching", "verification", "a2a", "delivery"}
+    assert {item["stage"] for item in stage_data["stages"]} == {"demand", "retrieval", "matching", "verification", "a2a", "delivery"}
+    assert len(stage_data["stages"]) == 6
     assert stage_data["total_duration_ms"] >= 0
     if stage_data.get("wall_duration_ms"):
         assert abs(stage_data["total_duration_ms"] - stage_data["wall_duration_ms"]) <= max(1500.0, stage_data["wall_duration_ms"] * 0.8)
