@@ -437,6 +437,27 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_a2a_messages_run
                 ON a2a_messages(run_id, timestamp);
 
+                CREATE TABLE IF NOT EXISTS llm_calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL DEFAULT '',
+                    stage TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    base_url_host TEXT NOT NULL DEFAULT '',
+                    input_digest TEXT NOT NULL DEFAULT '',
+                    input_summary TEXT NOT NULL DEFAULT '',
+                    output_summary TEXT NOT NULL DEFAULT '',
+                    latency_ms REAL NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT '',
+                    http_status INTEGER NOT NULL DEFAULT 0,
+                    error TEXT NOT NULL DEFAULT '',
+                    fallback INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_llm_calls_run ON llm_calls(run_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS agent_performance (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     agent_id TEXT NOT NULL,
@@ -632,7 +653,7 @@ class Database:
     def reset_demo(self) -> None:
         with self.connect() as conn:
             for table in [
-                "agent_memory", "memory_cleanup_audit", "a2a_messages", "retry_jobs", "inventory_reservations",
+                "agent_memory", "memory_cleanup_audit", "a2a_messages", "llm_calls", "retry_jobs", "inventory_reservations",
                 "workflow_node_runs", "workflow_runs", "agent_events", "runs", "inventory", "inventory_snapshots",
                 "vehicles", "routes", "scenarios", "destinations", "warehouses", "materials",
             ]:
@@ -1388,6 +1409,14 @@ class Database:
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (agent_id, run_id, operation, 1 if success else 0, round(float(latency_ms), 2), error_type[:160], now_iso()),
             )
+
+    def agent_last_success(self, agent_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(created_at) AS last_success_at FROM agent_performance WHERE agent_id=? AND success=1",
+                (agent_id,),
+            ).fetchone()
+        return row["last_success_at"] if row and row["last_success_at"] else None
 
     def agent_performance_summary(self) -> dict[str, dict]:
         with self.connect() as conn:

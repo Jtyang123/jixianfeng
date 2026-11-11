@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -33,7 +36,8 @@ class AgentArtsBridge:
     pipeline remains authoritative; AgentArts outputs cannot override hard rules.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db=None) -> None:
+        self.db = db
         self.base_url = AGENTARTS_BASE_URL.rstrip("/")
         self.api_key = AGENTARTS_API_KEY
         self.endpoints = self._parse_endpoints()
@@ -223,22 +227,85 @@ class AgentArtsBridge:
                 return await self._invoke_with_client(owned_client, url, body, agent_id, session_id)
         except Exception as exc:
             raise AgentArtsError(f"AgentArts 调用失败 [{agent_id}]: {exc}") from exc
+    @staticmethod
+    def _error_type(exc: Exception) -> str:
+        if isinstance(exc, httpx.TimeoutException):
+            return "timeout"
+        if isinstance(exc, httpx.ConnectError):
+            return "connect"
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code if exc.response is not None else 0
+            if status in {401, 403}:
+                return "auth"
+            if status >= 500:
+                return "http_5xx"
+        return "unknown"
+
+    async def _probe_endpoint(self, client: httpx.AsyncClient, agent_id: str, target: str) -> dict:
+        started = time.perf_counter()
+        http_status = 0
+        error_type = ""
+        error = ""
+        try:
+            response = await client.get(target, headers=self._headers("agentarts-health-check", agent_id))
+            http_status = response.status_code
+            if response.status_code not in {404, 405, 501}:
+                ok = response.status_code < 400
+                if not ok:
+                    error_type = "auth" if response.status_code in {401, 403} else ("http_5xx" if response.status_code >= 500 else "unknown")
+                    error = f"HTTP {response.status_code}"
+                return self._check_item(agent_id, target, ok, started, http_status, error_type, error)
+            response = await client.post(
+                target,
+                json={"query": "health check", "agent_id": agent_id},
+                headers=self._headers("agentarts-health-check", agent_id),
+                timeout=min(5.0, AGENTARTS_TIMEOUT),
+            )
+            http_status = response.status_code
+            ok = response.status_code < 400
+            if not ok:
+                error_type = "auth" if response.status_code in {401, 403} else ("http_5xx" if response.status_code >= 500 else "unknown")
+                error = f"HTTP {response.status_code}"
+            return self._check_item(agent_id, target, ok, started, http_status, error_type, error)
+        except Exception as exc:
+            return self._check_item(agent_id, target, False, started, http_status, self._error_type(exc), str(exc)[:240])
+
+    def _check_item(self, agent_id: str, target: str, ok: bool, started: float, http_status: int,
+                    error_type: str = "", error: str = "") -> dict:
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        last_success_at = None
+        if self.db is not None:
+            try:
+                last_success_at = self.db.agent_last_success(agent_id)
+            except Exception:
+                last_success_at = None
+        return {
+            "agent_id": agent_id,
+            "endpoint": target,
+            "ok": bool(ok),
+            "status": "online" if ok else "degraded",
+            "status_code": int(http_status or 0),
+            "http_status": int(http_status or 0),
+            "latency_ms": latency_ms,
+            "error_type": "" if ok else (error_type or "unknown"),
+            "error": error,
+            "last_success_at": last_success_at,
+        }
+
     async def ping(self) -> dict:
         if not self.enabled:
-            return {"status": "not_configured", **self.status}
+            return {"status": "not_configured", "online_rate": 0.0, "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "checks": [], **self.status}
         targets = [(agent_id, endpoint) for agent_id, endpoint in self.endpoints.items()]
         if not targets:
             targets = [("shared", self.endpoint_for("demand_agent"))]
-        checks = []
-        async with httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) as client:
-            for agent_id, target in targets:
-                try:
-                    response = await client.post(
-                        target,
-                        json={"query": "health check", "agent_id": agent_id},
-                        headers=self._headers("agentarts-health-check", agent_id),
-                    )
-                    checks.append({"agent_id": agent_id, "endpoint": target, "status_code": response.status_code, "ok": response.status_code < 400})
-                except Exception as exc:
-                    checks.append({"agent_id": agent_id, "endpoint": target, "ok": False, "error": str(exc)[:180]})
-        return {"status": "ok" if all(item["ok"] for item in checks) else "degraded", "checks": checks, **self.status}
+        timeout = min(5.0, AGENTARTS_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            checks = await asyncio.gather(*(self._probe_endpoint(client, agent_id, target) for agent_id, target in targets))
+        online = sum(1 for item in checks if item.get("ok"))
+        return {
+            "status": "ok" if checks and online == len(checks) else "degraded",
+            "online_rate": round(online / max(len(checks), 1), 4),
+            "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "checks": list(checks),
+            **self.status,
+        }

@@ -3,6 +3,9 @@ import json
 import time
 from pathlib import Path
 
+import httpx
+
+from app import llm_planner as llm_planner_module
 from app import orchestrator as orchestrator_module
 from app.database import Database
 from app.knowledge_base import KnowledgeRepository
@@ -313,6 +316,69 @@ def test_planner_mode_runs_post_verification_extensions_and_registered_tools(tmp
     assert run["result"]["delivery"]["extension_reviews"][0]["agent_id"] == "risk_extension"
 
 
+def test_planner_invalid_json_retries_then_main_run_still_delivers(tmp_path: Path, monkeypatch):
+    class InvalidJsonClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={"choices": [{"message": {"content": "not-json"}}]},
+            )
+
+    db = Database(tmp_path / "planner-invalid-json.db", database_url="")
+    db.initialize()
+    scenario = db.get_scenario("heatwave-iii")
+    materials = db.list_materials()
+    by_code = {item["code"]: item for item in materials}
+    request = {
+        "scenario_id": scenario["id"],
+        "event": {
+            "type": scenario["event_type"], "severity": scenario["severity"],
+            "location": scenario["location"], "affected_population": scenario["affected_population"],
+            "closed_route_ids": [],
+        },
+        "demand_items": [
+            {
+                "material_id": by_code[item["material_code"]]["id"],
+                "quantity": item["quantity"], "priority": item["priority"],
+                "deadline_hours": item["deadline_hours"],
+            }
+            for item in scenario["default_demand"]
+        ],
+        "weights": {"speed": 0.38, "cost": 0.27, "risk": 0.35},
+    }
+    water_id = by_code["MAT-WATER-001"]["id"]
+    with db.connect() as conn:
+        conn.execute("UPDATE inventory SET quantity=3000, locked_quantity=0 WHERE material_id=?", (water_id,))
+    run_id = "RUN-PLANNER-BAD-JSON"
+    db.create_run(run_id, scenario["id"], request)
+    monkeypatch.setattr(llm_planner_module.httpx, "AsyncClient", lambda **kwargs: InvalidJsonClient())
+    monkeypatch.setattr(
+        orchestrator_module, "LLMPlanner",
+        lambda: llm_planner_module.LLMPlanner(
+            db, run_id, enabled=True, base_url="https://example.com/v1",
+            api_key="real-key", model="test-model",
+        ),
+    )
+    monkeypatch.setattr(orchestrator_module, "LLMService", FakeLLM)
+    asyncio.run(orchestrator_module.orchestrate(db, run_id, request))
+    run = db.get_run(run_id)
+    assert run["status"] == "awaiting_approval", run.get("result")
+    assert run["result"]["runtime"] == "llm-planner"
+    assert run["result"]["delivery"]["status"] == "ready"
+    with db.connect() as conn:
+        rows = conn.execute("SELECT status, fallback FROM llm_calls WHERE run_id=? ORDER BY id", (run_id,)).fetchall()
+    assert len(rows) >= 2
+    assert [row["status"] for row in rows[:2]] == ["invalid_json", "invalid_json"]
+    assert rows[1]["fallback"] == 1
+
+
 def test_matching_and_verifier_cloud_reviews_run_in_parallel(tmp_path: Path, monkeypatch):
     db = Database(tmp_path / "parallel-orchestrator.db", database_url="")
     db.initialize()
@@ -581,6 +647,8 @@ def test_cross_run_memory_is_saved_without_unsafe_override(tmp_path: Path):
     second = db.get_run("RUN-MEMORY-2")["result"]
     dispatch = first["orchestration"]["dispatch"]
     assert dispatch
+    assert {item["stage"] for item in first["stage_metrics"]} >= set(orchestrator_module.STAGE_NAMES)
+    assert all(float(item["duration_ms"]) >= 0 for item in first["stage_metrics"])
     assert all(item["allocation_mode"] == "capability-load-match" for item in dispatch)
     assert all(item["preferred_agent_id"] != "rag_retrieve" for item in dispatch)
     assert first["rework_directives"][0]["policy_selection"]["source"] == "deterministic-single-policy"
@@ -703,3 +771,14 @@ def test_audit_only_delivery_is_not_marked_applied_in_d6():
     assert d6["applied"] is False
     assert d6["source"] == "agentarts-audit-only"
     assert d6["discarded_fields"] == ["summary", "risk_alerts"]
+
+
+def test_failure_root_cause_mapping_is_single_source_of_truth():
+    roots = orchestrator_module.classify_failure_root_causes([
+        "STOCK-WH-A-MAT-1", "ROAD-R-1", "VEHICLE-WH-A", "COVERAGE-DST-1",
+        "DATA-SCHEMA-MISMATCH", "LLM-PLANNER", "ENDPOINT-X", "TIMEOUT-A2A",
+    ])
+    assert roots == [
+        "coverage_gap", "endpoint_failure", "fleet_insufficient", "inventory_shortage",
+        "llm_failure", "road_closed", "rule_blocked", "timeout",
+    ]

@@ -399,6 +399,27 @@ class KnowledgeRepository:
         self.embedding = _EMBEDDING_SERVICE
         self._corpus_cache = _CORPUS_CACHE
 
+    def embedding_stats(self) -> dict:
+        status = self.embedding.status
+        provider = str(status.get("provider") or "")
+        dimensions = int(status.get("dimensions") or 0)
+        with self.db.connect() as conn:
+            stats = conn.execute(
+                """SELECT COUNT(*) AS total_chunks,
+                          SUM(CASE WHEN embedding_provider <> ? OR embedding_dim <> ? OR embedding_json = '[]' THEN 1 ELSE 0 END) AS stale_chunks
+                   FROM knowledge_chunks""",
+                (provider, dimensions),
+            ).fetchone()
+        total = int(stats["total_chunks"] or 0) if stats else 0
+        stale = int(stats["stale_chunks"] or 0) if stats else 0
+        mode = "local" if getattr(self.embedding, "local_model", None) else ("remote" if getattr(self.embedding, "remote", False) else "hash-fallback")
+        return {
+            **status,
+            "mode": mode,
+            "total_chunks": total,
+            "stale_chunks": stale,
+        }
+
     def _schedule_embedding_backfill(self, chunk_ids: list[int]) -> None:
         if not chunk_ids or not (self.embedding.remote or self.embedding.local_model):
             return

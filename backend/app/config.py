@@ -82,6 +82,9 @@ LLM_ENABLED = os.getenv("LLM_ENABLED", "false").strip().lower() == "true"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+LLM_TIMEOUT = max(1.0, min(60.0, float(os.getenv("LLM_TIMEOUT", "8"))))
+LLM_TEMPERATURE = max(0.0, min(2.0, float(os.getenv("LLM_TEMPERATURE", "0.1"))))
+LLM_JSON_MODE = os.getenv("LLM_JSON_MODE", "true").strip().lower() == "true"
 
 RUN_WORKER_CONCURRENCY = max(1, min(16, int(os.getenv("RUN_WORKER_CONCURRENCY", "2"))))
 RUN_QUEUE_MAX_SIZE = max(1, int(os.getenv("RUN_QUEUE_MAX_SIZE", "100")))

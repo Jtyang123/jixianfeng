@@ -4,7 +4,7 @@ import asyncio
 import html
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +27,7 @@ from .knowledge import catalog as knowledge_catalog
 from .knowledge_base import KnowledgeBaseError, KnowledgeRepository, extract_document_chunks
 from .llm import LLMService
 from .local_agents import invoke_local_registered_agent
+from .llm_calls import LLMCallRepository
 from .memory import MemoryRepository
 from .models import (
     AgentInvokeRequest, AgentRegisterRequest, AgentVersionCreate, DestinationCreate, InventoryEntryCreate,
@@ -40,7 +41,7 @@ from .registry import AgentRegistryError, AgentRegistryService
 from .reservations import InventoryReservationError, InventoryReservationService, ReservationMaintenanceWorker
 from .retry_queue import RetryQueueRepository, RetryWorker
 from .routing import fetch_route_geometry, generate_route_candidates
-from .orchestrator import new_run_id, orchestrate
+from .orchestrator import classify_failure_root_causes, new_run_id, orchestrate
 from .run_queue import QueueFullError, RunQueueService, RunWorkerPool, run_priority
 from .scheduler import AGENTS, platform_manifest
 from .tabular import parse_bool, parse_date, parse_number, read_table
@@ -518,6 +519,11 @@ def health() -> dict:
     return {"status": "ok", "service": "FarmMatch Emergency Dispatch", "time": datetime.now().isoformat()}
 
 
+@router.get("/llm/calls")
+def llm_calls(run_id: str = "", limit: int = 50) -> list[dict]:
+    return LLMCallRepository(db).list_calls(run_id=run_id, limit=limit)
+
+
 @router.get("/system/status")
 def system_status() -> dict:
     snapshot = db.latest_snapshot()
@@ -544,7 +550,7 @@ def system_status() -> dict:
 
 @router.get("/agentarts/check")
 async def agentarts_check() -> dict:
-    return await AgentArtsBridge().ping()
+    return await AgentArtsBridge(db).ping()
 
 
 @router.get("/platform/manifest")
@@ -555,7 +561,7 @@ def manifest() -> dict:
     tool_repository.ensure_builtins()
     data["tools"] = tool_repository.list_tools(enabled_only=True)
     data["llm"] = LLMService().status
-    data["knowledge"]["embedding"] = KnowledgeRepository(db).embedding.status
+    data["knowledge"]["embedding"] = KnowledgeRepository(db).embedding_stats()
     data["agentarts"] = AgentArtsBridge().status
     data["mcp"] = {"endpoint": "/api/mcp", "protocol_version": "2024-11-05", "methods": ["initialize", "tools/list", "tools/call"]}
     return data
@@ -1403,6 +1409,59 @@ def replay_retry_job(job_id: str, request: Request) -> dict:
     auth_service.audit("retry_job_requeued", "POST", f"/api/retry-jobs/{job_id}/replay", 200, current,
                        resource_type="retry_job", resource_id=job_id)
     return job
+
+
+@router.get("/runs/root-causes")
+def run_root_causes(days: int = 7) -> dict:
+    days = max(1, min(int(days), 90))
+    cutoff = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
+    counts: dict[str, int] = {}
+    sampled = 0
+    for summary in db.list_runs(limit=500):
+        if str(summary.get("created_at") or "") < cutoff:
+            continue
+        run = db.get_run(summary["id"])
+        result = (run or {}).get("result") or {}
+        roots = result.get("failure_root_causes") or []
+        if not roots:
+            blockers = (result.get("final_verification") or {}).get("blocker_summary") or []
+            roots = classify_failure_root_causes(blockers)
+        if roots:
+            sampled += 1
+        for root in roots:
+            counts[root] = counts.get(root, 0) + 1
+    return {"days": days, "runs_with_failures": sampled, "counts": counts, "total": sum(counts.values())}
+
+
+@router.get("/runs/{run_id}/stages")
+def run_stages(run_id: str) -> dict:
+    run = db.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    result = run.get("result") or {}
+    stages = result.get("stage_metrics") or []
+    total_ms = round(sum(float(item.get("duration_ms") or 0) for item in stages), 2)
+    wall_ms = 0.0
+    try:
+        created = datetime.fromisoformat(str(run.get("created_at") or ""))
+        completed = datetime.fromisoformat(str(run.get("completed_at") or ""))
+        wall_ms = round(max(0.0, (completed - created).total_seconds() * 1000), 2)
+    except (TypeError, ValueError):
+        wall_ms = 0.0
+    return {
+        "run_id": run_id,
+        "status": run.get("status"),
+        "total_duration_ms": total_ms,
+        "wall_duration_ms": wall_ms,
+        "failure_root_causes": result.get("failure_root_causes") or [],
+        "stages": [
+            {
+                **item,
+                "percentage": round(float(item.get("duration_ms") or 0) / total_ms, 4) if total_ms else 0.0,
+            }
+            for item in stages
+        ],
+    }
 
 
 @router.get("/runs/{run_id}")

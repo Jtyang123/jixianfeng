@@ -108,6 +108,25 @@ const eventPresentation = {
   'scheduler.decided': { label: '调度决策', icon: Gauge },
 }
 const featuredEvents = computed(() => events.value.filter((event) => eventPresentation[event.type]).slice(-8))
+const schedulerEvent = computed(() => [...events.value].reverse().find((event) => event.type === 'scheduler.decided') || null)
+const stageMetrics = computed(() => runResult.value?.stage_metrics || [])
+const stageTotalMs = computed(() => stageMetrics.value.reduce((sum, item) => sum + Number(item.duration_ms || 0), 0))
+const maxStageMs = computed(() => Math.max(...stageMetrics.value.map((item) => Number(item.duration_ms || 0)), 1))
+const failureRootCauses = computed(() => runResult.value?.failure_root_causes || [])
+function stageLabel(stage) {
+  return { demand: '需求研判', retrieval: '知识检索', matching: '资源匹配', verification: '独立核验', a2a: 'A2A 协商', delivery: '方案交付' }[stage] || stage
+}
+function rootCauseLabel(root) {
+  return { inventory_shortage: '库存缺口', road_closed: '道路封闭', fleet_insufficient: '运力不足', coverage_gap: '覆盖缺口', rule_blocked: '规则阻断', llm_failure: 'LLM 失败', endpoint_failure: '端点失败', timeout: '调用超时' }[root] || root
+}
+function historySuccessLabel(item) {
+  return Number(item.historical_samples || 0) > 0 ? `${(Number(item.historical_success_rate || 0) * 100).toFixed(0)}%（${item.historical_samples}）` : '—（无历史）'
+}
+const llmWarning = computed(() => {
+  const status = runResult.value?.llm_status || runResult.value?.planner_status
+  if (!status || status.state !== 'misconfigured') return ''
+  return `LLM 已开启但缺少 ${(status.missing || []).join('、')}，当前走确定性基线`
+})
 const injectedExperiences = computed(() => (runResult.value?.rework_directives || []).flatMap((item) => item.experience_context || []))
 const loadedMemoryEntries = computed(() => Object.entries(runResult.value?.memory_context || {}).flatMap(([agentId, entries]) => Object.entries(entries || {}).map(([key, value]) => ({ agentId, key, value: value?.value ?? value }))))
 const memoryWrites = computed(() => runResult.value?.memory_writes || [])
@@ -673,6 +692,20 @@ onBeforeUnmount(() => {
               <small>{{ event.agent_id }}</small>
             </div>
           </div>
+          <details v-if="schedulerEvent" class="scheduler-detail-panel">
+            <summary>调度决策明细 · {{ schedulerEvent.title }}</summary>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>角色</th><th>首选 Agent</th><th>实际分配</th><th>能力匹配</th><th>历史成功率</th><th>当前负载</th><th>effective_priority</th><th>是否换人</th></tr></thead>
+                <tbody><tr v-for="item in schedulerEvent.payload?.dispatch || []" :key="`${item.preferred_agent_id}-${item.assigned_agent_id}`">
+                  <td>{{ item.task_type }}</td><td>{{ item.preferred_agent_id }}</td><td>{{ item.assigned_agent_id || item.agent_id }}</td>
+                  <td>{{ ((item.capability_match || 0) * 100).toFixed(0) }}%</td><td>{{ historySuccessLabel(item) }}</td>
+                  <td>{{ ((item.current_load || 0) * 100).toFixed(0) }}%</td><td>{{ item.effective_priority }}</td>
+                  <td>{{ item.assignment_changed ? '是' : '否' }}</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </details>
         </div>
 
         <AgentRail :events="events" :running="running" />
@@ -682,7 +715,7 @@ onBeforeUnmount(() => {
         <div class="result-header">
           <div>
             <div class="eyebrow">MULTI-AGENT OUTPUT</div>
-            <h2>多方案核验与交付</h2>
+            <h2>多方案核验与交付 <span v-for="root in failureRootCauses" :key="root" class="root-cause-tag">{{ rootCauseLabel(root) }}</span></h2>
           </div>
           <div class="result-actions">
             <button class="secondary-action" @click="openReport"><FileDown :size="16" />导出报告</button>

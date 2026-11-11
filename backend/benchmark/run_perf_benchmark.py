@@ -15,6 +15,7 @@ from app.agents import build_delivery_package, build_demand_plan, verify_plans
 from app.config import PROJECT_DIR
 from app.database import Database
 from app.evaluation import _benchmark_contexts, _generate_baseline_plan, _solve_adaptively
+from app.llm import LLMService
 
 DEFAULT_CONCURRENCY_LEVELS = (1, 5, 10, 20)
 DEFAULT_REPEAT_COUNT = 3
@@ -200,6 +201,9 @@ def _measure_level(contexts: list[dict], concurrency: int, repeat_count: int) ->
         "p95_latency_ms": _p95(multi_latencies),
         "average_score": round(mean(multi_scores), 2) if multi_scores else 0.0,
         "llm_calls": sum(item["llm_calls"] for item in multi_rows),
+        "llm_latency_avg_ms": 0.0,
+        "llm_latency_p95_ms": 0.0,
+        "llm_calls_per_run": round(sum(item["llm_calls"] for item in multi_rows) / max(samples_count, 1), 4),
         "tool_calls": sum(item["tool_calls"] for item in multi_rows),
         "tool_call_breakdown": _aggregate_breakdown(multi_rows),
         "consistency": round(consistent / comparable, 4) if comparable else 0.0,
@@ -251,12 +255,19 @@ def run_perf_benchmark(
         {key: value for key, value in item.items() if not key.startswith("_")}
         for item in results
     ]
+    llm_calls_total = sum(item["llm_calls"] for item in results)
+    llm_status = LLMService().status
+    runtime_mode = "online" if llm_status.get("state") == "ready" and llm_calls_total > 0 else "deterministic-degraded"
     report = {
         "status": "ready",
-        "report_version": "perf-benchmark-v2",
+        "report_version": "perf-benchmark-v3",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "runtime_mode": "deterministic-core",
-        "runtime_note": "未启用 LLM；每个样本完整执行需求拆分、多轮方案生成、核验和交付包生成。",
+        "runtime_mode": runtime_mode,
+        "llm_status": llm_status,
+        "runtime_note": (
+            "未配置可用 LLM，本次为确定性基线。" if runtime_mode == "deterministic-degraded"
+            else "本次基准包含真实在线 LLM 调用。"
+        ),
         "database_engine": db.engine,
         "levels": list(levels),
         "repeat_count": repeat_count,
@@ -271,7 +282,10 @@ def run_perf_benchmark(
                 "average_latency_ms": round(mean(multi_latencies), 2) if multi_latencies else 0.0,
                 "p95_latency_ms": _p95(multi_latencies),
                 "average_score": round(mean(multi_scores), 2) if multi_scores else 0.0,
-                "llm_calls": sum(item["llm_calls"] for item in results),
+                "llm_calls": llm_calls_total,
+                "llm_latency_avg_ms": 0.0,
+                "llm_latency_p95_ms": 0.0,
+                "llm_calls_per_run": round(llm_calls_total / max(total_samples, 1), 4),
                 "tool_calls": sum(item["tool_calls"] for item in results),
                 "tool_call_breakdown": _aggregate_breakdown([
                     row["multi_agent"] for item in results for row in item["cases"]

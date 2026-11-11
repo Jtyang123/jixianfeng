@@ -106,6 +106,7 @@ def test_capability_scheduler_uses_cold_start_profile_without_history():
     assert all(item["historical_success_rate"] == 0.5 for item in loaded["dispatch"])
     assert all(item["preferred_agent_id"] == item["assigned_agent_id"] for item in loaded["dispatch"])
     assert all(item["preferred_agent_id"] != "rag_retrieve" for item in loaded["dispatch"])
+    assert len({item["effective_priority"] for item in loaded["dispatch"]}) > 1
 
 
 def test_capability_scheduler_can_assign_a_ranked_replacement_agent():

@@ -14,11 +14,16 @@ const uploading = ref(false)
 const searching = ref(false)
 const error = ref('')
 const message = ref('')
+const embeddingStatus = ref(null)
 
 async function load() {
   loading.value = true
   error.value = ''
-  try { documents.value = await api.knowledgeDocuments() } catch (exc) { error.value = exc.message } finally { loading.value = false }
+  try {
+    const [documentRows, platform] = await Promise.all([api.knowledgeDocuments(), api.manifest()])
+    documents.value = documentRows
+    embeddingStatus.value = platform?.knowledge?.embedding || null
+  } catch (exc) { error.value = exc.message } finally { loading.value = false }
 }
 
 async function upload(fileEvent) {
@@ -72,6 +77,12 @@ onMounted(load)
       </div>
     </section>
     <div v-if="error" class="inline-error">{{ error }}</div>
+    <div v-if="embeddingStatus" class="embedding-status-note" :class="{ 'embedding-status-note--warn': embeddingStatus.mode === 'hash-fallback' }">
+      <BookOpen :size="15" />
+      <strong>当前模式：{{ embeddingStatus.mode }}</strong>
+      <span>模型 {{ embeddingStatus.model }} · 维度 {{ embeddingStatus.dimensions }} · stale chunks {{ embeddingStatus.stale_chunks }}/{{ embeddingStatus.total_chunks }}</span>
+      <em v-if="embeddingStatus.mode === 'hash-fallback'">当前为离线哈希回退，语义检索能力受限</em>
+    </div>
     <div v-if="message" class="import-result"><CheckCircle2 :size="16" />{{ message }}</div>
     <div class="knowledge-manager-grid">
       <section class="content-card knowledge-documents-card">

@@ -29,6 +29,57 @@ from .workflow_engine import WorkflowEngine, WorkflowRepository
 logger = logging.getLogger(__name__)
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
+STAGE_NAMES = ("demand", "retrieval", "matching", "verification", "a2a", "delivery")
+ROOT_CAUSE_MAP = {
+    "STOCK": "inventory_shortage",
+    "COVERAGE": "coverage_gap",
+    "ROAD": "road_closed",
+    "VEHICLE": "fleet_insufficient",
+    "DATA": "rule_blocked",
+    "SCHEMA": "rule_blocked",
+    "MISSING": "rule_blocked",
+    "INVALID": "rule_blocked",
+    "VOTE": "rule_blocked",
+    "PLANNER": "llm_failure",
+    "LLM": "llm_failure",
+    "ENDPOINT": "endpoint_failure",
+    "TIMEOUT": "timeout",
+}
+
+
+def append_stage_metric(metrics: list[dict], stage: str, started: float, agent_id: str, attempt: int = 1) -> None:
+    ended = time.perf_counter()
+    metrics.append({
+        "stage": stage,
+        "started_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "ended_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "duration_ms": round(max(0.0, (ended - started) * 1000), 2),
+        "agent_id": agent_id,
+        "attempt": int(attempt),
+    })
+
+
+def complete_stage_metrics(metrics: list[dict]) -> list[dict]:
+    existing = {item.get("stage") for item in metrics}
+    for stage in STAGE_NAMES:
+        if stage not in existing:
+            now = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            metrics.append({
+                "stage": stage, "started_at": now, "ended_at": now, "duration_ms": 0.0,
+                "agent_id": "orchestrator", "attempt": 0,
+            })
+    return metrics
+
+
+def classify_failure_root_causes(codes: list[str]) -> list[str]:
+    roots = set()
+    for code in codes:
+        normalized = str(code or "").upper()
+        for prefix, root in ROOT_CAUSE_MAP.items():
+            if normalized.startswith(prefix) or prefix in normalized:
+                roots.add(root)
+                break
+    return sorted(roots)
 
 AGENT_NAMES = {
     "orchestrator": "编排控制器",
@@ -472,7 +523,9 @@ async def run_planner_orchestration(
     llm_service,
     a2a_bus: A2ABus | None = None,
     post_verification_runner=None,
+    stage_metrics: list[dict] | None = None,
 ) -> dict:
+    stage_metrics = stage_metrics if stage_metrics is not None else []
     tool_agent_map = {
         "demand_plan": "demand_agent",
         "knowledge_search": "demand_agent",
@@ -483,6 +536,12 @@ async def run_planner_orchestration(
         "verify_plans": "verifier_agent",
         "delivery_package": "delivery_agent",
         "escalate_human": "orchestrator",
+    }
+    tool_stage_map = {
+        "demand_plan": "demand", "knowledge_search": "retrieval",
+        "inventory_query": "matching", "route_query": "matching",
+        "vehicle_query": "matching", "generate_plans": "matching",
+        "verify_plans": "verification", "delivery_package": "delivery",
     }
     tool_repository = ToolRepository(db)
     tool_repository.ensure_builtins()
@@ -584,11 +643,13 @@ async def run_planner_orchestration(
         elif tool == "demand_plan":
             result = ensure_demand()
             if a2a_bus is not None:
+                a2a_started = time.perf_counter()
                 a2a_result = await maybe_a2a_cross_warehouse(
                     a2a_bus, result, inventory,
                     lambda exc: emit(db, run_id, "a2a.fallback", "demand_agent", "A2A 通道不可用，已回退到黑板交接", str(exc)[:240]),
                     vehicles,
                 )
+                append_stage_metric(stage_metrics, "a2a", a2a_started, "matching_agent", attempt)
                 result = {**result, "a2a_exchange": a2a_result}
         elif tool == "inventory_query":
             result = {
@@ -685,6 +746,8 @@ async def run_planner_orchestration(
             result = {"error": f"未知工具：{tool}"}
         executed_steps += 1
         step_latency_ms = (time.perf_counter() - step_started) * 1000
+        if tool in tool_stage_map:
+            append_stage_metric(stage_metrics, tool_stage_map[tool], step_started, agent_id, attempt)
         result_summary = tool_result_summary(tool, result if isinstance(result, dict) else {"result": result})
         tool_status = "failed" if isinstance(result, dict) and result.get("error") else "success"
         tool_repository.record_call(
@@ -833,6 +896,12 @@ async def run_planner_orchestration(
         experience_repo, rework_directives, rounds, str(scenario.get("id") or "generic"),
         final_verification.get("verdict") == "pass", run_id,
     )
+    complete_stage_metrics(stage_metrics)
+    failure_root_causes = classify_failure_root_causes(final_verification.get("blocker_summary", []))
+    emit(db, run_id, "run.stage_metrics", "orchestrator", "阶段耗时统计完成", f"共 {len(stage_metrics)} 条阶段记录。", {
+        "stage_metrics": stage_metrics,
+        "failure_root_causes": failure_root_causes,
+    })
     return {
         "run_id": run_id,
         "runtime": "llm-planner",
@@ -868,6 +937,8 @@ async def run_planner_orchestration(
         "ai_decision_matrix": ai_matrix,
         "planner_decision": planner_decision,
         "planner_trace": {"initial_plan": plan, "decisions": decisions, "executed_steps": executed_steps},
+        "stage_metrics": stage_metrics,
+        "failure_root_causes": failure_root_causes,
         "repair_experience_writes": experience_writes,
         "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
         "agentarts_trace": planner_agentarts_trace,
@@ -879,7 +950,10 @@ async def run_planner_orchestration(
     }
 
 async def orchestrate(db: Database, run_id: str, request: dict) -> None:
-    llm_service = LLMService()
+    try:
+        llm_service = LLMService(db, run_id)
+    except TypeError:
+        llm_service = LLMService()
     agentarts = AgentArtsBridge()
     http_client = httpx.AsyncClient(timeout=AGENTARTS_TIMEOUT) if agentarts.enabled else None
     registry = AgentRegistryService(db)
@@ -917,6 +991,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             return {"mode": "local-fallback", "reason": "AgentArts 未配置"}
         safe_payload = sanitize_agent_payload(payload)
         started_at = time.perf_counter()
+        endpoint = ""
         try:
             endpoint = agentarts.endpoint_for(agent_id)
             emit(db, run_id, "agentarts.called", agent_id, f"调用 AgentArts · {AGENT_NAMES.get(agent_id, agent_id)}", "已向华为云 AgentArts Runtime 提交结构化任务。", {
@@ -954,7 +1029,15 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             })
             return response
         except Exception as exc:
-            fallback = {"mode": "local-fallback-after-agentarts-error", "error": str(exc)[:240]}
+            response = getattr(exc, "response", None)
+            http_status = int(getattr(response, "status_code", 0) or 0)
+            fallback = {
+                "mode": "local-fallback-after-agentarts-error",
+                "error": str(exc)[:240],
+                "endpoint": endpoint,
+                "error_type": AgentArtsBridge._error_type(exc),
+                "http_status": http_status,
+            }
             db.record_agent_performance(
                 agent_id, run_id, trace_id or "agentarts_invoke", False,
                 (time.perf_counter() - started_at) * 1000, type(exc).__name__,
@@ -1213,6 +1296,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         snapshot = db.latest_snapshot()
         inventory = db.inventory_rows(snapshot["id"] if snapshot else None)
         closed_routes = request["event"].get("closed_route_ids") or scenario["closed_routes"]
+        stage_metrics: list[dict] = []
         selected_ids = {int(item["material_id"]) for item in request["demand_items"]}
         selected_materials = [item for item in materials if item["id"] in selected_ids]
         query = " ".join([
@@ -1220,10 +1304,12 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "道路封闭 库存 运力 时效 独立核验 反馈循环",
             " ".join(item["name"] for item in selected_materials),
         ])
+        retrieval_started = time.perf_counter()
         knowledge_repo = KnowledgeRepository(db)
         knowledge_repo.ensure_seed_documents()
         evidence = knowledge_repo.search(query, top_k=7)
         memory_context = memory_repo.summary(["demand_agent", "matching_agent", "verifier_agent", "delivery_agent"], query=query)
+        append_stage_metric(stage_metrics, "retrieval", retrieval_started, "rag_retrieve", 1)
         emit(db, run_id, "memory.loaded", "orchestrator", "跨运行记忆已加载", f"加载 {sum(len(items) for items in memory_context.values())} 条可审计记忆。", {
             "agents": {agent_id: list(items) for agent_id, items in memory_context.items()},
             "scope": "仅作上下文与安全 tie-break，不覆盖硬规则",
@@ -1260,13 +1346,16 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 message,
             ),
         )
-        planner = LLMPlanner()
+        try:
+            planner = LLMPlanner(db, run_id)
+        except TypeError:
+            planner = LLMPlanner()
         if planner.enabled:
             try:
                 planner_result = await run_planner_orchestration(
                     db, run_id, request, scenario, materials, destinations, warehouses,
                     routes, vehicles, inventory, evidence, schedule, planner, llm_service, a2a_bus,
-                    run_post_verification_extensions,
+                    run_post_verification_extensions, stage_metrics,
                 )
                 planner_result["memory_context"] = memory_context
                 planner_result["memory_writes"] = planner_result.get("repair_experience_writes", [])
@@ -1531,6 +1620,24 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                     "attempt": attempt, "run_id": core_result["run_id"], "status": core_result["status"],
                     "completed": core_result["completed"], "metrics": core_result["metrics"],
                 })
+                workflow_run = workflow_repo.get_run(core_result["run_id"]) or {}
+                stage_by_agent = {
+                    "demand_agent": "demand", "matching_agent": "matching",
+                    "verifier_agent": "verification", "verification_vote": "verification",
+                    "delivery_agent": "delivery",
+                }
+                for node_run in workflow_run.get("nodes", []):
+                    node_stage = stage_by_agent.get(str(node_run.get("agent_id") or ""))
+                    if not node_stage:
+                        continue
+                    stage_metrics.append({
+                        "stage": node_stage,
+                        "started_at": node_run.get("started_at") or "",
+                        "ended_at": node_run.get("completed_at") or "",
+                        "duration_ms": round(float(node_run.get("execution_ms") or 0), 2),
+                        "agent_id": str(node_run.get("agent_id") or ""),
+                        "attempt": attempt,
+                    })
                 plans = pipeline_state.get("plans")
                 verification = pipeline_state.get("verification")
                 if plans is None:
@@ -1690,10 +1797,12 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         await run_post_verification_extensions(demand_plan, final_plans, final_verification)
         await pace(0.4)
+        delivery_started = time.perf_counter()
         delivery = build_delivery_package(
             final_verification, scenario, snapshot, pipeline_state.get("decision_weights") or request.get("weights", {}),
             agent_decision=agent_decision,
         )
+        append_stage_metric(stage_metrics, "delivery", delivery_started, "delivery_agent", len(rounds))
         delivery["llm_weight_decision"] = llm_decisions.get("matching_weights", {})
         delivery["extension_reviews"] = extension_reviews
         for review in extension_reviews:
@@ -1788,6 +1897,11 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "keys": [{"agent_id": item["agent_id"], "memory_key": item["memory_key"]} for item in memory_writes],
         })
 
+        complete_stage_metrics(stage_metrics)
+        failure_root_causes = classify_failure_root_causes(final_verification.get("blocker_summary", []))
+        emit(db, run_id, "run.stage_metrics", "orchestrator", "阶段耗时统计完成", f"共 {len(stage_metrics)} 条阶段记录。", {
+            "stage_metrics": stage_metrics, "failure_root_causes": failure_root_causes,
+        })
         result = {
             "run_id": run_id,
             "runtime": AGENT_RUNTIME,
@@ -1807,6 +1921,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "delivery": delivery,
             "closed_routes": closed_routes,
             "orchestration": schedule,
+            "stage_metrics": stage_metrics,
+            "failure_root_causes": failure_root_causes,
             "retrieval": evidence,
             "ai_reasoning": ai_reasoning,
             "agentarts_trace": agentarts_trace,

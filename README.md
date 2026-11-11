@@ -152,6 +152,11 @@ python tools\build_submission.py
 - 能力调度配置：`AGENT_TASK_CAPABILITY_MAP_JSON` 可覆盖任务类型到能力标签的映射；系统按“能力匹配度 × 0.4 + 历史成功率 × 0.3 + (1 - 当前负载) × 0.3”排序，无历史数据时回退现有优先级。
 - 修复经验库复用 `agent_memory`，键为 `repair_experience:<场景>:<问题代码>:<策略>`；仅向 Prompt 注入成功率不低于 0.6 的参考片段，库存、路线、运力、时效与核验结论不变。
 - 记忆管理：`POST /api/memory/cleanup` 执行低置信度/被替代经验的带审计清理；`GET /api/memory/cleanup-audit` 查看清理记录。阈值由 `MEMORY_RETENTION_DAYS`、`MEMORY_MIN_CONFIDENCE`、`MEMORY_CONTEXT_BUDGET_ITEMS`、`MEMORY_CONTEXT_BUDGET_CHARS` 配置。
+- LLM 调用审计：`GET /api/llm/calls?run_id=<运行ID>&limit=50` 返回 stage、model、latency_ms、status、fallback 等字段；不记录 API Key、Authorization 或完整 Prompt。支持 `LLM_TIMEOUT`、`LLM_TEMPERATURE`、`LLM_JSON_MODE`，Planner 单次运行预算为 30 秒。
+- 阶段与根因：`GET /api/runs/{run_id}/stages` 返回 demand/retrieval/matching/verification/a2a/delivery 六阶段耗时与占比；`GET /api/runs/root-causes?days=7` 聚合 inventory_shortage、road_closed、fleet_insufficient 等固定枚举。
+- AgentArts 探活：`GET /api/agentarts/check` 使用并发 GET/HEAD，探测端点不支持时才对单端点做最长 5 秒 POST；返回 online_rate、latency_ms、error_type、http_status 和 last_success_at。
+- 知识库 embedding 状态：`GET /api/platform/manifest` 的 `knowledge.embedding` 返回 local/remote/hash-fallback、模型、维度、total_chunks 与 stale_chunks。`hash-fallback` 表示当前不具备真实语义检索能力。
+- 并发基准报告包含 `runtime_mode=online|deterministic-degraded`、LLM 调用数、平均/P95 LLM 延迟和每运行调用数；没有可用 LLM 时明确标记确定性基线，不伪造在线数据。
 - `GET /api/benchmark/report`：返回最近一次端到端并发基准 JSON；无报告时返回 `status=empty` 和运行命令提示。
 - 独立运行基准：`cd backend && ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark`。默认输出到 `data/benchmark_latest.json`，可用 `PERF_BENCHMARK_REPORT` 覆盖路径。
 
@@ -282,7 +287,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 116 项测试；本机无 PostgreSQL 环境时结果为 `113 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 129 项测试；本机无 PostgreSQL 环境时结果为 `126 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

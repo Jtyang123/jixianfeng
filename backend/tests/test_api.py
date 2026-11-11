@@ -19,6 +19,11 @@ def test_api_run_flow(tmp_path: Path):
     client.__enter__()
 
     assert client.get("/api/health").status_code == 200
+    platform = client.get("/api/platform/manifest")
+    assert platform.status_code == 200
+    embedding_status = platform.json()["knowledge"]["embedding"]
+    assert embedding_status["mode"] in {"local", "remote", "hash-fallback"}
+    assert "stale_chunks" in embedding_status and "dimensions" in embedding_status
     materials = client.get("/api/materials").json()
     scenarios = client.get("/api/scenarios").json()
     assert materials and scenarios
@@ -74,6 +79,17 @@ def test_api_run_flow(tmp_path: Path):
     assert len(run["result"]["retrieval"]) >= 2
     assert run["result"]["loop_metrics"]["converged"] is True
     assert run["result"]["loop_metrics"]["score_gain"] > 0
+    stage_response = client.get(f"/api/runs/{run_id}/stages")
+    assert stage_response.status_code == 200
+    stage_data = stage_response.json()
+    assert {item["stage"] for item in stage_data["stages"]} >= {"demand", "retrieval", "matching", "verification", "a2a", "delivery"}
+    assert stage_data["total_duration_ms"] >= 0
+    if stage_data.get("wall_duration_ms"):
+        assert abs(stage_data["total_duration_ms"] - stage_data["wall_duration_ms"]) <= max(1500.0, stage_data["wall_duration_ms"] * 0.8)
+    root_response = client.get("/api/runs/root-causes?days=7")
+    assert root_response.status_code == 200
+    assert "counts" in root_response.json()
+    assert client.get("/api/llm/calls?limit=5").status_code == 200
     ai_matrix = run["result"]["ai_decision_matrix"]
     assert len(ai_matrix) == 8
     assert {item["id"] for item in ai_matrix} == {"D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"}

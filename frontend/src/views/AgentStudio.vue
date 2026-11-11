@@ -41,9 +41,13 @@ function agentConnectionLabel(agentId) {
   return '本地确定性回退'
 }
 function agentCheckState(agentId) {
-  const check = checkResult.value?.checks?.find((item) => item.agent_id === agentId)
+  return checkResult.value?.checks?.find((item) => item.agent_id === agentId) || null
+}
+function agentCheckLabel(agentId) {
+  const check = agentCheckState(agentId)
   if (!check) return ''
-  return check.ok ? 'OK' : 'FAILED'
+  const latency = Number(check.latency_ms || 0).toFixed(0)
+  return check.ok ? `云端在线（${latency}ms）` : `本地降级（${check.error_type || 'unknown'} ${latency}ms）`
 }
 const moduleCards = computed(() => [
   { icon: Bot, title: 'Agent 定义与配置', detail: `${manifest.value?.agents?.length || 0} 个角色、工具白名单、记忆和版本契约`, tag: 'ONLINE' },
@@ -157,8 +161,8 @@ onMounted(load)
         </div>
       </section>
       <WorkflowDesigner :user="user" />      <div v-if="checkResult" class="agentarts-check" :class="{ 'agentarts-check--warn': checkResult.status !== 'ok' }">
-        <strong>AgentArts 连接检测：{{ checkResult.status }}</strong>
-        <span>{{ checkResult.enabled ? '端点已配置，可执行 /invocations 调用' : '尚未配置 AGENTARTS_BASE_URL / API_KEY，当前使用本地确定性回退' }}</span>
+        <strong>AgentArts 连接检测：{{ checkResult.status }} · 在线率 {{ ((checkResult.online_rate || 0) * 100).toFixed(1) }}%</strong>
+        <span>{{ checkResult.enabled ? `端点已配置，检测时间 ${checkResult.checked_at || '—'}` : '尚未配置 AGENTARTS_BASE_URL / API_KEY，当前使用本地确定性回退' }}</span>
       </div>
 
       <section class="content-card agentarts-coverage-card">
@@ -167,7 +171,7 @@ onMounted(load)
           <article v-for="agent in manifest.agents" :key="agent.id" class="agentarts-role-card" :class="{ 'agentarts-role-card--ready': configuredAgentIds.includes(agent.id) }">
             <div><span class="mono">{{ agent.code }}</span><strong>{{ agent.name }}</strong></div>
             <span class="agentarts-role-state">{{ agentConnectionLabel(agent.id) }}</span>
-            <small v-if="agentCheckState(agent.id)">检测：{{ agentCheckState(agent.id) }}</small>
+            <small v-if="agentCheckState(agent.id)">检测：{{ agentCheckLabel(agent.id) }}</small>
           </article>
         </div>
         <div v-if="missingAgentIds.length" class="agentarts-missing-note"><Cpu :size="14" /><span>待接入：{{ missingAgentIds.join('、') }}。代码与回退已就绪，配置对应 /invocations 地址后即可启用。</span></div>

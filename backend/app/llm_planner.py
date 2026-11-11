@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
 
-from .config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_MODEL
+from .config import (
+    LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_JSON_MODE, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT,
+)
+from .llm_calls import LLMCallRepository, llm_configuration_state
 
 
 logger = logging.getLogger(__name__)
@@ -53,50 +57,150 @@ def _fallback_plan(available_tools: list[str]) -> dict:
 class LLMPlanner:
     def __init__(
         self,
+        db=None,
+        run_id: str = "",
         enabled: bool | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
+        budget_seconds: float = 30.0,
     ) -> None:
+        self.db = db
+        self.run_id = run_id
         self.base_url = (base_url if base_url is not None else LLM_BASE_URL).rstrip("/")
         self.api_key = api_key if api_key is not None else LLM_API_KEY
         self.model = model if model is not None else LLM_MODEL
-        configured = enabled if enabled is not None else LLM_ENABLED
-        self.enabled = bool(configured and self.base_url and self.api_key and self.model and self.api_key not in {"sk-xxx", "your-key"})
+        self.configured = enabled if enabled is not None else LLM_ENABLED
+        self.budget_seconds = max(1.0, float(budget_seconds))
+        self._run_started_at: float | None = None
+        state = llm_configuration_state(self.configured, self.base_url, self.api_key, self.model)
+        self.state = state["state"]
+        self.missing = state["missing"]
+        self.enabled = self.state == "ready"
+        self.repository = LLMCallRepository(db) if db is not None else None
 
     @property
     def status(self) -> dict:
         return {
             "enabled": self.enabled,
+            "state": self.state,
+            "missing": self.missing,
             "role": "planning-and-replanning",
             "model": self.model if self.enabled else "deterministic-fallback",
             "base_url_configured": bool(self.base_url),
-            "response_format": "json_object",
+            "response_format": "json_object" if LLM_JSON_MODE else "disabled",
+            "timeout_seconds": LLM_TIMEOUT,
+            "temperature": LLM_TEMPERATURE,
+            "budget_seconds": self.budget_seconds,
+            "message": (
+                "LLM Planner 已就绪"
+                if self.state == "ready"
+                else ("LLM 未启用" if self.state == "disabled" else f"LLM 已开启但缺少 {', '.join(self.missing)}，当前走确定性基线")
+            ),
         }
 
+    def _log_call(self, *, stage: str, request_payload: dict, output=None, latency_ms: float, status: str,
+                  http_status: int = 0, error: str = "", fallback: bool = False,
+                  input_payload: dict | None = None) -> None:
+        log_input = input_payload or request_payload
+        if self.repository is None:
+            return
+        self.repository.record(
+            run_id=self.run_id,
+            stage=stage,
+            model=self.model,
+            provider="openai-compatible",
+            base_url=self.base_url,
+            input_value=log_input,
+            input_summary={
+                "task": log_input.get("task"),
+                "available_tools": len(log_input.get("available_tools") or []),
+                "step_tool": (log_input.get("step_result") or {}).get("tool") if isinstance(log_input.get("step_result"), dict) else "",
+            },
+            output_value=output,
+            latency_ms=latency_ms,
+            status=status,
+            http_status=http_status,
+            error=error,
+            fallback=fallback,
+        )
+
     async def _request_json(self, system_prompt: str, user_payload: dict) -> dict | None:
+        stage = "decide" if user_payload.get("task") == "decide_next_step" else "plan"
         if not self.enabled:
+            self._log_call(
+                stage=stage, request_payload=user_payload, latency_ms=0, status="degraded",
+                error=f"LLM 状态：{self.state}；缺少：{', '.join(self.missing) or '无'}", fallback=True,
+                input_payload=user_payload,
+            )
             return None
-        request = {
+        now = time.monotonic()
+        if self._run_started_at is None:
+            self._run_started_at = now
+        if now - self._run_started_at >= self.budget_seconds:
+            self._log_call(
+                stage=stage, request_payload=user_payload, latency_ms=0, status="budget_exhausted",
+                error=f"LLM 总预算 {self.budget_seconds:.0f}s 已耗尽", fallback=True,
+                input_payload=user_payload,
+            )
+            return None
+
+        base_request = {
             "model": self.model,
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"},
+            "temperature": LLM_TEMPERATURE,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        try:
-            async with httpx.AsyncClient(timeout=25) as client:
-                response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=request)
+        include_json_mode = LLM_JSON_MODE
+        for attempt in range(2):
+            request = dict(base_request)
+            if include_json_mode:
+                request["response_format"] = {"type": "json_object"}
+            started = time.perf_counter()
+            response = None
+            try:
+                async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+                    response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=request)
+                http_status = response.status_code
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
-                return parsed if isinstance(parsed, dict) else None
-        except Exception:
-            logger.warning("LLM planner request failed; deterministic fallback will be used", exc_info=True)
-            return None
+                if not isinstance(parsed, dict):
+                    raise ValueError("LLM JSON 输出不是对象")
+                self._log_call(
+                    stage=stage, request_payload=request, output=parsed,
+                    latency_ms=(time.perf_counter() - started) * 1000, status="success",
+                    http_status=http_status, fallback=False, input_payload=user_payload,
+                )
+                return parsed
+            except Exception as exc:
+                latency_ms = (time.perf_counter() - started) * 1000
+                http_status = getattr(response, "status_code", 0) or 0
+                is_timeout = isinstance(exc, httpx.TimeoutException)
+                is_invalid_json = isinstance(exc, (json.JSONDecodeError, KeyError, ValueError)) and not isinstance(exc, httpx.HTTPError)
+                body = ""
+                if response is not None:
+                    try:
+                        body = response.text[:1000]
+                    except Exception:
+                        body = ""
+                unsupported_format = http_status == 400 and include_json_mode and ("response_format" in body.lower() or "unsupported" in body.lower())
+                status = "timeout" if is_timeout else ("invalid_json" if is_invalid_json else "http_error")
+                error_type = type(exc).__name__
+                retry = attempt == 0 and (unsupported_format or is_invalid_json)
+                self._log_call(
+                    stage=stage, request_payload=request, output=None, latency_ms=latency_ms,
+                    status=status, http_status=http_status, error=f"{error_type}: {str(exc)[:240]}",
+                    fallback=not retry, input_payload=user_payload,
+                )
+                if not retry:
+                    logger.warning("LLM planner request failed; deterministic fallback will be used", exc_info=True)
+                    return None
+                include_json_mode = False
+        return None
 
     @staticmethod
     def _normalize_step(raw: dict, index: int, allowed_tools: set[str]) -> dict | None:

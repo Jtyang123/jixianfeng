@@ -368,7 +368,7 @@ def apply_agent_load(schedule: dict, metrics: dict[str, dict], agents: list[dict
         copy["rate_limited"] = bool(copy["current_load"] >= 0.9 or int(load.get("pending_calls", 0)) >= 3)
         if profile:
             copy["allocation_mode"] = "capability-load-match"
-            copy["effective_priority"] = 1 if copy["rate_limited"] else max(1, round(profile["match_score"] * 100))
+            copy["effective_priority"] = 1 if copy["rate_limited"] else max(1, round(profile["match_score"] * 70 + copy["base_priority"] * 0.3))
         else:
             copy["allocation_mode"] = "priority-fallback"
             copy["effective_priority"] = max(1, copy["base_priority"] - penalty + history_bonus)
