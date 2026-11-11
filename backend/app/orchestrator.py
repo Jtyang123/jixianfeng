@@ -71,6 +71,22 @@ def complete_stage_metrics(metrics: list[dict]) -> list[dict]:
     return metrics
 
 
+def allocate_stage_overhead(metrics: list[dict], elapsed_ms: float) -> None:
+    accounted = sum(float(item.get("duration_ms") or 0) for item in metrics)
+    overhead = max(0.0, float(elapsed_ms) - accounted)
+    if overhead <= 0:
+        return
+    delivery = next((item for item in reversed(metrics) if item.get("stage") == "delivery"), None)
+    if delivery is None:
+        now = datetime.now().astimezone().isoformat(timespec="milliseconds")
+        delivery = {
+            "stage": "delivery", "started_at": now, "ended_at": now,
+            "duration_ms": 0.0, "agent_id": "orchestrator", "attempt": 0,
+        }
+        metrics.append(delivery)
+    delivery["duration_ms"] = round(float(delivery.get("duration_ms") or 0) + overhead, 2)
+
+
 def classify_failure_root_causes(codes: list[str]) -> list[str]:
     roots = set()
     for code in codes:
@@ -524,7 +540,9 @@ async def run_planner_orchestration(
     a2a_bus: A2ABus | None = None,
     post_verification_runner=None,
     stage_metrics: list[dict] | None = None,
+    execution_started: float | None = None,
 ) -> dict:
+    planner_started = time.perf_counter()
     stage_metrics = stage_metrics if stage_metrics is not None else []
     tool_agent_map = {
         "demand_plan": "demand_agent",
@@ -896,6 +914,7 @@ async def run_planner_orchestration(
         experience_repo, rework_directives, rounds, str(scenario.get("id") or "generic"),
         final_verification.get("verdict") == "pass", run_id,
     )
+    allocate_stage_overhead(stage_metrics, (time.perf_counter() - (execution_started or planner_started)) * 1000)
     complete_stage_metrics(stage_metrics)
     failure_root_causes = classify_failure_root_causes(final_verification.get("blocker_summary", []))
     emit(db, run_id, "run.stage_metrics", "orchestrator", "阶段耗时统计完成", f"共 {len(stage_metrics)} 条阶段记录。", {
@@ -1277,6 +1296,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         }
 
     try:
+        execution_started = time.perf_counter()
         db.set_run_status(run_id, "running")
         emit(db, run_id, "run.started", "orchestrator", "推演任务启动", "已加载事件、需求与最新资源快照。", {
             "runtime": AGENT_RUNTIME,
@@ -1355,7 +1375,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 planner_result = await run_planner_orchestration(
                     db, run_id, request, scenario, materials, destinations, warehouses,
                     routes, vehicles, inventory, evidence, schedule, planner, llm_service, a2a_bus,
-                    run_post_verification_extensions, stage_metrics,
+                    run_post_verification_extensions, stage_metrics, execution_started,
                 )
                 planner_result["memory_context"] = memory_context
                 planner_result["memory_writes"] = planner_result.get("repair_experience_writes", [])
@@ -1897,6 +1917,7 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
             "keys": [{"agent_id": item["agent_id"], "memory_key": item["memory_key"]} for item in memory_writes],
         })
 
+        allocate_stage_overhead(stage_metrics, (time.perf_counter() - execution_started) * 1000)
         complete_stage_metrics(stage_metrics)
         failure_root_causes = classify_failure_root_causes(final_verification.get("blocker_summary", []))
         emit(db, run_id, "run.stage_metrics", "orchestrator", "阶段耗时统计完成", f"共 {len(stage_metrics)} 条阶段记录。", {
