@@ -246,22 +246,31 @@ class AgentArtsBridge:
         http_status = 0
         error_type = ""
         error = ""
+        invocation_probe = target.rstrip("/").endswith(AGENTARTS_INVOKE_PATH)
         try:
-            response = await client.get(target, headers=self._headers("agentarts-health-check", agent_id))
+            if invocation_probe:
+                # Published AgentArts applications expose POST /invocations; GET may
+                # never answer even when the runtime is healthy.
+                response = await client.post(
+                    target,
+                    json={"query": "health check", "agent_id": agent_id},
+                    headers=self._headers("agentarts-health-check", agent_id),
+                    timeout=max(5.0, min(30.0, AGENTARTS_TIMEOUT)),
+                )
+            else:
+                response = await client.get(
+                    target,
+                    headers=self._headers("agentarts-health-check", agent_id),
+                )
             http_status = response.status_code
-            if response.status_code not in {404, 405, 501}:
-                ok = response.status_code < 400
-                if not ok:
-                    error_type = "auth" if response.status_code in {401, 403} else ("http_5xx" if response.status_code >= 500 else "unknown")
-                    error = f"HTTP {response.status_code}"
-                return self._check_item(agent_id, target, ok, started, http_status, error_type, error)
-            response = await client.post(
-                target,
-                json={"query": "health check", "agent_id": agent_id},
-                headers=self._headers("agentarts-health-check", agent_id),
-                timeout=min(5.0, AGENTARTS_TIMEOUT),
-            )
-            http_status = response.status_code
+            if not invocation_probe and response.status_code in {404, 405, 501}:
+                response = await client.post(
+                    target,
+                    json={"query": "health check", "agent_id": agent_id},
+                    headers=self._headers("agentarts-health-check", agent_id),
+                    timeout=min(5.0, AGENTARTS_TIMEOUT),
+                )
+                http_status = response.status_code
             ok = response.status_code < 400
             if not ok:
                 error_type = "auth" if response.status_code in {401, 403} else ("http_5xx" if response.status_code >= 500 else "unknown")

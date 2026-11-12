@@ -68,6 +68,7 @@ def test_agentarts_reuses_injected_http_client():
     bridge.enabled = True
     bridge.endpoints = {"demand_agent": "https://example.com/invocations"}
     bridge.api_key = "test-key"
+    bridge.agent_keys = {}
     client = _FakeClient()
 
     result = asyncio.run(bridge.invoke(
@@ -104,6 +105,42 @@ class _PingClient:
     async def post(self, url, json=None, headers=None, timeout=None):
         self.post_calls += 1
         return httpx.Response(405, request=httpx.Request("POST", url))
+
+
+class _InvocationProbeClient:
+    def __init__(self):
+        self.get_calls = 0
+        self.post_calls = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, headers=None):
+        self.get_calls += 1
+        raise AssertionError("GET /invocations must not be used as a health check")
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        self.post_calls += 1
+        return httpx.Response(200, request=httpx.Request("POST", url))
+
+
+def test_agentarts_invocation_probe_uses_post(monkeypatch):
+    client = _InvocationProbeClient()
+    monkeypatch.setattr(agentarts_module.httpx, "AsyncClient", lambda **kwargs: client)
+    bridge = AgentArtsBridge()
+    bridge.enabled = True
+    bridge.api_key = "test-key"
+    bridge.endpoints = {"demand_agent": "https://example.com/invocations"}
+
+    result = asyncio.run(bridge.ping())
+
+    assert result["online_rate"] == 1.0
+    assert result["checks"][0]["http_status"] == 200
+    assert client.get_calls == 0
+    assert client.post_calls == 1
 
 
 def _probe_bridge() -> AgentArtsBridge:
