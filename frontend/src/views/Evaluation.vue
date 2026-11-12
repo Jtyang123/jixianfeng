@@ -97,7 +97,7 @@ onMounted(load)
       </section>
 
       <section class="content-card performance-benchmark-card">
-        <div class="workflow-head"><div><div class="eyebrow">END-TO-END CONCURRENCY</div><h2>1 / 5 / 10 / 20 并发基准</h2><p>每个档位使用同一组固定样本，预热一轮后计时；安全结果率、P95、吞吐与一致性均来自最近一次真实运行。</p></div><Gauge :size="20" /></div>
+        <div class="workflow-head"><div><div class="eyebrow">END-TO-END CONCURRENCY</div><h2>1 / 5 / 10 / 20 并发基准</h2><p>{{ performanceReport?.runtime_note || '本基准衡量确定性内核的函数级并发表现；LLM 在线延迟与调用次数见 demo_preflight 与 /api/llm/calls' }}</p></div><Gauge :size="20" /></div>
         <div v-if="performanceError" class="inline-error">{{ performanceError }}</div>
         <div v-else-if="performanceReport?.status !== 'ready'" class="benchmark-note">
           <Activity :size="16" /><span>暂无性能基准报告。运行 <code>cd backend &amp;&amp; ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark</code> 后刷新。</span>

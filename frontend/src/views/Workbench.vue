@@ -128,6 +128,13 @@ function stageLabel(stage) {
 function rootCauseLabel(root) {
   return { inventory_shortage: '库存缺口', road_closed: '道路封闭', fleet_insufficient: '运力不足', coverage_gap: '覆盖缺口', rule_blocked: '规则阻断', llm_failure: 'LLM 失败', endpoint_failure: '端点失败', timeout: '调用超时' }[root] || root
 }
+function agentartsModeLabel(trace) {
+  const mode = trace?.mode || ''
+  if (mode === 'agentarts') return '云端执行'
+  if (mode === 'local-configured') return '本地执行（未配置端点）'
+  if (mode === 'local-fallback-after-agentarts-error' || mode === 'local-fallback') return '云端失败回退'
+  return '本地确定性执行'
+}
 function historySuccessLabel(item) {
   return Number(item.historical_samples || 0) > 0 ? `${(Number(item.historical_success_rate || 0) * 100).toFixed(0)}%（${item.historical_samples}）` : '—（无历史）'
 }
@@ -910,6 +917,10 @@ onBeforeUnmount(() => {
                 <div><strong>{{ review.agent_name }}</strong><span>{{ review.agent_id }} · {{ review.mode === 'agentarts' ? 'AgentArts' : '本地回退' }}</span></div>
                 <p>{{ review.parsed?.summary || review.parsed?.rationale || review.text || '扩展审查已完成' }}</p>
               </div>
+            </div>
+            <div v-if="runResult.agentarts_trace && Object.keys(runResult.agentarts_trace).length" class="delivery-block" style="margin-bottom: 14px;">
+              <h4>AgentArts 执行方式</h4>
+              <ul><li v-for="(trace, agentId) in runResult.agentarts_trace" :key="agentId">{{ agentId }}：{{ agentartsModeLabel(trace) }}</li></ul>
             </div>
             <div class="delivery-grid" style="margin-bottom: 14px;">
               <div class="delivery-block">

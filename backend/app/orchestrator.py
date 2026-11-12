@@ -831,14 +831,12 @@ async def run_planner_orchestration(
             if delivery is not None or tool in {"escalate_human", "delivery_package"}:
                 break
             if verification and verification.get("verdict") == "pass" and delivery is None:
-                last_decision = {"decision": "continue", "reason": "方案已通过核验，仍需生成交付包。", "next_tool": "delivery_package"}
-                current_plan = await timed_planner_call(
-                    "create_plan", planner.create_plan,
-                    {**planner_request, "feedback": {"verification": "pass", "required_action": "delivery_package"}},
-                    available_tools,
+                delivery = build_delivery_package(
+                    verification, scenario, db.latest_snapshot(), request.get("weights", {}),
+                    agent_decision={"applied": True, "recommended_plan_id": None, "source": "llm-planner", "rationale": "LLM Planner 已完成核验，系统自动生成交付包。"},
                 )
-                step_index = 0
-                continue
+                last_decision = {"decision": "stop", "reason": "方案已通过核验，交付包已生成。", "next_tool": None}
+                break
             break
         if decision.get("decision") == "replan":
             current_plan = await timed_planner_call(
@@ -1008,6 +1006,23 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
     async def call_agentarts(agent_id: str, payload: dict, trace_id: str | None = None) -> dict:
         if not agentarts.enabled:
             return {"mode": "local-fallback", "reason": "AgentArts 未配置"}
+        endpoint_map = getattr(agentarts, "endpoints", None)
+        shared_base_url = getattr(agentarts, "base_url", "")
+        if endpoint_map is not None and agent_id not in endpoint_map and not shared_base_url:
+            local = {
+                "mode": "local-configured",
+                "runtime": "huaweicloud-agentarts",
+                "agent_id": agent_id,
+                "reason": "未配置端点，使用本地确定性执行",
+            }
+            agentarts_trace[trace_id or agent_id] = local
+            emit(
+                db, run_id, "agent.local_fallback", agent_id,
+                "本地执行（未配置端点）",
+                "该 Agent 未配置独立云端端点，已直接使用本地确定性执行。",
+                local,
+            )
+            return local
         safe_payload = sanitize_agent_payload(payload)
         started_at = time.perf_counter()
         endpoint = ""

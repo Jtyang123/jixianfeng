@@ -549,8 +549,8 @@ def system_status() -> dict:
 
 
 @router.get("/agentarts/check")
-async def agentarts_check() -> dict:
-    return await AgentArtsBridge(db).ping()
+async def agentarts_check(force: bool = False) -> dict:
+    return await AgentArtsBridge(db).ping(force=force)
 
 
 @router.get("/platform/manifest")

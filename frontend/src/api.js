@@ -181,7 +181,7 @@ export const api = {
   invokeAgent: (id, payload) => request(`/api/agents/${encodeURIComponent(id)}/invoke`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   dashboard: () => request('/api/dashboard'),
   systemStatus: () => request('/api/system/status'),
-  checkAgentArts: () => request('/api/agentarts/check'),
+  checkAgentArts: (force = false) => request('/api/agentarts/check' + (force ? '?force=true' : '')),
   manifest: () => request('/api/platform/manifest'),
   benchmark: () => request('/api/evaluation/benchmark'),
   benchmarkReport: () => request('/api/benchmark/report'),

@@ -73,6 +73,7 @@ class LLMPlanner:
         self.configured = enabled if enabled is not None else LLM_ENABLED
         self.budget_seconds = max(1.0, float(budget_seconds))
         self._run_started_at: float | None = None
+        self._fallback_locked = False
         state = llm_configuration_state(self.configured, self.base_url, self.api_key, self.model)
         self.state = state["state"]
         self.missing = state["missing"]
@@ -127,6 +128,8 @@ class LLMPlanner:
 
     async def _request_json(self, system_prompt: str, user_payload: dict) -> dict | None:
         stage = "decide" if user_payload.get("task") == "decide_next_step" else "plan"
+        if self._fallback_locked:
+            return None
         if not self.enabled:
             self._log_call(
                 stage=stage, request_payload=user_payload, latency_ms=0, status="degraded",
@@ -138,6 +141,7 @@ class LLMPlanner:
         if self._run_started_at is None:
             self._run_started_at = now
         if now - self._run_started_at >= self.budget_seconds:
+            self._fallback_locked = True
             self._log_call(
                 stage=stage, request_payload=user_payload, latency_ms=0, status="budget_exhausted",
                 error=f"LLM 总预算 {self.budget_seconds:.0f}s 已耗尽", fallback=True,
@@ -197,9 +201,11 @@ class LLMPlanner:
                     fallback=not retry, input_payload=user_payload,
                 )
                 if not retry:
+                    self._fallback_locked = True
                     logger.warning("LLM planner request failed; deterministic fallback will be used", exc_info=True)
                     return None
                 include_json_mode = False
+        self._fallback_locked = True
         return None
 
     @staticmethod

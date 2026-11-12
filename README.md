@@ -87,6 +87,18 @@ docker compose up --build -d
 
 编辑 `.env` 可启用 AgentArts、高德地址解析、PostgreSQL 和自建 OSRM。任何 `.env` 和 API Key 都不得提交到 Git。
 
+## 三种演示形态
+
+以下时长指 `LLM_ENABLED=false` 时展示四角色 AgentArts 编排链路；若启用 LLM Planner，主链路由 DeepSeek 规划工具调用，AgentArts 只参与扩展审查。演示前运行 `demo_preflight` 判定实时环境。
+
+| 形态 | 配置方式 | 单轮约耗时 | 界面现象 |
+| --- | --- | ---: | --- |
+| 全云 | `AGENTARTS_AGENT_ENDPOINTS_JSON` 保留四个端点 | 40-60s | 四个 Agent 均可显示云端调用、等待和返回事件 |
+| 混合 | 从端点 JSON 删除 `matching_agent`、`delivery_agent` | 约 30s | A02/A04 显示“本地执行（未配置端点）”，不显示调用失败或云端回退 |
+| 本地 | `AGENTARTS_ENABLED=false` | 3-5s | 全链路本地确定性执行，最适合稳定演示 |
+
+核验主体仍建议本地执行：核验是安全门控，本地确定性规则延迟低、可复现且不受公网抖动影响；云端核验适合作为并行解释或扩展审查，不应替代硬规则。
+
 ## 推荐演示流程
 
 1. 进入“调度工作台”，加载“武汉暴雨洪涝应急演练”。
@@ -154,9 +166,9 @@ python tools\build_submission.py
 - 记忆管理：`POST /api/memory/cleanup` 执行低置信度/被替代经验的带审计清理；`GET /api/memory/cleanup-audit` 查看清理记录。阈值由 `MEMORY_RETENTION_DAYS`、`MEMORY_MIN_CONFIDENCE`、`MEMORY_CONTEXT_BUDGET_ITEMS`、`MEMORY_CONTEXT_BUDGET_CHARS` 配置。
 - LLM 调用审计：`GET /api/llm/calls?run_id=<运行ID>&limit=50` 返回 stage、model、latency_ms、status、fallback 等字段；不记录 API Key、Authorization 或完整 Prompt。支持 `LLM_TIMEOUT`、`LLM_TEMPERATURE`、`LLM_JSON_MODE`，Planner 单次运行预算为 30 秒。
 - 阶段与根因：`GET /api/runs/{run_id}/stages` 返回 demand/retrieval/matching/verification/a2a/delivery 六阶段耗时与占比；`GET /api/runs/root-causes?days=7` 聚合 inventory_shortage、road_closed、fleet_insufficient 等固定枚举。
-- AgentArts 探活：`GET /api/agentarts/check` 使用并发 GET/HEAD，探测端点不支持时才对单端点做最长 5 秒 POST；返回 online_rate、latency_ms、error_type、http_status 和 last_success_at。
+- AgentArts 探活：`GET /api/agentarts/check` 按端点指纹缓存 10 分钟，返回 `cached` 与 `cache_age_seconds`；`?force=true` 强制重新探测。发布版 `/invocations` 使用 POST 并发探测，结果包含 online_rate、latency_ms、http_status 和 error_type。
 - 知识库 embedding 状态：`GET /api/platform/manifest` 的 `knowledge.embedding` 返回 local/remote/hash-fallback、模型、维度、total_chunks 与 stale_chunks。`hash-fallback` 表示当前不具备真实语义检索能力。
-- 并发基准报告包含 `runtime_mode=online|deterministic-degraded`、LLM 调用数、平均/P95 LLM 延迟和每运行调用数；没有可用 LLM 时明确标记确定性基线，不伪造在线数据。
+- 并发基准报告标记 `scope=deterministic-core in-process; excludes LLM planner, HTTP, queue and DB IO`，明确该基准只衡量确定性内核的函数级并发表现；LLM 在线延迟与调用次数使用 `demo_preflight` 和 `/api/llm/calls` 查看。
 - `GET /api/benchmark/report`：返回最近一次端到端并发基准 JSON；无报告时返回 `status=empty` 和运行命令提示。
 - 独立运行基准：`cd backend && ../.venv/Scripts/python.exe -m benchmark.run_perf_benchmark`。默认输出到 `data/benchmark_latest.json`，可用 `PERF_BENCHMARK_REPORT` 覆盖路径。
 
@@ -287,7 +299,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 129 项测试；本机无 PostgreSQL 环境时结果为 `126 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 137 项测试；本机无 PostgreSQL 环境时结果为 `134 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

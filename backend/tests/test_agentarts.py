@@ -2,9 +2,17 @@ import asyncio
 import time
 
 import httpx
+import pytest
 
 import app.agentarts as agentarts_module
 from app.agentarts import AgentArtsBridge
+
+
+@pytest.fixture(autouse=True)
+def _clear_ping_cache():
+    agentarts_module._PING_CACHE.clear()
+    yield
+    agentarts_module._PING_CACHE.clear()
 
 
 def test_agentarts_sse_parser():
@@ -141,6 +149,47 @@ def test_agentarts_invocation_probe_uses_post(monkeypatch):
     assert result["checks"][0]["http_status"] == 200
     assert client.get_calls == 0
     assert client.post_calls == 1
+
+
+class _CountingPingClientFactory:
+    def __init__(self):
+        self.clients = []
+
+    def __call__(self, **kwargs):
+        client = _PingClient("ok")
+        self.clients.append(client)
+        return client
+
+
+def test_agentarts_ping_cache_and_force_refresh(monkeypatch):
+    factory = _CountingPingClientFactory()
+    monkeypatch.setattr(agentarts_module.httpx, "AsyncClient", factory)
+    bridge = _probe_bridge()
+
+    first = asyncio.run(bridge.ping())
+    second = asyncio.run(bridge.ping())
+    forced = asyncio.run(bridge.ping(force=True))
+
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert second["cache_age_seconds"] >= 0
+    assert sum(client.get_calls for client in factory.clients[:1]) == 4
+    assert sum(client.get_calls for client in factory.clients) == 8
+    assert forced["cached"] is False
+
+
+def test_agentarts_missing_endpoint_returns_local_configured_without_network():
+    bridge = AgentArtsBridge()
+    bridge.enabled = True
+    bridge.base_url = ""
+    bridge.endpoints = {"demand_agent": "https://example.com/invocations"}
+    bridge.agent_keys = {}
+
+    result = asyncio.run(bridge.invoke("matching_agent", {"query": "test"}))
+
+    assert result["mode"] == "local-configured"
+    assert result["agent_id"] == "matching_agent"
+    assert "endpoint" not in result
 
 
 def _probe_bridge() -> AgentArtsBridge:

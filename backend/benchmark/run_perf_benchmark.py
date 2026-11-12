@@ -257,17 +257,15 @@ def run_perf_benchmark(
     ]
     llm_calls_total = sum(item["llm_calls"] for item in results)
     llm_status = LLMService().status
-    runtime_mode = "online" if llm_status.get("state") == "ready" and llm_calls_total > 0 else "deterministic-degraded"
+    runtime_mode = "deterministic-core"
     report = {
         "status": "ready",
         "report_version": "perf-benchmark-v3",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "scope": "deterministic-core in-process; excludes LLM planner, HTTP, queue and DB IO",
         "runtime_mode": runtime_mode,
         "llm_status": llm_status,
-        "runtime_note": (
-            "未配置可用 LLM，本次为确定性基线。" if runtime_mode == "deterministic-degraded"
-            else "本次基准包含真实在线 LLM 调用。"
-        ),
+        "runtime_note": "本基准衡量确定性内核的函数级并发表现；LLM 在线延迟与调用次数见 demo_preflight 与 /api/llm/calls",
         "database_engine": db.engine,
         "levels": list(levels),
         "repeat_count": repeat_count,

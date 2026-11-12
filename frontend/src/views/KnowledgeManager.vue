@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { onMounted, ref } from 'vue'
 import { BookOpen, CheckCircle2, RefreshCw, Search, Trash2, Upload } from '@lucide/vue'
 import { api, formatTime } from '../api'
@@ -64,6 +64,10 @@ async function removeDocument(document) {
   } catch (exc) { error.value = exc.message }
 }
 
+function embeddingModeLabel(mode) {
+  return { local: 'LOCAL', remote: 'REMOTE', 'hash-fallback': 'HASH FALLBACK' }[mode] || mode
+}
+
 onMounted(load)
 </script>
 
@@ -77,11 +81,13 @@ onMounted(load)
       </div>
     </section>
     <div v-if="error" class="inline-error">{{ error }}</div>
-    <div v-if="embeddingStatus" class="embedding-status-note" :class="{ 'embedding-status-note--warn': embeddingStatus.mode === 'hash-fallback' }">
+    <div v-if="embeddingStatus" class="embedding-status-note">
       <BookOpen :size="15" />
-      <strong>当前模式：{{ embeddingStatus.mode }}</strong>
-      <span>模型 {{ embeddingStatus.model }} · 维度 {{ embeddingStatus.dimensions }} · stale chunks {{ embeddingStatus.stale_chunks }}/{{ embeddingStatus.total_chunks }}</span>
-      <em v-if="embeddingStatus.mode === 'hash-fallback'">当前为离线哈希回退，语义检索能力受限</em>
+      <span class="embedding-mode-badge" :class="`embedding-mode-badge--${embeddingStatus.mode}`">{{ embeddingModeLabel(embeddingStatus.mode) }}</span>
+      <strong>{{ embeddingStatus.model }} · {{ embeddingStatus.dimensions }} 维</strong>
+      <span>stale {{ embeddingStatus.stale_chunks }}/{{ embeddingStatus.total_chunks }}</span>
+      <em v-if="embeddingStatus.mode === 'hash-fallback'">hash-fallback = 领域同义词 + BM25 + 哈希词袋向量，非语义模型；配置 EMBEDDING_PROVIDER=remote 后自动启用语义检索</em>
+      <em v-else>当前检索后端已启用{{ embeddingStatus.mode === 'remote' ? '远程语义 embedding' : '本地语义 embedding' }}</em>
     </div>
     <div v-if="message" class="import-result"><CheckCircle2 :size="16" />{{ message }}</div>
     <div class="knowledge-manager-grid">

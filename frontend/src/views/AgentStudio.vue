@@ -78,9 +78,14 @@ async function removeMemory(row) {
     memories.value = memories.value.filter((item) => !(item.agent_id === row.agent_id && item.memory_key === row.memory_key))
   } catch (exc) { error.value = exc.message }
 }
-async function checkConnection() {
+function cacheAgeLabel() {
+  const seconds = Math.max(0, Number(checkResult.value?.cache_age_seconds || 0))
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  return `${Math.floor(seconds / 60)} 分钟`
+}
+async function checkConnection(force = false) {
   checking.value = true
-  try { checkResult.value = await api.checkAgentArts() } catch (exc) { checkResult.value = { status: 'error', error: exc.message } } finally { checking.value = false }
+  try { checkResult.value = await api.checkAgentArts(force) } catch (exc) { checkResult.value = { status: 'error', error: exc.message } } finally { checking.value = false }
 }
 async function registerTool() {
   if (!isAdmin.value) return
@@ -157,12 +162,12 @@ onMounted(load)
       <section class="content-card workflow-card">
         <div class="workflow-head">
           <div><div class="eyebrow">VISUAL WORKFLOW DESIGNER</div><h2>工作流可视化编排</h2><p>支持模板实例化、节点新增、拖拽定位、依赖连线、条件节点、循环节点、子工作流嵌套、版本发布和试运行。</p></div>
-          <div class="workflow-actions"><span class="workflow-chip"><GitBranch :size="14" />EDITABLE DAG</span><button class="secondary-action" :disabled="checking" @click="checkConnection"><RefreshCw :size="14" :class="{ spin: checking }" />检测 AgentArts</button></div>
+          <div class="workflow-actions"><span class="workflow-chip"><GitBranch :size="14" />EDITABLE DAG</span><button class="secondary-action" :disabled="checking" @click="checkConnection(Boolean(checkResult))"><RefreshCw :size="14" :class="{ spin: checking }" />{{ checking ? '检测中…' : (checkResult ? '重新检测' : '检测 AgentArts') }}</button></div>
         </div>
       </section>
       <WorkflowDesigner :user="user" />      <div v-if="checkResult" class="agentarts-check" :class="{ 'agentarts-check--warn': checkResult.status !== 'ok' }">
         <strong>AgentArts 连接检测：{{ checkResult.status }} · 在线率 {{ ((checkResult.online_rate || 0) * 100).toFixed(1) }}%</strong>
-        <span>{{ checkResult.enabled ? `端点已配置，检测时间 ${checkResult.checked_at || '—'}` : '尚未配置 AGENTARTS_BASE_URL / API_KEY，当前使用本地确定性回退' }}</span>
+        <span v-if="checking">正在并行探测四个 AgentArts 端点，页面仍可继续操作…</span><span v-else-if="checkResult.cached">上次检测 {{ cacheAgeLabel() }}前（缓存） · {{ checkResult.checked_at || '—' }}</span><span v-else>{{ checkResult.enabled ? `端点已配置，检测时间 ${checkResult.checked_at || '—'}` : '尚未配置 AGENTARTS_BASE_URL / API_KEY，当前使用本地确定性回退' }}</span>
       </div>
 
       <section class="content-card agentarts-coverage-card">

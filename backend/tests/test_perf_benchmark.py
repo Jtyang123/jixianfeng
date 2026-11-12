@@ -18,7 +18,9 @@ def test_benchmark_report_structure_and_default_levels(tmp_path: Path):
     output = tmp_path / "benchmark_latest.json"
     report = run_perf_benchmark(db, levels=(1, 5), repeat_count=2, output_path=output)
     assert report["status"] == "ready"
-    assert report["runtime_mode"] == "deterministic-degraded"
+    assert report["runtime_mode"] == "deterministic-core"
+    assert report["scope"] == "deterministic-core in-process; excludes LLM planner, HTTP, queue and DB IO"
+    assert "demo_preflight" in report["runtime_note"]
     assert report["levels"] == [1, 5]
     assert report["repeat_count"] == 2
     assert report["scenario_count"] >= 1

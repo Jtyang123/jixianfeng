@@ -27,6 +27,10 @@ class AgentArtsError(RuntimeError):
     pass
 
 
+_PING_CACHE_TTL_SECONDS = 600.0
+_PING_CACHE: dict[tuple, dict] = {}
+
+
 class AgentArtsBridge:
     """Huawei Cloud AgentArts runtime adapter.
 
@@ -200,6 +204,13 @@ class AgentArtsBridge:
                 "agent_id": agent_id,
                 "reason": "AgentArts 环境变量未完整配置",
             }
+        if agent_id not in self.endpoints and not self.base_url:
+            return {
+                "mode": "local-configured",
+                "runtime": "huaweicloud-agentarts",
+                "agent_id": agent_id,
+                "reason": "未配置端点，使用本地确定性执行",
+            }
         url = self.endpoint_for(agent_id)
         message = {
             "agent_id": agent_id,
@@ -301,9 +312,30 @@ class AgentArtsBridge:
             "last_success_at": last_success_at,
         }
 
-    async def ping(self) -> dict:
+    def _ping_cache_key(self) -> tuple:
+        endpoints = tuple(sorted((str(key), str(value)) for key, value in self.endpoints.items()))
+        return endpoints or (("base_url", self.base_url),)
+
+    async def ping(self, force: bool = False) -> dict:
         if not self.enabled:
-            return {"status": "not_configured", "online_rate": 0.0, "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "checks": [], **self.status}
+            return {
+                "status": "not_configured",
+                "online_rate": 0.0,
+                "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "checks": [],
+                "cached": False,
+                "cache_age_seconds": 0.0,
+                **self.status,
+            }
+        cache_key = self._ping_cache_key()
+        now = time.monotonic()
+        cached = _PING_CACHE.get(cache_key)
+        if not force and cached and now - cached["stored_at"] < _PING_CACHE_TTL_SECONDS:
+            payload = dict(cached["payload"])
+            payload["checks"] = [dict(item) for item in cached["payload"].get("checks", [])]
+            payload["cached"] = True
+            payload["cache_age_seconds"] = round(now - cached["stored_at"], 2)
+            return payload
         targets = [(agent_id, endpoint) for agent_id, endpoint in self.endpoints.items()]
         if not targets:
             targets = [("shared", self.endpoint_for("demand_agent"))]
@@ -311,10 +343,17 @@ class AgentArtsBridge:
         async with httpx.AsyncClient(timeout=timeout) as client:
             checks = await asyncio.gather(*(self._probe_endpoint(client, agent_id, target) for agent_id, target in targets))
         online = sum(1 for item in checks if item.get("ok"))
-        return {
+        result = {
             "status": "ok" if checks and online == len(checks) else "degraded",
             "online_rate": round(online / max(len(checks), 1), 4),
             "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "checks": list(checks),
+            "cached": False,
+            "cache_age_seconds": 0.0,
             **self.status,
         }
+        _PING_CACHE[cache_key] = {
+            "stored_at": time.monotonic(),
+            "payload": {**result, "checks": [dict(item) for item in checks]},
+        }
+        return result
