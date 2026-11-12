@@ -143,19 +143,17 @@ pip install -r tools\requirements.txt
 python tools\build_submission.py
 ```
 
-## 两种运行模式
+## LLM 与 AgentArts：三档互斥运行时
 
-### 默认模式（未配置 LLM）
+运行模式由 `LLM_ENABLED` 与 `AGENTARTS_ENABLED` 决定，同一次运行只使用一条主推理链：
 
-默认运行时使用确定性主干工作流：工作流引擎负责顺序、并行、条件、循环和子工作流；工具注册表提供库存、路网、车辆和知识检索；扩展 Agent 与跨运行记忆参与上下文和风险补充；AgentArts 在配置后负责云端复核和方案推荐。该模式不依赖外网，适合离线演示和复现实验。
+| 配置 | `runtime` | 核心四角色执行位置 | LLM Planner 轨迹 | AgentArts 去向 |
+| --- | --- | --- | --- | --- |
+| `LLM_ENABLED=true` | `llm-planner` | 本地确定性工具 | 有 | 仅在配置扩展 Agent 时参与 `post_verification` 审查；核心 A01-A04 不调用 `/invocations` |
+| `LLM_ENABLED=false`、`AGENTARTS_ENABLED=true` | `agentarts` | 云端 `/invocations` | 无 | 四个核心角色按端点配置调用；缺失端点显示 `local-configured` |
+| `LLM_ENABLED=false`、`AGENTARTS_ENABLED=false` | `local` | 全本地 | 无 | 不调用云端 Agent |
 
-### LLM ReAct 模式（配置真实 LLM 后）
-
-配置 `LLM_ENABLED=true`、真实 `LLM_API_KEY` 和模型地址后，Planner 负责决定“调用哪些工具、按什么顺序调用、结果是否符合预期、是否重新规划”；库存、方案、成本、ETA、核验和交付数字仍由确定性工具计算。该模式下 AgentArts 不参与本次运行，避免两条推理链重复决策。
-
-> 基准测试与压测数据均在默认模式下产生；LLM ReAct 模式的延迟、成功率和调用次数需要单独统计，不能与默认模式数据混合引用。
-
-四角色固定主干只是默认模式中的安全执行链，不代表平台只有这一种运行时。
+因此 Planner 运行出现空 `agentarts_trace` 是预期行为，不是降级；只有 `agentarts` 模式出现 `agentarts.fallback` 才表示云端失败回退。基准测试与压测数据均在确定性内核模式产生，不与 Planner 在线延迟混合引用。
 
 ### A2A、调度与经验库接口
 
@@ -164,7 +162,7 @@ python tools\build_submission.py
 - 能力调度配置：`AGENT_TASK_CAPABILITY_MAP_JSON` 可覆盖任务类型到能力标签的映射；系统按“能力匹配度 × 0.4 + 历史成功率 × 0.3 + (1 - 当前负载) × 0.3”排序，无历史数据时回退现有优先级。
 - 修复经验库复用 `agent_memory`，键为 `repair_experience:<场景>:<问题代码>:<策略>`；仅向 Prompt 注入成功率不低于 0.6 的参考片段，库存、路线、运力、时效与核验结论不变。
 - 记忆管理：`POST /api/memory/cleanup` 执行低置信度/被替代经验的带审计清理；`GET /api/memory/cleanup-audit` 查看清理记录。阈值由 `MEMORY_RETENTION_DAYS`、`MEMORY_MIN_CONFIDENCE`、`MEMORY_CONTEXT_BUDGET_ITEMS`、`MEMORY_CONTEXT_BUDGET_CHARS` 配置。
-- LLM 调用审计：`GET /api/llm/calls?run_id=<运行ID>&limit=50` 返回 stage、model、latency_ms、status、fallback 等字段；不记录 API Key、Authorization 或完整 Prompt。支持 `LLM_TIMEOUT`、`LLM_TEMPERATURE`、`LLM_JSON_MODE`，Planner 单次运行预算为 30 秒。
+- LLM 调用审计：`GET /api/llm/calls?run_id=<运行ID>&limit=50` 返回 stage、model、latency_ms、status、fallback 等字段；不记录 API Key、Authorization 或完整 Prompt。支持 `LLM_TIMEOUT`、`LLM_TEMPERATURE`、`LLM_JSON_MODE`；默认单次超时 15 秒、Planner 单次运行预算 45 秒，`ReadTimeout` 会在预算内重试一次。
 - 阶段与根因：`GET /api/runs/{run_id}/stages` 返回 demand/retrieval/matching/verification/a2a/delivery 六阶段耗时与占比；`GET /api/runs/root-causes?days=7` 聚合 inventory_shortage、road_closed、fleet_insufficient 等固定枚举。
 - AgentArts 探活：`GET /api/agentarts/check` 按端点指纹缓存 10 分钟，返回 `cached` 与 `cache_age_seconds`；`?force=true` 强制重新探测。发布版 `/invocations` 使用 POST 并发探测，结果包含 online_rate、latency_ms、http_status 和 error_type。
 - 知识库 embedding 状态：`GET /api/platform/manifest` 的 `knowledge.embedding` 返回 local/remote/hash-fallback、模型、维度、total_chunks 与 stale_chunks。`hash-fallback` 表示当前不具备真实语义检索能力。
@@ -299,7 +297,7 @@ npm test
 npm run build
 ```
 
-后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 137 项测试；本机无 PostgreSQL 环境时结果为 `134 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
+后端测试覆盖持久化运行队列、租约恢复、幂等提交、库存并发预留、SSE 续传、失败重试/dead-letter、工作流内循环、tool 结果消费、MCP 握手、SSRF 防护、双核验投票、模板实例化、跨运行记忆、Prompt 自适应、LLM 权重决策、可替换 embedding 与引用定位、六场景基准和 30 秒持续压测。PostgreSQL CI 共执行 140 项测试；本机无 PostgreSQL 环境时结果为 `137 passed, 3 skipped`，1 条第三方弃用警告。前端包含 4 项画布纯函数测试和 6 项组件/重连/库存预留测试，`10 passed`，生产构建通过。正式服务已完成三运行并发提交、审批库存预留和两套独立路网验收。
 
 ## 边界说明
 

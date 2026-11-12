@@ -143,6 +143,19 @@ const llmWarning = computed(() => {
   if (!status || status.state !== 'misconfigured') return ''
   return `LLM 已开启但缺少 ${(status.missing || []).join('、')}，当前走确定性基线`
 })
+const runtimeModeHint = computed(() => {
+  const runtime = runResult.value?.runtime || ''
+  if (runtime === 'llm-planner') return 'LLM Planner 模式：核心四角色本地执行，AgentArts 仅参与 post_verification 扩展审查。'
+  if (runtime === 'agentarts') return 'AgentArts 模式：四角色调用云端 /invocations，不使用 LLM Planner 轨迹。'
+  if (runtime === 'local') return '本地模式：全链路本地确定性执行，不调用云端 Agent。'
+  return '正在读取本次运行模式。'
+})
+const runtimeModeShort = computed(() => {
+  const runtime = runResult.value?.runtime || ''
+  if (runtime === 'llm-planner') return 'LLM Planner 本地工具编排'
+  if (runtime === 'agentarts') return 'AgentArts 云端四角色'
+  return '本地确定性编排'
+})
 const injectedExperiences = computed(() => (runResult.value?.rework_directives || []).flatMap((item) => item.experience_context || []))
 const loadedMemoryEntries = computed(() => Object.entries(runResult.value?.memory_context || {}).flatMap(([agentId, entries]) => Object.entries(entries || {}).map(([key, value]) => ({ agentId, key, value: value?.value ?? value }))))
 const memoryWrites = computed(() => runResult.value?.memory_writes || [])
@@ -696,7 +709,7 @@ onBeforeUnmount(() => {
             <div class="status-metrics">
               <span><PackageOpen :size="15" />{{ demandItems.length }} 类物资</span>
               <span><Truck :size="15" />{{ formatNumber(totalWeight, 1) }} kg</span>
-              <span><Clock3 :size="15" />云端智能体并行推理中</span>
+              <span><Clock3 :size="15" />{{ runtimeModeShort }}</span>
               <button v-if="runResult" class="view-result-action" @click="scrollToResult">查看结果 <ChevronDown :size="14" /></button>
             </div>
           </div>
@@ -732,6 +745,7 @@ onBeforeUnmount(() => {
           <div>
             <div class="eyebrow">MULTI-AGENT OUTPUT</div>
             <h2>多方案核验与交付 <span v-for="root in failureRootCauses" :key="root" class="root-cause-tag">{{ rootCauseLabel(root) }}</span></h2>
+            <div class="runtime-mode-line"><span class="runtime-mode-chip">{{ runResult.runtime_label || runResult.runtime }}</span><span class="runtime-mode-help" :title="runtimeModeHint">?</span><small>{{ runtimeModeHint }}</small></div>
           </div>
           <div class="result-actions">
             <button class="secondary-action" @click="openReport"><FileDown :size="16" />导出报告</button>
@@ -921,6 +935,10 @@ onBeforeUnmount(() => {
             <div v-if="runResult.agentarts_trace && Object.keys(runResult.agentarts_trace).length" class="delivery-block" style="margin-bottom: 14px;">
               <h4>AgentArts 执行方式</h4>
               <ul><li v-for="(trace, agentId) in runResult.agentarts_trace" :key="agentId">{{ agentId }}：{{ agentartsModeLabel(trace) }}</li></ul>
+            </div>
+            <div v-else-if="runResult.runtime === 'llm-planner'" class="delivery-block" style="margin-bottom: 14px;">
+              <h4>AgentArts 执行方式</h4>
+              <p>本次运行未使用云端 Agent 角色</p>
             </div>
             <div class="delivery-grid" style="margin-bottom: 14px;">
               <div class="delivery-block">

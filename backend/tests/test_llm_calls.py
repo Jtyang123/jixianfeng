@@ -65,7 +65,7 @@ def test_llm_planner_budget_exhaustion_is_recorded(tmp_path: Path):
     db = Database(tmp_path / "llm-budget.db", database_url="")
     db.initialize()
     planner = LLMPlanner(db, "RUN-LLM-BUDGET", enabled=True, base_url="https://example.com/v1", api_key="real-key", model="test-model")
-    planner._run_started_at = time.monotonic() - 31
+    planner._run_started_at = time.monotonic() - 46
     result = asyncio.run(planner.create_plan({"event": {}}, ["demand_plan", "generate_plans", "verify_plans", "delivery_package"]))
     calls = LLMCallRepository(db).list_calls("RUN-LLM-BUDGET")
     assert result["mode"] == "deterministic-fallback"

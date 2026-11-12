@@ -298,3 +298,29 @@ def test_partial_agentarts_endpoints_are_local_configured_without_fallback_event
     assert result["agentarts_trace"]["delivery_agent"]["mode"] == "local-configured"
     events = db.events_after(run_id)
     assert not [event for event in events if event["type"] == "agentarts.fallback"]
+
+def test_runtime_mode_is_mutually_exclusive(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "runtime-modes.db", database_url="")
+    db.initialize()
+    scenario, request = _request(db)
+
+    db.create_run("RUN-MODE-PLANNER", scenario["id"], request)
+    monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: FakeAgentArts())
+    monkeypatch.setattr(orchestrator_module, "LLMService", FakeLLM)
+    monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: ThreeStepPlanner())
+    asyncio.run(orchestrator_module.orchestrate(db, "RUN-MODE-PLANNER", request))
+    assert db.get_run("RUN-MODE-PLANNER")["result"]["runtime"] == "llm-planner"
+
+    db.create_run("RUN-MODE-AGENTARTS", scenario["id"], request)
+    monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: FakeAgentArts())
+    monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: DisabledPlanner())
+    asyncio.run(orchestrator_module.orchestrate(db, "RUN-MODE-AGENTARTS", request))
+    assert db.get_run("RUN-MODE-AGENTARTS")["result"]["runtime"] == "agentarts"
+
+    local_bridge = FakeAgentArts()
+    local_bridge.enabled = False
+    db.create_run("RUN-MODE-LOCAL", scenario["id"], request)
+    monkeypatch.setattr(orchestrator_module, "AgentArtsBridge", lambda: local_bridge)
+    monkeypatch.setattr(orchestrator_module, "LLMPlanner", lambda: DisabledPlanner())
+    asyncio.run(orchestrator_module.orchestrate(db, "RUN-MODE-LOCAL", request))
+    assert db.get_run("RUN-MODE-LOCAL")["result"]["runtime"] == "local"

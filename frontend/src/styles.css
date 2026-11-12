@@ -242,6 +242,10 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 
 .result-section { margin-top: 16px; padding: 21px; }
 .result-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.runtime-mode-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
+.runtime-mode-chip { display: inline-flex; align-items: center; padding: 4px 8px; border: 1px solid #b9d8d0; border-radius: 999px; color: #1e6759; background: #eef9f5; font-size: 8px; font-weight: 700; }
+.runtime-mode-help { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1px solid #9cc4ba; border-radius: 50%; color: #1e6759; background: #fff; font-size: 9px; font-weight: 800; cursor: help; }
+.runtime-mode-line small { color: var(--muted); font-size: 8px; line-height: 1.45; }
 .result-actions { display: flex; align-items: center; gap: 8px; }
 .secondary-action, .primary-action, .approve-action, .text-action {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 8px; font-size: 10px; font-weight: 700; white-space: nowrap;

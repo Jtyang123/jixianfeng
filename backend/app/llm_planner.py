@@ -50,7 +50,7 @@ def _fallback_plan(available_tools: list[str]) -> dict:
     return {
         "mode": "deterministic-fallback",
         "summary": "LLM Planner 不可用，使用安全基线计划。",
-        "steps": steps[:10],
+        "steps": steps[:8],
     }
 
 
@@ -63,7 +63,7 @@ class LLMPlanner:
         base_url: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
-        budget_seconds: float = 30.0,
+        budget_seconds: float = 45.0,
     ) -> None:
         self.db = db
         self.run_id = run_id
@@ -106,6 +106,9 @@ class LLMPlanner:
         log_input = input_payload or request_payload
         if self.repository is None:
             return
+        summary_evidence = log_input.get("evidence")
+        if not isinstance(summary_evidence, list):
+            summary_evidence = (log_input.get("user_request") or {}).get("evidence") or []
         self.repository.record(
             run_id=self.run_id,
             stage=stage,
@@ -117,6 +120,8 @@ class LLMPlanner:
                 "task": log_input.get("task"),
                 "available_tools": len(log_input.get("available_tools") or []),
                 "step_tool": (log_input.get("step_result") or {}).get("tool") if isinstance(log_input.get("step_result"), dict) else "",
+                "evidence_count": len(summary_evidence),
+                "evidence_truncated": bool(log_input.get("evidence_truncated")),
             },
             output_value=output,
             latency_ms=latency_ms,
@@ -152,6 +157,8 @@ class LLMPlanner:
         base_request = {
             "model": self.model,
             "temperature": LLM_TEMPERATURE,
+            "max_tokens": 1400,
+            "reasoning_effort": "none",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -184,6 +191,7 @@ class LLMPlanner:
                 latency_ms = (time.perf_counter() - started) * 1000
                 http_status = getattr(response, "status_code", 0) or 0
                 is_timeout = isinstance(exc, httpx.TimeoutException)
+                is_read_timeout = isinstance(exc, httpx.ReadTimeout)
                 is_invalid_json = isinstance(exc, (json.JSONDecodeError, KeyError, ValueError)) and not isinstance(exc, httpx.HTTPError)
                 body = ""
                 if response is not None:
@@ -192,9 +200,16 @@ class LLMPlanner:
                     except Exception:
                         body = ""
                 unsupported_format = http_status == 400 and include_json_mode and ("response_format" in body.lower() or "unsupported" in body.lower())
-                status = "timeout" if is_timeout else ("invalid_json" if is_invalid_json else "http_error")
+                if is_read_timeout and attempt == 0:
+                    status = "timeout_retry"
+                elif is_timeout:
+                    status = "timeout"
+                elif is_invalid_json:
+                    status = "invalid_json"
+                else:
+                    status = "http_error"
                 error_type = type(exc).__name__
-                retry = attempt == 0 and (unsupported_format or is_invalid_json)
+                retry = attempt == 0 and (unsupported_format or is_invalid_json or is_read_timeout)
                 self._log_call(
                     stage=stage, request_payload=request, output=None, latency_ms=latency_ms,
                     status=status, http_status=http_status, error=f"{error_type}: {str(exc)[:240]}",
@@ -204,7 +219,11 @@ class LLMPlanner:
                     self._fallback_locked = True
                     logger.warning("LLM planner request failed; deterministic fallback will be used", exc_info=True)
                     return None
-                include_json_mode = False
+                if time.monotonic() - self._run_started_at >= self.budget_seconds:
+                    self._fallback_locked = True
+                    return None
+                if unsupported_format or is_invalid_json:
+                    include_json_mode = False
         self._fallback_locked = True
         return None
 
@@ -224,9 +243,12 @@ class LLMPlanner:
     async def create_plan(self, user_request: dict, available_tools: list[str]) -> dict:
         allowed_tools = {tool for tool in available_tools if tool in TOOL_CONTRACTS}
         fallback = _fallback_plan(available_tools)
+        request_evidence = user_request.get("evidence") if isinstance(user_request.get("evidence"), list) else []
+        evidence_payload = request_evidence[:5]
         raw = await self._request_json(PLANNER_SYSTEM_PROMPT, {
             "task": "create_plan",
-            "user_request": user_request,
+            "user_request": {**user_request, "evidence": evidence_payload},
+            "evidence_truncated": len(request_evidence) > 5,
             "available_tools": [
                 {"name": tool, "description": TOOL_CONTRACTS[tool]}
                 for tool in sorted(allowed_tools)
@@ -239,10 +261,11 @@ class LLMPlanner:
                 }],
             },
             "constraints": [
-                "最多10步",
+                "最多8步",
                 "只能使用 available_tools 中的工具",
                 "必须包含 demand_plan、generate_plans、verify_plans、delivery_package",
                 "verify_plans 未通过时不得直接 delivery_package",
+                "reason 不超过40字，expected_output 不超过20字",
             ],
         })
         if not raw:
@@ -264,10 +287,18 @@ class LLMPlanner:
                 })
         if not steps:
             return fallback
+        if user_request.get("feedback"):
+            mandatory_steps = [item for item in steps if item["tool"] in MANDATORY_TOOLS]
+            optional_steps = [item for item in steps if item["tool"] not in MANDATORY_TOOLS]
+            steps = mandatory_steps + optional_steps
+        elif len(steps) > 8:
+            mandatory_steps = [item for item in steps if item["tool"] in MANDATORY_TOOLS]
+            optional_steps = [item for item in steps if item["tool"] not in MANDATORY_TOOLS]
+            steps = mandatory_steps + optional_steps
         return {
             "mode": "llm-planner",
             "summary": str(raw.get("summary") or "LLM已生成调度计划。")[:500],
-            "steps": steps[:10],
+            "steps": steps[:8],
         }
 
     async def decide(self, step_result: dict, remaining_steps: list[dict], current_context: dict) -> dict:

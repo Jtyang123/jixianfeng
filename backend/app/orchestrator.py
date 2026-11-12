@@ -615,6 +615,15 @@ async def run_planner_orchestration(
             "warehouses": len(warehouses), "routes": len(routes),
             "vehicles": len(vehicles), "inventory_rows": len(inventory),
         },
+        "evidence": [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "score": item.get("score"),
+                "excerpt": str(item.get("excerpt") or "")[:240],
+            }
+            for item in evidence[:7]
+        ],
     }
     plan = await timed_planner_call("create_plan", planner.create_plan, planner_request, available_tools)
     emit(db, run_id, "llm.thinking", "planner", "LLM生成任务计划", plan.get("summary", ""), {
@@ -644,7 +653,7 @@ async def run_planner_orchestration(
             })
         return demand_plan
 
-    while executed_steps < 10 and step_index < len(current_plan.get("steps", [])):
+    while executed_steps < 16 and step_index < len(current_plan.get("steps", [])):
         step = current_plan["steps"][step_index]
         tool = str(step.get("tool") or "")
         agent_id = tool_agent_map.get(tool, "orchestrator")
@@ -776,18 +785,48 @@ async def run_planner_orchestration(
             "status": tool_status, "latency_ms": round(step_latency_ms, 2), "summary": result_summary,
         })
         remaining = current_plan.get("steps", [])[step_index + 1:]
-        decision = await timed_planner_call(
-            "decide", planner.decide,
-            {"tool": tool, "result": result},
-            remaining,
-            {
-                "attempt": attempt,
-                "verification_verdict": (verification or {}).get("verdict"),
-                "has_delivery": delivery is not None,
-                "executed_steps": executed_steps,
-                "last_reason": last_decision.get("reason", ""),
-            },
-        )
+        remaining_decision = [
+            {"id": item.get("id"), "tool": item.get("tool")}
+            for item in remaining
+        ]
+        if tool == "delivery_package" and delivery is not None:
+            db.record_agent_performance("planner", run_id, "decide", True, 0.0, "")
+            decision = {
+                "mode": "llm-planner", "decision": "stop", "next_tool": None,
+                "reason": "交付包已生成，ReAct 循环结束。", "repair_policy": "",
+            }
+        elif tool == "verify_plans" and verification and verification.get("verdict") == "pass":
+            db.record_agent_performance("planner", run_id, "decide", True, 0.0, "")
+            next_delivery = next((item for item in remaining_decision if item.get("tool") == "delivery_package"), None)
+            decision = {
+                "mode": "llm-planner",
+                "decision": "continue" if next_delivery else "stop",
+                "next_tool": "delivery_package" if next_delivery else None,
+                "reason": "核验已通过，进入交付步骤。",
+                "repair_policy": "",
+            }
+        else:
+            decision = await timed_planner_call(
+                "decide", planner.decide,
+                {"tool": tool, "result": result_summary, "status": tool_status},
+                remaining_decision,
+                {
+                    "attempt": attempt,
+                    "verification_verdict": (verification or {}).get("verdict"),
+                    "has_delivery": delivery is not None,
+                    "executed_steps": executed_steps,
+                    "last_reason": last_decision.get("reason", ""),
+                },
+            )
+        if attempt > 1 and tool != "verify_plans" and decision.get("decision") == "replan":
+            next_step = remaining_decision[0] if remaining_decision else None
+            decision = {
+                "mode": "llm-planner",
+                "decision": "continue" if next_step else "stop",
+                "next_tool": next_step.get("tool") if next_step else None,
+                "reason": "重规划已生效，按新计划继续执行，避免重复重规划。",
+                "repair_policy": "",
+            }
         decisions.append({"step": step, "decision": decision})
         last_decision = decision
         emit(db, run_id, "llm.thinking", "planner", "LLM判断工具结果", decision.get("reason", ""), decision)
@@ -947,7 +986,7 @@ async def run_planner_orchestration(
             "selected_repair_policies": [item.get("selected_policy", "") for item in rework_directives],
             "rework_rounds": len(rework_directives),
             "converged": final_verification.get("verdict") == "pass",
-            "exhausted": final_verification.get("verdict") != "pass" and executed_steps >= 10,
+            "exhausted": final_verification.get("verdict") != "pass" and executed_steps >= 16,
         },
         "retrieval": evidence,
         "agent_decision": agent_decision,
@@ -957,7 +996,7 @@ async def run_planner_orchestration(
         "stage_metrics": stage_metrics,
         "failure_root_causes": failure_root_causes,
         "repair_experience_writes": experience_writes,
-        "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 10},
+        "orchestration": {"engine": "LLM ReAct planner with deterministic tools", "schedule": schedule, "max_steps": 16},
         "agentarts_trace": planner_agentarts_trace,
         "extension_reviews": extension_reviews,
         "extension_workflow_runs": extension_workflow_runs,
@@ -1312,9 +1351,19 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
 
     try:
         execution_started = time.perf_counter()
+        try:
+            planner = LLMPlanner(db, run_id)
+        except TypeError:
+            planner = LLMPlanner()
+        if planner.enabled:
+            runtime_mode = "llm-planner"
+        elif agentarts.enabled:
+            runtime_mode = "agentarts"
+        else:
+            runtime_mode = "local"
         db.set_run_status(run_id, "running")
         emit(db, run_id, "run.started", "orchestrator", "推演任务启动", "已加载事件、需求与最新资源快照。", {
-            "runtime": AGENT_RUNTIME,
+            "runtime": runtime_mode,
             "scenario_id": request["scenario_id"],
         })
         InventoryReservationService(db).cleanup_expired()
@@ -1381,10 +1430,6 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
                 message,
             ),
         )
-        try:
-            planner = LLMPlanner(db, run_id)
-        except TypeError:
-            planner = LLMPlanner()
         if planner.enabled:
             try:
                 planner_result = await run_planner_orchestration(
@@ -1960,8 +2005,8 @@ async def orchestrate(db: Database, run_id: str, request: dict) -> None:
         })
         result = {
             "run_id": run_id,
-            "runtime": AGENT_RUNTIME,
-            "runtime_label": "本地可复现编排" if AGENT_RUNTIME == "local" else "AgentArts 适配模式",
+            "runtime": runtime_mode,
+            "runtime_label": "本地可复现编排" if runtime_mode == "local" else "AgentArts 四角色云端编排",
             "scenario": scenario,
             "event": request["event"],
             "weights": request.get("weights", {}),
