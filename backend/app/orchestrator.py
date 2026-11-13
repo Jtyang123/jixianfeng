@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 CORE_AGENT_IDS = {"demand_agent", "matching_agent", "verifier_agent", "delivery_agent"}
 STAGE_NAMES = ("demand", "retrieval", "matching", "verification", "a2a", "delivery")
+DETERMINISTIC_STEPS = {"demand_plan", "knowledge_search", "inventory_query", "route_query", "vehicle_query"}
 ROOT_CAUSE_MAP = {
     "STOCK": "inventory_shortage",
     "COVERAGE": "coverage_gap",
@@ -85,6 +86,8 @@ def allocate_stage_overhead(metrics: list[dict], elapsed_ms: float) -> None:
         }
         metrics.append(delivery)
     delivery["duration_ms"] = round(float(delivery.get("duration_ms") or 0) + overhead, 2)
+    delivery["includes_orchestration_overhead"] = True
+    delivery["overhead_ms"] = round(float(delivery.get("overhead_ms") or 0) + overhead, 2)
 
 
 def classify_failure_root_causes(codes: list[str]) -> list[str]:
@@ -625,7 +628,9 @@ async def run_planner_orchestration(
             for item in evidence[:7]
         ],
     }
+    initial_plan_started = time.perf_counter()
     plan = await timed_planner_call("create_plan", planner.create_plan, planner_request, available_tools)
+    append_stage_metric(stage_metrics, "demand", initial_plan_started, "planner", 1)
     emit(db, run_id, "llm.thinking", "planner", "LLM生成任务计划", plan.get("summary", ""), {
         "mode": plan.get("mode"), "steps": plan.get("steps", []), "available_tools": available_tools,
     })
@@ -642,6 +647,7 @@ async def run_planner_orchestration(
     step_index = 0
     current_plan = plan
     last_decision = {"decision": "continue", "reason": "开始执行LLM计划", "next_tool": None}
+    successful_tools: set[str] = set()
 
     def ensure_demand() -> dict:
         nonlocal demand_plan
@@ -773,10 +779,10 @@ async def run_planner_orchestration(
             result = {"error": f"未知工具：{tool}"}
         executed_steps += 1
         step_latency_ms = (time.perf_counter() - step_started) * 1000
-        if tool in tool_stage_map:
-            append_stage_metric(stage_metrics, tool_stage_map[tool], step_started, agent_id, attempt)
         result_summary = tool_result_summary(tool, result if isinstance(result, dict) else {"result": result})
         tool_status = "failed" if isinstance(result, dict) and result.get("error") else "success"
+        if tool_status == "success":
+            successful_tools.add(tool)
         tool_repository.record_call(
             f"planner:{tool}", run_id, tool_status, step.get("input", {}), result_summary, step_latency_ms,
         )
@@ -789,7 +795,17 @@ async def run_planner_orchestration(
             {"id": item.get("id"), "tool": item.get("tool")}
             for item in remaining
         ]
-        if tool == "delivery_package" and delivery is not None:
+        if tool in DETERMINISTIC_STEPS and remaining_decision:
+            db.record_agent_performance("planner", run_id, "decide", True, 0.0, "skipped")
+            decision = {
+                "mode": "deterministic",
+                "decision": "continue",
+                "next_tool": remaining_decision[0].get("tool"),
+                "reason": "计划内顺序推进（数据读取步骤无需模型判断）",
+                "repair_policy": "",
+                "deterministic": True,
+            }
+        elif tool == "delivery_package" and delivery is not None:
             db.record_agent_performance("planner", run_id, "decide", True, 0.0, "")
             decision = {
                 "mode": "llm-planner", "decision": "stop", "next_tool": None,
@@ -827,7 +843,9 @@ async def run_planner_orchestration(
                 "reason": "重规划已生效，按新计划继续执行，避免重复重规划。",
                 "repair_policy": "",
             }
-        decisions.append({"step": step, "decision": decision})
+        if tool in tool_stage_map:
+            append_stage_metric(stage_metrics, tool_stage_map[tool], step_started, agent_id, attempt)
+        decisions.append({"step": step, "decision": decision, "deterministic": bool(decision.get("deterministic"))})
         last_decision = decision
         emit(db, run_id, "llm.thinking", "planner", "LLM判断工具结果", decision.get("reason", ""), decision)
 
@@ -849,6 +867,7 @@ async def run_planner_orchestration(
             rework_directives.append(directive)
             prompt_adaptations.append(adaptation)
             attempt += 1
+            replan_started = time.perf_counter()
             current_plan = await timed_planner_call(
                 "create_plan", planner.create_plan,
                 {**planner_request, "feedback": {
@@ -858,11 +877,18 @@ async def run_planner_orchestration(
                 }},
                 available_tools,
             )
-            emit(db, run_id, "llm.thinking", "planner", "LLM触发重规划", "核验未通过，基于问题代码重新生成工具计划。", {
+            append_stage_metric(stage_metrics, "verification", replan_started, "planner", attempt)
+            filtered_tools = sorted(set(successful_tools) & DETERMINISTIC_STEPS)
+            current_plan["steps"] = [
+                item for item in current_plan.get("steps", [])
+                if not (item.get("tool") in successful_tools and item.get("tool") in DETERMINISTIC_STEPS)
+            ]
+            emit(db, run_id, "llm.thinking", "planner", "重规划复用已完成读取结果", "需求与数据读取步骤已成功执行，本次只重跑方案生成、核验与交付。", {
                 "blockers": verification.get("blocker_summary", []),
                 "repair_policy": selected_policy,
                 "adaptive_prompt": adaptation,
                 "experience_hits": len(experience_context),
+                "reused_tools": filtered_tools,
             })
             step_index = 0
             continue

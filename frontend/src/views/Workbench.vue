@@ -7,6 +7,7 @@ import {
 } from '@lucide/vue'
 import AgentRail from '../components/AgentRail.vue'
 import MapCanvas from '../components/MapCanvas.vue'
+import PlannerTracePanel from '../components/PlannerTracePanel.vue'
 import { api, formatNumber } from '../api'
 import { mergeRunEvent, runEventsUrl } from '../utils/runEvents.js'
 import { approvalPresentation, scoreDeltaLabel } from '../utils/runPresentation.js'
@@ -40,6 +41,7 @@ const dispatchTasks = ref([])
 const a2aMessages = ref([])
 const a2aLoading = ref(false)
 const a2aError = ref('')
+const llmCallCount = ref(0)
 const materialToAdd = ref('')
 let eventSource = null
 let statusPoller = null
@@ -113,8 +115,9 @@ const stageMetrics = computed(() => {
   const order = ['demand', 'retrieval', 'matching', 'verification', 'a2a', 'delivery']
   const grouped = new Map()
   for (const item of runResult.value?.stage_metrics || []) {
-    const current = grouped.get(item.stage) || { stage: item.stage, duration_ms: 0, agent_id: item.agent_id, attempt: item.attempt }
+    const current = grouped.get(item.stage) || { stage: item.stage, duration_ms: 0, overhead_ms: 0, agent_id: item.agent_id, attempt: item.attempt }
     current.duration_ms += Number(item.duration_ms || 0)
+    current.overhead_ms += Number(item.overhead_ms || 0)
     grouped.set(item.stage, current)
   }
   return order.filter((stage) => grouped.has(stage)).map((stage) => grouped.get(stage))
@@ -122,6 +125,9 @@ const stageMetrics = computed(() => {
 const stageTotalMs = computed(() => stageMetrics.value.reduce((sum, item) => sum + Number(item.duration_ms || 0), 0))
 const maxStageMs = computed(() => Math.max(...stageMetrics.value.map((item) => Number(item.duration_ms || 0)), 1))
 const failureRootCauses = computed(() => runResult.value?.failure_root_causes || [])
+function stagePercent(item) {
+  return stageTotalMs.value > 0 ? Math.round(Number(item.duration_ms || 0) / stageTotalMs.value * 1000) / 10 : 0
+}
 function stageLabel(stage) {
   return { demand: '需求研判', retrieval: '知识检索', matching: '资源匹配', verification: '独立核验', a2a: 'A2A 协商', delivery: '方案交付' }[stage] || stage
 }
@@ -275,6 +281,7 @@ function applyScenario(id) {
     })
     .filter(Boolean)
   runResult.value = null
+  llmCallCount.value = 0
   events.value = []
   selectedPlanId.value = ''
   error.value = ''
@@ -297,6 +304,7 @@ function applyOperationalEvent(id) {
     })
     .filter((item) => item && item.quantity > 0)
   runResult.value = null
+  llmCallCount.value = 0
   events.value = []
   selectedPlanId.value = ''
   error.value = ''
@@ -428,9 +436,10 @@ async function scrollToResult() {
 async function finishRun(id) {
   if (!running.value) return
   try {
-    const [run, taskRows] = await Promise.all([api.getRun(id), api.tasks(id)])
+    const [run, taskRows, llmCalls] = await Promise.all([api.getRun(id), api.tasks(id), api.llmCalls(id, 200)])
     runResult.value = run.result
     dispatchTasks.value = taskRows
+    llmCallCount.value = llmCalls.length
     running.value = false
     await loadA2ADetails(id)
     approved.value = run.approved === 1 || run.status === 'approved'
@@ -461,6 +470,7 @@ async function startRun() {
   error.value = ''
   approved.value = false
   runResult.value = null
+  llmCallCount.value = 0
   events.value = []
   a2aMessages.value = []
   a2aError.value = ''
@@ -518,10 +528,11 @@ async function restoreRunFromQuery() {
   const requestedRunId = new URLSearchParams(window.location.search).get('run_id')
   if (!requestedRunId) return
   try {
-    const [run, taskRows] = await Promise.all([api.getRun(requestedRunId), api.tasks(requestedRunId)])
+    const [run, taskRows, llmCalls] = await Promise.all([api.getRun(requestedRunId), api.tasks(requestedRunId), api.llmCalls(requestedRunId, 200)])
     if (!run.result) return
     runId.value = requestedRunId
     runResult.value = run.result
+    llmCallCount.value = llmCalls.length
     approved.value = Boolean(run.approved)
     dispatchTasks.value = taskRows
     await loadA2ADetails(requestedRunId)
@@ -764,6 +775,16 @@ onBeforeUnmount(() => {
           <div><span>AgentArts 决策</span><strong class="metric-mode">{{ runResult.agent_decision?.applied ? '已采纳' : '规则回退' }}</strong></div>
         </div>
 
+        <div v-if="stageMetrics.length" class="stage-metrics-panel">
+          <div><strong>六阶段耗时</strong><span>合计 {{ formatNumber(stageTotalMs, 0) }} ms</span></div>
+          <div v-for="item in stageMetrics" :key="item.stage" class="stage-bar-row">
+            <span>{{ stageLabel(item.stage) }}</span>
+            <div><i :style="{ width: `${Math.max(2, Number(item.duration_ms || 0) / maxStageMs * 100)}%` }" /></div>
+            <em>{{ formatNumber(item.duration_ms, 0) }} ms · {{ stagePercent(item) }}%</em>
+            <small v-if="item.stage === 'delivery' && item.overhead_ms > 0">含编排开销 {{ formatNumber(item.overhead_ms, 0) }} ms</small>
+          </div>
+        </div>
+
         <div class="closure-strip" :class="{ 'closure-strip--risk': runResult.delivery.status !== 'ready' }">
           <template v-for="(round, index) in runResult.rounds" :key="round.attempt">
             <div class="closure-step">
@@ -932,6 +953,11 @@ onBeforeUnmount(() => {
                 <p>{{ review.parsed?.summary || review.parsed?.rationale || review.text || '扩展审查已完成' }}</p>
               </div>
             </div>
+            <PlannerTracePanel
+              :planner-trace="runResult.planner_trace"
+              :planner-decision="runResult.planner_decision || {}"
+              :llm-call-count="llmCallCount"
+            />
             <div v-if="runResult.agentarts_trace && Object.keys(runResult.agentarts_trace).length" class="delivery-block" style="margin-bottom: 14px;">
               <h4>AgentArts 执行方式</h4>
               <ul><li v-for="(trace, agentId) in runResult.agentarts_trace" :key="agentId">{{ agentId }}：{{ agentartsModeLabel(trace) }}</li></ul>

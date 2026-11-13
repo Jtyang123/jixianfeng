@@ -205,6 +205,9 @@ def test_planner_replans_after_verification_failure(tmp_path: Path, monkeypatch)
     assert result["loop_metrics"]["rework_rounds"] >= 1
     assert result["final_verification"]["verdict"] == "pass"
     assert result["delivery"]["status"] == "ready"
+    decision_tools = [item["step"]["tool"] for item in result["planner_trace"]["decisions"]]
+    assert decision_tools.count("demand_plan") == 1
+    assert any(item.get("deterministic") for item in result["planner_trace"]["decisions"])
 
 
 def test_invalid_planner_json_retries_once_then_uses_deterministic_fallback(tmp_path: Path, monkeypatch):

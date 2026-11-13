@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections import Counter
 import time
 from datetime import datetime
 from pathlib import Path
@@ -102,23 +103,48 @@ def _recent_run_summary(db: Database) -> dict:
     rows = [dict(row) for row in rows]
     warnings: list[str] = []
     scenario_stats: dict[str, dict] = {}
+    root_cause_counts: Counter = Counter()
     needs_human = 0
     for row in rows:
+        scenario_key = str(row.get("scenario_id") or "unknown")
         stats = scenario_stats.setdefault(
-            str(row.get("scenario_id") or "unknown"),
-            {"scenario_id": row.get("scenario_id"), "passed": 0, "needs_human": 0, "other": 0},
+            scenario_key,
+            {"scenario_id": row.get("scenario_id"), "passed": 0, "needs_human": 0, "other": 0, "root_causes": Counter()},
         )
         status = str(row.get("status") or "")
+        try:
+            result = json.loads(row.get("result_json") or "{}")
+        except json.JSONDecodeError:
+            result = {}
         if status == "needs_human":
             stats["needs_human"] += 1
             needs_human += 1
+            for root in result.get("failure_root_causes") or []:
+                root_cause_counts[str(root)] += 1
+                stats["root_causes"][str(root)] += 1
         elif status in PASSED_STATUSES:
             stats["passed"] += 1
         else:
             stats["other"] += 1
     ratio = round(needs_human / max(len(rows), 1), 4)
     if ratio > 0.30:
-        warnings.append("warning: 近期人工研判比例偏高，建议演示 rainstorm-ii")
+        root_text = " / ".join(f"{root}×{count}" for root, count in sorted(root_cause_counts.items(), key=lambda item: (-item[1], item[0]))) or "none"
+        warnings.append(
+            f"warning: 近 {len(rows)} 次运行人工研判率 {ratio * 100:.0f}%（根因 {root_text}）；"
+            "演示前请先 dry-run 一次，确认 status=awaiting_approval 且 final_verification.verdict=pass 再上台。"
+        )
+    scenario_risk = []
+    for stats in scenario_stats.values():
+        comparable = stats["passed"] + stats["needs_human"]
+        top_root_cause = stats["root_causes"].most_common(1)
+        scenario_risk.append({
+            "scenario_id": stats["scenario_id"],
+            "pass": stats["passed"],
+            "needs_human": stats["needs_human"],
+            "human_ratio": round(stats["needs_human"] / max(comparable, 1), 4),
+            "top_root_cause": top_root_cause[0][0] if top_root_cause else "none",
+        })
+    scenario_risk.sort(key=lambda item: (item["human_ratio"], item["scenario_id"] or ""))
     latest = rows[0] if rows else None
     latest_run = None
     if latest:
@@ -143,7 +169,12 @@ def _recent_run_summary(db: Database) -> dict:
         "sample_size": len(rows),
         "needs_human": needs_human,
         "needs_human_ratio": ratio,
-        "scenario_stats": sorted(scenario_stats.values(), key=lambda item: item["scenario_id"] or ""),
+        "scenario_stats": [
+            {key: value for key, value in item.items() if key != "root_causes"}
+            for item in sorted(scenario_stats.values(), key=lambda value: value["scenario_id"] or "")
+        ],
+        "scenario_risk": scenario_risk,
+        "root_cause_counts": dict(root_cause_counts),
         "latest_run": latest_run,
         "warnings": warnings,
     }
@@ -169,7 +200,7 @@ async def main() -> int:
     else:
         embedding = {"provider": "unavailable", "mode": "unavailable", "dimensions": 0, "stale_chunks": 0}
         agentarts = {"status": "unavailable", "online_rate": 0.0, "checks": []}
-        recent_runs = {"sample_size": 0, "needs_human": 0, "needs_human_ratio": 0.0, "scenario_stats": [], "latest_run": None, "warnings": []}
+        recent_runs = {"sample_size": 0, "needs_human": 0, "needs_human_ratio": 0.0, "scenario_stats": [], "scenario_risk": [], "root_cause_counts": {}, "latest_run": None, "warnings": []}
 
     checks = list(agentarts.get("checks") or [])
     latencies = [float(item.get("latency_ms") or 0) for item in checks]
@@ -221,6 +252,8 @@ async def main() -> int:
         "database": database,
         "frontend": frontend,
         "recent_runs": recent_runs,
+        "scenario_risk": recent_runs.get("scenario_risk", []),
+        "preferred_scenarios": [item["scenario_id"] for item in recent_runs.get("scenario_risk", [])[:2]] if not blockers else [],
         "recommended_demo_mode": recommended,
         "evidence_mode": evidence_mode,
         "evidence_note": evidence_note,
