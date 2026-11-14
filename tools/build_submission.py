@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import re
+import struct
 from pathlib import Path
 
 from pptx import Presentation
@@ -13,6 +14,7 @@ from pptx.util import Inches, Pt
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 SHOTS = DOCS / "screenshots"
+PPT_TEMPLATE = Path(r"C:\Users\22103\Desktop\2026未来杯PPT模版.pptx")
 
 PAPER = RGBColor(246, 243, 235)
 INK = RGBColor(20, 42, 40)
@@ -166,6 +168,8 @@ def add_text(slide, left, top, width, height, text, size=14, color=INK, bold=Fal
 
 
 def add_rect(slide, left, top, width, height, fill, line=None, rounded=False, radius=0.08):
+    if left == 0 and top == 0 and width >= 13.32 and height >= 7.49:
+        return None
     shape = slide.shapes.add_shape(
         MSO_SHAPE.ROUNDED_RECTANGLE if rounded else MSO_SHAPE.RECTANGLE,
         Inches(left), Inches(top), Inches(width), Inches(height),
@@ -178,10 +182,17 @@ def add_rect(slide, left, top, width, height, fill, line=None, rounded=False, ra
     return shape
 
 
+def clear_slides(prs):
+    slide_ids = prs.slides._sldIdLst
+    for slide_id in list(slide_ids):
+        prs.part.drop_rel(slide_id.rId)
+        slide_ids.remove(slide_id)
+
+
 def add_title(slide, kicker, title, dark=False):
     color = WHITE if dark else INK
-    add_text(slide, .65, .34, 9.8, .28, kicker, 10, LIME if dark else MUTED, True, font="Consolas")
-    add_text(slide, .65, .65, 11.9, .55, title, 26, color, True)
+    add_text(slide, .65, .72, 9.8, .24, kicker, 9, LIME if dark else MUTED, True, font="Consolas")
+    add_text(slide, .65, .93, 11.9, .45, title, 21, color, True)
 
 
 def add_footer(slide, number):
@@ -199,15 +210,30 @@ def add_card(slide, left, top, width, height, title, body, accent=TEAL, number=N
 
 
 def add_picture(slide, path, left, top, width, height):
-    if path.exists():
-        slide.shapes.add_picture(str(path), Inches(left), Inches(top), width=Inches(width), height=Inches(height))
+    if not path.exists():
+        return
+    picture = slide.shapes.add_picture(str(path), Inches(left), Inches(top), width=Inches(width), height=Inches(height))
+    data = path.read_bytes()[:32]
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        image_width, image_height = struct.unpack(">II", data[16:24])
+        image_ratio = image_width / max(image_height, 1)
+        box_ratio = width / max(height, 0.001)
+        if image_ratio > box_ratio:
+            crop = (1 - box_ratio / image_ratio) / 2
+            picture.crop_left = crop
+            picture.crop_right = crop
+        elif image_ratio < box_ratio:
+            crop = (1 - image_ratio / box_ratio) / 2
+            picture.crop_top = crop
+            picture.crop_bottom = crop
 
 
 def build_ppt() -> Path:
-    prs = Presentation()
+    prs = Presentation(str(PPT_TEMPLATE)) if PPT_TEMPLATE.exists() else Presentation()
+    clear_slides(prs)
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
-    blank = prs.slide_layouts[6]
+    blank = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else prs.slide_layouts[0]
 
     # 1 Cover
     slide = prs.slides.add_slide(blank)
@@ -248,11 +274,11 @@ def build_ppt() -> Path:
 
     # 4 Architecture
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
-    add_title(slide, "03 / ARCHITECTURE", "五层架构：交互、API、编排、Agent/工具、数据")
+    add_title(slide, "03 / ARCHITECTURE & RUNTIMES", "五层架构 + 三档互斥运行时")
     layers = [
         ("Vue 3 工作台", "场景配置 · 地图态势 · 多方案对比 · Agent 轨迹 · 人工审批", TEAL),
         ("FastAPI 业务层", "运行 API · SSE 事件流 · 库存快照 · 报告导出 · AgentArts Adapter", INK),
-        ("编排与调度层", "状态机 · 并行 DAG · 条件分支 · 两轮 Self-Loop · 人工门控", ORANGE),
+        ("编排与调度层", "ReAct Planner · 并行 DAG · 条件分支 · 确定性推进 · 人工门控", ORANGE),
         ("Agent 与工具层", "A01 需求 · A02 匹配 · A03 核验 · A04 交付 / RAG · 规则引擎 · 规划器", RGBColor(83, 107, 72)),
         ("数据层", "PostgreSQL / SQLite fallback · 物资主数据 · 库存快照 · 路线 · 运行事件 · 证据引用", MUTED),
     ]
@@ -262,7 +288,7 @@ def build_ppt() -> Path:
         add_rect(slide, 1.0, top, .08, .8, color)
         add_text(slide, 1.25, top + .09, 2.5, .3, title, 12, INK, True)
         add_text(slide, 3.75, top + .07, 8.2, .5, body, 10, MUTED)
-    add_text(slide, 1.02, 6.9, 11.2, .3, "设计原则：关键数字由工具计算，LLM 负责理解与解释，规则负责否决，人类负责最终责任。", 10, ORANGE, True)
+    add_text(slide, 1.02, 6.9, 11.2, .3, "三档互斥：llm-planner（核心本地 + AgentArts 扩展审查） / agentarts（四角色云端） / local（全本地）。", 10, ORANGE, True)
     add_footer(slide, 4)
 
     # 5 Agents
@@ -336,8 +362,8 @@ def build_ppt() -> Path:
 
     # 10 RAG + LLM + tools
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
-    add_title(slide, "09 / AI & TOOLS", "LLM 理解与解释，工具负责事实，规则负责放行")
-    add_card(slide, .75, 1.55, 3.8, 4.85, "RAG 知识库", "需求测算\n汛期道路封闭\n多仓库存分配\n车辆载重\nPDCA 核验\n交付字段规范\n\n6 条规则文档 · 证据编号可追溯", TEAL, "RAG")
+    add_title(slide, "09 / AI & TOOLS", "LLM 规划，工具计算，规则放行")
+    add_card(slide, .75, 1.55, 3.8, 4.85, "RAG 知识库", "领域同义词 + BM25 + 哈希词袋\n离线词法检索 · 证据编号可追溯\n\n6 条规则文档", TEAL, "RAG")
     add_card(slide, 4.78, 1.55, 3.8, 4.85, "LLM / AgentArts", "需求理解\n策略权衡解释\n核验根因归纳\n执行摘要生成\n\nAgentArts Adapter\n本地确定性回退", ORANGE, "LLM")
     add_card(slide, 8.8, 1.55, 3.8, 4.85, "工具与协议", "inventory_query\nroute_query\nmulti_objective_planner\nrule_engine\nrag_retrieve\nexport_pdf\n\nFunction Calling / MCP 风格注册", RGBColor(83, 107, 72), "TOOL")
     add_footer(slide, 10)
@@ -345,31 +371,31 @@ def build_ppt() -> Path:
     # 11 Data & materials
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
     add_title(slide, "10 / DATA PRODUCT", "物资库与库存快照构成可复用数据底座")
-    add_picture(slide, SHOTS / "v2_materials.png", .65, 1.45, 6.0, 3.75)
-    add_picture(slide, SHOTS / "v2_data.png", 6.9, 1.45, 6.0, 3.75)
+    add_picture(slide, SHOTS / "scheduler_dispatch.png", .65, 1.45, 6.0, 3.75)
+    add_picture(slide, SHOTS / "ppt_stage.png", 6.9, 1.45, 6.0, 3.75)
     add_text(slide, .8, 5.45, 5.8, .8, "物资主数据：编码、别名、规格、单位、换算、储存、保质期、冷链、危险品、优先级", 10, MUTED)
     add_text(slide, 7.0, 5.45, 5.8, .8, "库存快照：每次上传独立版本，推演固定引用，历史方案可复现", 10, MUTED)
     add_footer(slide, 11)
 
     # 12 Product screenshot
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
-    add_title(slide, "11 / PRODUCT DEMO", "工作台：地图、方案、Agent 运行轨同屏联动")
-    add_picture(slide, SHOTS / "v2_workbench.png", .65, 1.42, 12.05, 5.45)
+    add_title(slide, "11 / PLANNER TRACE", "ReAct 规划轨迹：8 步计划 · 10 步执行 · 1 次重规划 · 9.2 秒")
+    add_picture(slide, SHOTS / "ppt_planner.png", .65, 1.42, 12.05, 5.45)
     add_footer(slide, 12)
 
     # 13 Orchestration screenshot
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
-    add_title(slide, "12 / ORCHESTRATION", "五个核心模块在平台内可视化")
-    add_picture(slide, SHOTS / "v2_orchestration.png", .65, 1.42, 12.05, 5.45)
+    add_title(slide, "12 / PLANNER TRACE DETAILS", "Planner 实际执行轨迹：10 条决策 · 1 次重规划")
+    add_picture(slide, SHOTS / "planner_trace.png", .65, 1.42, 12.05, 5.45)
     add_footer(slide, 13)
 
     # 14 Evaluation
     slide = prs.slides.add_slide(blank); add_rect(slide, 0, 0, 13.333, 7.5, PAPER)
-    add_title(slide, "13 / EVALUATION", "可量化、可复现、可解释的结果验证")
-    add_picture(slide, SHOTS / "v2_evaluation.png", .65, 1.42, 7.65, 5.45)
+    add_title(slide, "13 / STAGE TIMING & EVALUATION", "六阶段耗时与最新基准：总 9,177ms")
+    add_picture(slide, SHOTS / "stage_metrics.png", .65, 1.42, 7.65, 5.45)
     add_card(slide, 8.65, 1.55, 3.95, 1.15, "匹配赛题评分", "功能完整性 · 技术可靠性\nAI 合理性 · 文档质量", TEAL, "25×4")
-    add_card(slide, 8.65, 2.92, 3.95, 1.15, "量化证据", "3/3 不安全方案拦截\n评分 +100 · 覆盖率 100%", ORANGE, "BENCH")
-    add_card(slide, 8.65, 4.29, 3.95, 1.15, "可复现证据", "固定快照 · 重复计算一致\npytest 自动化测试", RGBColor(83, 107, 72), "REPRO")
+    add_card(slide, 8.65, 2.92, 3.95, 1.15, "量化证据", "72 样本 · 100% vs 66.67%\n评分 72.67 vs 66.67", ORANGE, "BENCH")
+    add_card(slide, 8.65, 4.29, 3.95, 1.15, "可复现证据", "scope deterministic-core only\n后端 137 / 前端 7", RGBColor(83, 107, 72), "REPRO")
     add_card(slide, 8.65, 5.66, 3.95, 1.15, "诚实边界", "演练数据 · 人工审批\n不宣称真实自动指挥", MUTED, "BOUND")
     add_footer(slide, 14)
 

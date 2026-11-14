@@ -43,7 +43,7 @@ jobs:
         run: npm ci
       - name: Test frontend workflow canvas
         working-directory: frontend
-        run: npm test
+        run: npm run test:all
       - name: Build frontend
         working-directory: frontend
         run: npm run build

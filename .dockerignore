@@ -1,4 +1,4 @@
-﻿node_modules
+node_modules
 frontend/dist
 .git
 .env
@@ -11,3 +11,10 @@ docs/screenshots
 data
 release
 docs
+.venv
+venv
+env
+logs
+.workbuddy
+.slidep
+.pytest_tmp*

@@ -36,6 +36,18 @@ SSE 解析结果：
 - 需求研判结果已写入 `DemandPlan.agentarts_interpretation`
 - 本地确定性数量、库存和路线计算未被模型覆盖
 
+## 2026-11-14 最新复测
+
+- 复测时间：2026-11-14 22:51:51 +08:00
+- 结果：4/4 HTTP 200，四个端点均解析出 SSE 或 JSON 响应
+- demand_agent：200，14,715 ms
+- matching_agent：200，20,946 ms
+- verifier_agent：200，17,570 ms
+- delivery_agent：200，17,869 ms
+- 证据文件：`docs/agentarts_probe_20261114.json`
+- 历史说明：11-11 的全 401 记录发生在旧凭据阶段；凭证已于 11-12 更换，从 11-12 起恢复 200。该历史不再代表当前状态。
+- 安全说明：本记录和 JSON 仅保留 HTTP 状态、延迟和解析结果，不包含 API Key。
+
 ## AgentArts 决策闭环验证
 
 - 运行编号：`RUN-20261107-125518-B469`
