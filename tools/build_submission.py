@@ -228,7 +228,8 @@ def add_picture(slide, path, left, top, width, height):
             picture.crop_bottom = crop
 
 
-def build_ppt() -> Path:
+def build_ppt_legacy() -> Path:
+    """旧版米色纸感排版，已由 tools/build_ppt.py（官方模版蓝白风）取代。"""
     prs = Presentation(str(PPT_TEMPLATE)) if PPT_TEMPLATE.exists() else Presentation()
     clear_slides(prs)
     prs.slide_width = Inches(13.333)
@@ -416,6 +417,8 @@ def build_ppt() -> Path:
 
 
 if __name__ == "__main__":
+    from build_ppt import build as build_ppt
+
     html_path = build_document_html()
     ppt_path = build_ppt()
     print(f"HTML: {html_path}")
