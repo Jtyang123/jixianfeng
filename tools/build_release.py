@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
 import zipfile
@@ -9,7 +9,7 @@ RELEASE = ROOT / "release"
 PACKAGE = RELEASE / "急先锋_初赛提交包"
 ZIP_PATH = RELEASE / "急先锋_初赛提交包.zip"
 
-EXCLUDED_ROOTS = {"node_modules", "__pycache__", ".pytest_cache", ".git", "data", "release"}
+EXCLUDED_ROOTS = {"node_modules", "__pycache__", ".pytest_cache", ".pytest_tmp", ".git", "data", "release"}
 EXCLUDED_SUFFIXES = {".db", ".pyc", ".pid"}
 
 
@@ -26,7 +26,7 @@ def build() -> None:
                 source,
                 PACKAGE / source.name,
                 ignore=shutil.ignore_patterns(
-                    "node_modules", "__pycache__", ".pytest_cache", "*.db", "*.pyc", ".edge-*"
+                    "node_modules", "__pycache__", ".pytest_cache", ".pytest_tmp", ".pytest_tmp*", "*.db", "*.pyc", ".edge-*"
                 ),
             )
         elif source.suffix not in EXCLUDED_SUFFIXES and source.name != ".env":
@@ -45,7 +45,7 @@ def build() -> None:
         "如果本机没有 PostgreSQL，系统会自动回退 SQLite；公网部署使用 `Dockerfile` 与 `docker-compose.yml`，详见 `deploy/DEPLOYMENT.md`。\n\n"
         "## 材料\n\n"
         "- `docs/急先锋_项目方案书.pdf`\n- `docs/急先锋_项目讲解PPT.pptx`\n"
-        "- `docs/DEMO_SCRIPT.md`\n- `docs/答辩问答.md`\n- `docs/评分标准对齐清单.md`\n"
+        "- `docs/DEMO_SCRIPT.md`\n- `docs/DEMO_VIDEO_SCRIPT.md`\n- `docs/答辩问答.md`\n- `docs/评分标准对齐清单.md`\n"
         "- `docs/初赛提交清单.md`\n- `docs/screenshots/`\n\n"
         "## 重要说明\n\n华为云 AgentArts 的真实调用需要配置 `AGENTARTS_BASE_URL`、`AGENTARTS_API_KEY` 和模型服务。"
         "未配置时，系统使用本地确定性回退以保证演示可运行。\n",
