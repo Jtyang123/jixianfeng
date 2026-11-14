@@ -1,0 +1,4255 @@
+{
+  "status": "ready",
+  "report_version": "perf-benchmark-v3",
+  "generated_at": "2026-11-14T12:43:14+08:00",
+  "scope": "deterministic-core in-process; excludes LLM planner, HTTP, queue and DB IO",
+  "runtime_mode": "deterministic-core",
+  "llm_status": {
+    "enabled": true,
+    "state": "ready",
+    "missing": [],
+    "provider": "OpenAI-compatible / AgentArts",
+    "model": "deepseek-flash",
+    "base_url_configured": true,
+    "response_format": "json_object",
+    "timeout_seconds": 15.0,
+    "temperature": 0.1,
+    "message": "LLM 已就绪"
+  },
+  "runtime_note": "本基准衡量确定性内核的函数级并发表现；LLM 在线延迟与调用次数见 demo_preflight 与 /api/llm/calls",
+  "database_engine": "sqlite",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "repeat_count": 3,
+  "scenario_count": 6,
+  "fixed_samples_per_level": 18,
+  "warmup_policy": "每个并发档位先执行同一组固定样本一轮并丢弃，再开始计时。",
+  "results": [
+    {
+      "concurrency": 1,
+      "samples": 18,
+      "repeat_count": 3,
+      "warmup_samples": 18,
+      "warmup_wall_ms": 32.59,
+      "wall_ms": 29.62,
+      "throughput_runs_per_second": 607.7,
+      "safe_outcome_rate": 1.0,
+      "average_latency_ms": 1.29,
+      "p95_latency_ms": 2.26,
+      "average_score": 72.67,
+      "llm_calls": 0,
+      "llm_latency_avg_ms": 0.0,
+      "llm_latency_p95_ms": 0.0,
+      "llm_calls_per_run": 0.0,
+      "tool_calls": 84,
+      "tool_call_breakdown": {
+        "demand_plan": 18,
+        "generate_plans": 27,
+        "verify_plans": 27,
+        "delivery_package": 12
+      },
+      "consistency": 1.0,
+      "baseline": {
+        "safe_proposal_rate": 0.6667,
+        "independent_verification": false,
+        "average_latency_ms": 0.21,
+        "p95_latency_ms": 0.3,
+        "average_score": 66.67,
+        "llm_calls": 0,
+        "tool_calls": 54,
+        "tool_call_breakdown": {
+          "demand_plan": 18,
+          "baseline_generate": 18,
+          "baseline_audit_verify": 18
+        }
+      },
+      "cases": [
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.26,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.27,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.85,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.43,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.81,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.74,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.95,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.3,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.89,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.75,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.37,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.93,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.75,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.95,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.23,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.84,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.23,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.72,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.32,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.84,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.82,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.07,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.26,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "concurrency": 5,
+      "samples": 18,
+      "repeat_count": 3,
+      "warmup_samples": 18,
+      "warmup_wall_ms": 28.63,
+      "wall_ms": 30.68,
+      "throughput_runs_per_second": 586.7,
+      "safe_outcome_rate": 1.0,
+      "average_latency_ms": 1.37,
+      "p95_latency_ms": 2.37,
+      "average_score": 72.67,
+      "llm_calls": 0,
+      "llm_latency_avg_ms": 0.0,
+      "llm_latency_p95_ms": 0.0,
+      "llm_calls_per_run": 0.0,
+      "tool_calls": 84,
+      "tool_call_breakdown": {
+        "demand_plan": 18,
+        "generate_plans": 27,
+        "verify_plans": 27,
+        "delivery_package": 12
+      },
+      "consistency": 1.0,
+      "baseline": {
+        "safe_proposal_rate": 0.6667,
+        "independent_verification": false,
+        "average_latency_ms": 0.22,
+        "p95_latency_ms": 0.29,
+        "average_score": 66.67,
+        "llm_calls": 0,
+        "tool_calls": 54,
+        "tool_call_breakdown": {
+          "demand_plan": 18,
+          "baseline_generate": 18,
+          "baseline_audit_verify": 18
+        }
+      },
+      "cases": [
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.92,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.79,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.36,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.76,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.9,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.34,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.29,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.37,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.27,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.89,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.63,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.23,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.95,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.82,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.03,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.25,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.12,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.82,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.31,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.91,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.75,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.05,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "concurrency": 10,
+      "samples": 18,
+      "repeat_count": 3,
+      "warmup_samples": 18,
+      "warmup_wall_ms": 28.26,
+      "wall_ms": 29.58,
+      "throughput_runs_per_second": 608.52,
+      "safe_outcome_rate": 1.0,
+      "average_latency_ms": 1.31,
+      "p95_latency_ms": 2.08,
+      "average_score": 72.67,
+      "llm_calls": 0,
+      "llm_latency_avg_ms": 0.0,
+      "llm_latency_p95_ms": 0.0,
+      "llm_calls_per_run": 0.0,
+      "tool_calls": 84,
+      "tool_call_breakdown": {
+        "demand_plan": 18,
+        "generate_plans": 27,
+        "verify_plans": 27,
+        "delivery_package": 12
+      },
+      "consistency": 1.0,
+      "baseline": {
+        "safe_proposal_rate": 0.6667,
+        "independent_verification": false,
+        "average_latency_ms": 0.22,
+        "p95_latency_ms": 0.48,
+        "average_score": 66.67,
+        "llm_calls": 0,
+        "tool_calls": 54,
+        "tool_call_breakdown": {
+          "demand_plan": 18,
+          "baseline_generate": 18,
+          "baseline_audit_verify": 18
+        }
+      },
+      "cases": [
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.08,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.72,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.44,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.21,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.8,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.78,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.02,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.48,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.89,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.23,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.76,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.42,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.21,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 2.01,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.2,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.77,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.05,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.25,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.0,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.25,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.78,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.52,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.27,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.76,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.79,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.05,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "concurrency": 20,
+      "samples": 18,
+      "repeat_count": 3,
+      "warmup_samples": 18,
+      "warmup_wall_ms": 28.61,
+      "wall_ms": 28.36,
+      "throughput_runs_per_second": 634.7,
+      "safe_outcome_rate": 1.0,
+      "average_latency_ms": 1.26,
+      "p95_latency_ms": 2.04,
+      "average_score": 72.67,
+      "llm_calls": 0,
+      "llm_latency_avg_ms": 0.0,
+      "llm_latency_p95_ms": 0.0,
+      "llm_calls_per_run": 0.0,
+      "tool_calls": 84,
+      "tool_call_breakdown": {
+        "demand_plan": 18,
+        "generate_plans": 27,
+        "verify_plans": 27,
+        "delivery_package": 12
+      },
+      "consistency": 1.0,
+      "baseline": {
+        "safe_proposal_rate": 0.6667,
+        "independent_verification": false,
+        "average_latency_ms": 0.22,
+        "p95_latency_ms": 0.32,
+        "average_score": 66.67,
+        "llm_calls": 0,
+        "tool_calls": 54,
+        "tool_call_breakdown": {
+          "demand_plan": 18,
+          "baseline_generate": 18,
+          "baseline_audit_verify": 18
+        }
+      },
+      "cases": [
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 2.04,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.32,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.74,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.41,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.26,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 0,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.68,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.71,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 0,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.02,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.22,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.77,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.24,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.74,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.33,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.19,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 1,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.75,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.76,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.17,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 1,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.96,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.25,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:0",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.91,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 6,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-2-SPEED",
+                "PLAN-2-COST",
+                "PLAN-2-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-2-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.23,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:1",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.82,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.32,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "rainstorm-ii",
+          "case_key": "rainstorm-ii:2",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.34,
+            "verdict": "rework",
+            "score": 36,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.28,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 36,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 36,
+              "approved_plan_ids": [],
+              "blockers": [
+                "COVERAGE-SHORTAGE"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "heatwave-iii",
+          "case_key": "heatwave-iii:3",
+          "round_index": 2,
+          "feasible": false,
+          "multi_agent": {
+            "elapsed_ms": 1.81,
+            "verdict": "rework",
+            "score": 0,
+            "safe_outcome": true,
+            "rounds": 2,
+            "tool_calls": 5,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 2,
+              "verify_plans": 2
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 0,
+              "approved_plan_ids": [],
+              "recommended_plan_id": null,
+              "blockers": [
+                "VEHICLE-WH-A",
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C",
+                "VEHICLE-WH-D"
+              ]
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "rework",
+            "score": 0.0,
+            "raw_audit_score": 44,
+            "safe_proposal": false,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "rework",
+              "score": 44,
+              "approved_plan_ids": [],
+              "blockers": [
+                "VEHICLE-WH-B",
+                "VEHICLE-WH-C"
+              ]
+            }
+          }
+        },
+        {
+          "scenario_id": "western-corridor-layout",
+          "case_key": "western-corridor-layout:4",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 0.74,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.18,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        },
+        {
+          "scenario_id": "southern-ring-layout",
+          "case_key": "southern-ring-layout:5",
+          "round_index": 2,
+          "feasible": true,
+          "multi_agent": {
+            "elapsed_ms": 1.09,
+            "verdict": "pass",
+            "score": 100,
+            "safe_outcome": true,
+            "rounds": 1,
+            "tool_calls": 4,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "generate_plans": 1,
+              "verify_plans": 1,
+              "delivery_package": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "PLAN-1-SPEED",
+                "PLAN-1-COST",
+                "PLAN-1-BALANCED"
+              ],
+              "recommended_plan_id": "PLAN-1-SPEED",
+              "blockers": []
+            }
+          },
+          "single_agent_greedy": {
+            "elapsed_ms": 0.25,
+            "verdict": "pass",
+            "score": 100.0,
+            "raw_audit_score": 100,
+            "safe_proposal": true,
+            "independent_verification": false,
+            "audit_note": "核验器仅作外部真值审计，不参与基线生成。",
+            "tool_calls": 3,
+            "tool_call_breakdown": {
+              "demand_plan": 1,
+              "baseline_generate": 1,
+              "baseline_audit_verify": 1
+            },
+            "llm_calls": 0,
+            "key_fields": {
+              "verdict": "pass",
+              "score": 100,
+              "approved_plan_ids": [
+                "BASELINE-NEAREST"
+              ],
+              "blockers": []
+            }
+          }
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "comparison": {
+    "multi_agent": {
+      "samples": 72,
+      "safe_outcome_rate": 1.0,
+      "average_latency_ms": 1.31,
+      "p95_latency_ms": 2.08,
+      "average_score": 72.67,
+      "llm_calls": 0,
+      "llm_latency_avg_ms": 0.0,
+      "llm_latency_p95_ms": 0.0,
+      "llm_calls_per_run": 0.0,
+      "tool_calls": 336,
+      "tool_call_breakdown": {
+        "demand_plan": 72,
+        "generate_plans": 108,
+        "verify_plans": 108,
+        "delivery_package": 48
+      }
+    },
+    "single_agent_greedy": {
+      "samples": 72,
+      "safe_proposal_rate": 0.6667,
+      "independent_verification": false,
+      "average_latency_ms": 0.22,
+      "p95_latency_ms": 0.3,
+      "average_score": 66.67,
+      "llm_calls": 0,
+      "tool_calls": 216,
+      "tool_call_breakdown": {
+        "demand_plan": 72,
+        "baseline_generate": 72,
+        "baseline_audit_verify": 72
+      }
+    },
+    "delta": {
+      "safe_outcome_rate": 0.3333,
+      "average_latency_ms": 1.09,
+      "average_score": 6.0
+    }
+  },
+  "limitations": [
+    "默认模式基准，不计入 LLM Planner 网络延迟。",
+    "并发为单进程 asyncio + to_thread 的任务级并发，不等同于多实例压测。",
+    "safe_outcome_rate 表示错误方案未流出：可行场景必须通过核验，不可行场景必须被拦截。",
+    "单 Agent 基线使用独立贪心生成器和外部真值审计；不可行场景按 0 分计入平均得分。"
+  ]
+}
