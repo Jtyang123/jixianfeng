@@ -34,6 +34,7 @@ TOOL_CONTRACTS = {
 }
 
 MANDATORY_TOOLS = ("demand_plan", "generate_plans", "verify_plans", "delivery_package")
+REPLAN_TOOLS = ("generate_plans", "verify_plans", "delivery_package")
 
 
 def _fallback_plan(available_tools: list[str]) -> dict:
@@ -132,7 +133,8 @@ class LLMPlanner:
         )
 
     async def _request_json(self, system_prompt: str, user_payload: dict) -> dict | None:
-        stage = "decide" if user_payload.get("task") == "decide_next_step" else "plan"
+        task = user_payload.get("task")
+        stage = "decide" if task == "decide_next_step" else ("replan" if task == "create_replan" else "plan")
         if self._fallback_locked:
             return None
         if not self.enabled:
@@ -154,10 +156,11 @@ class LLMPlanner:
             )
             return None
 
+        max_tokens = 400 if task == "decide_next_step" else (700 if task == "create_replan" else 1200)
         base_request = {
             "model": self.model,
             "temperature": LLM_TEMPERATURE,
-            "max_tokens": 1400,
+            "max_tokens": max_tokens,
             "reasoning_effort": "none",
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -238,6 +241,73 @@ class LLMPlanner:
             "reason": str(raw.get("reason") or TOOL_CONTRACTS.get(tool, ""))[:500],
             "input": raw.get("input") if isinstance(raw.get("input"), dict) else {},
             "expected_output": str(raw.get("expected_output") or f"{tool}_result")[:200],
+        }
+
+    async def create_replan(self, base_plan: dict, directive: dict, available_tools: list[str]) -> dict:
+        allowed_tools = {tool for tool in available_tools if tool in REPLAN_TOOLS}
+        base_by_tool = {
+            str(item.get("tool")): item
+            for item in (base_plan or {}).get("steps", [])
+            if isinstance(item, dict) and item.get("tool") in allowed_tools
+        }
+        fallback_steps = [
+            dict(base_by_tool.get(tool) or {
+                "id": f"R{index}", "tool": tool,
+                "reason": "沿用上一轮计划并修复核验阻断。",
+                "input": {}, "expected_output": f"{tool}_result",
+            })
+            for index, tool in enumerate(REPLAN_TOOLS, start=1)
+            if tool in allowed_tools
+        ]
+        fallback = {
+            "mode": "deterministic-replan",
+            "summary": "LLM 轻量重规划不可用，复用上一轮方案生成、核验与交付步骤。",
+            "steps": fallback_steps,
+        }
+        raw = await self._request_json(PLANNER_SYSTEM_PROMPT, {
+            "task": "create_replan",
+            "blocker_summary": directive.get("issue_codes", []),
+            "required_fixes": directive.get("tool_overrides", []),
+            "experience_context": directive.get("experience_context", []),
+            "available_tools": [
+                {"name": tool, "description": TOOL_CONTRACTS[tool]}
+                for tool in REPLAN_TOOLS if tool in allowed_tools
+            ],
+            "output_schema": {
+                "summary": "string",
+                "steps": [{
+                    "id": "string", "tool": "generate_plans|verify_plans|delivery_package",
+                    "reason": "string", "input": "object", "expected_output": "string",
+                }],
+            },
+            "constraints": [
+                "只重跑 generate_plans、verify_plans、delivery_package",
+                "不得重新读取或重新拆分需求",
+                "verify_plans 未通过时不得生成 delivery_package",
+                "reason 不超过40字，expected_output 不超过20字",
+            ],
+        })
+        if not raw:
+            return fallback
+        generated = []
+        for index, item in enumerate(raw.get("steps") or [], start=1):
+            if not isinstance(item, dict):
+                continue
+            normalized = self._normalize_step(item, index, allowed_tools)
+            if normalized:
+                generated.append(normalized)
+        by_tool = {item["tool"]: item for item in generated}
+        steps = [
+            by_tool.get(tool) or next((item for item in fallback_steps if item.get("tool") == tool), None)
+            for tool in REPLAN_TOOLS if tool in allowed_tools
+        ]
+        steps = [item for item in steps if item]
+        if not steps:
+            return fallback
+        return {
+            "mode": "llm-replan",
+            "summary": str(raw.get("summary") or "LLM 已完成轻量重规划。")[:500],
+            "steps": steps,
         }
 
     async def create_plan(self, user_request: dict, available_tools: list[str]) -> dict:

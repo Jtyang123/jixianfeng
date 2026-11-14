@@ -602,7 +602,7 @@ async def run_planner_orchestration(
             return {"items": result.get("items", 0), "available": result.get("available", 0)}
         if tool == "generate_plans":
             plans = result.get("plans", [])
-            return {"plan_count": len(plans), "plan_ids": [item.get("plan_id") for item in plans], "metrics": [item.get("metrics", {}) for item in plans]}
+            return {"plan_count": len(plans), "plan_ids": [item.get("plan_id") for item in plans]}
         if tool == "verify_plans":
             return {"verdict": result.get("verdict"), "score": result.get("score"), "blockers": result.get("blocker_summary", [])}
         if tool == "delivery_package":
@@ -805,6 +805,21 @@ async def run_planner_orchestration(
                 "repair_policy": "",
                 "deterministic": True,
             }
+        elif (
+            tool == "generate_plans"
+            and remaining_decision
+            and remaining_decision[0].get("tool") == "verify_plans"
+            and int(result_summary.get("plan_count") or 0) > 0
+        ):
+            db.record_agent_performance("planner", run_id, "decide", True, 0.0, "skipped")
+            decision = {
+                "mode": "deterministic",
+                "decision": "continue",
+                "next_tool": "verify_plans",
+                "reason": "已生成候选方案，按计划直接进入独立核验。",
+                "repair_policy": "",
+                "deterministic": True,
+            }
         elif tool == "delivery_package" and delivery is not None:
             db.record_agent_performance("planner", run_id, "decide", True, 0.0, "")
             decision = {
@@ -868,15 +883,20 @@ async def run_planner_orchestration(
             prompt_adaptations.append(adaptation)
             attempt += 1
             replan_started = time.perf_counter()
-            current_plan = await timed_planner_call(
-                "create_plan", planner.create_plan,
-                {**planner_request, "feedback": {
-                    "issue_codes": verification.get("blocker_summary", []),
-                    "required_fixes": verification.get("required_fixes", []),
-                    "experience_context": experience_context,
-                }},
-                available_tools,
-            )
+            create_replan = getattr(planner, "create_replan", None)
+            if callable(create_replan):
+                current_plan = await timed_planner_call(
+                    "create_replan", create_replan, plan, directive, available_tools,
+                )
+            else:
+                current_plan = {
+                    "mode": "deterministic-replan",
+                    "summary": "复用上一轮计划中的方案生成、核验与交付步骤。",
+                    "steps": [
+                        item for item in (plan or {}).get("steps", [])
+                        if item.get("tool") in {"generate_plans", "verify_plans", "delivery_package"}
+                    ],
+                }
             append_stage_metric(stage_metrics, "verification", replan_started, "planner", attempt)
             filtered_tools = sorted(set(successful_tools) & DETERMINISTIC_STEPS)
             current_plan["steps"] = [
