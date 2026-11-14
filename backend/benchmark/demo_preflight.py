@@ -159,6 +159,7 @@ def _recent_run_summary(db: Database) -> dict:
             "run_id": latest.get("id"),
             "scenario_id": latest.get("scenario_id"),
             "status": latest.get("status"),
+            "verdict": (result.get("final_verification") or {}).get("verdict"),
             "runtime": result.get("runtime"),
             "total_ms": _run_duration_ms(latest),
             "agentarts_trace_count": consistency["trace_count"],
