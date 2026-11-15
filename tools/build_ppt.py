@@ -29,9 +29,9 @@ TARGET = DOCS / "急先锋_项目讲解PPT.pptx"
 # ── 队伍信息：提交前只需改这一段，然后重跑 py tools/build_ppt.py ──────────
 TEAM = {
     "name": "OKC",
-    "speaker": "【待填】",          # 答辩/演讲人姓名
-    "advisor": "【待填】",          # 指导教师
-    "school": "【待填】",           # 学校 / 单位
+    "speaker": "杨鄢然",           # 答辩/演讲人姓名
+    "advisor": "李哲",             # 指导教师
+    "school": "武汉学院",          # 学校 / 单位
     "repo": "github.com/Jtyang123/jixianfeng",
     "members": ["杨鄢然", "赵立薇", "周梦瑶"],
 }
@@ -537,7 +537,7 @@ def build() -> Path:
         text(slide, 0.94, top + 0.16, 1.5, 0.26, name, 10, BLUE, True)
         text(slide, 2.3, top + 0.17, 10.0, 0.24, body, 9.5, MUTED)
     text(slide, 0.74, 6.62, 11.6, 0.26,
-         "注：测试与文档由三人共同承担；学校与指导教师信息由团队在提交前补齐。", 8.5, ORANGE)
+         "注：测试与文档由三人共同承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
     page_foot(slide, 15)
 
     # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────
