@@ -4,8 +4,11 @@ import { ArrowRight, LockKeyhole, RadioTower, ShieldCheck, UserRound } from '@lu
 import { api } from '../api'
 
 const emit = defineEmits(['success'])
-const DEMO_USERNAME = 'admin'
-const DEMO_PASSWORD = '4JHcg071wjryH1e_uupnZX1Q'
+// 演示凭据只在构建期注入，源码与仓库中不保留明文密码。
+// 本地/提交包构建：在 .env 里设置 VITE_DEMO_USERNAME / VITE_DEMO_PASSWORD。
+const DEMO_USERNAME = import.meta.env.VITE_DEMO_USERNAME || ''
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || ''
+const hasDemoHint = Boolean(DEMO_USERNAME && DEMO_PASSWORD)
 const username = ref(DEMO_USERNAME)
 const password = ref(DEMO_PASSWORD)
 const loading = ref(false)
@@ -46,12 +49,14 @@ async function submit() {
         <div class="eyebrow">SECURE ACCESS</div>
         <h2>登录调度平台</h2>
 
-        <div class="auth-demo-credentials" data-testid="demo-credentials"><strong>演示账号</strong><code>{{ DEMO_USERNAME }}</code><strong>密码</strong><code>{{ DEMO_PASSWORD }}</code></div>
+        <div v-if="hasDemoHint" class="auth-demo-credentials" data-testid="demo-credentials"><strong>演示账号</strong><code>{{ DEMO_USERNAME }}</code><strong>密码</strong><code>{{ DEMO_PASSWORD }}</code></div>
+        <p v-else>请使用管理员分配的值班账号登录。首次启动的初始密码见项目根目录 <code>data/bootstrap-admin-password.txt</code>。</p>
         <label><span>用户名</span><div class="auth-input"><UserRound :size="16" /><input v-model="username" autocomplete="username" maxlength="64" placeholder="请输入用户名" /></div></label>
         <label><span>密码</span><div class="auth-input"><LockKeyhole :size="16" /><input v-model="password" type="password" autocomplete="current-password" maxlength="200" placeholder="请输入密码" /></div></label>
         <div v-if="error" class="inline-error">{{ error }}</div>
         <button class="primary-action auth-submit" type="submit" :disabled="loading">{{ loading ? '登录中...' : '进入平台' }}<ArrowRight :size="16" /></button>
-        <small>演示密码仅用于本地评审；正式部署请修改密码并关闭自动填入。</small>
+        <small v-if="hasDemoHint">演示口令仅用于评审环境；正式部署请修改密码并移除构建期注入。</small>
+        <small v-else>初始管理员密码保存在服务器本地，不在网页中暴露。</small>
       </form>
     </section>
   </main>

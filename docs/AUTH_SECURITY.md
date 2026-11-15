@@ -26,6 +26,13 @@
 - 启用登录后，外部事件/GPS 接口必须配置 `INTEGRATION_API_KEY`。
 - 响应包含 `X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy` 和 `Permissions-Policy`。
 
+## 凭据管理约定
+
+- 仓库内**不出现任何明文密码**：`.env.example` 的 `AUTH_BOOTSTRAP_PASSWORD` 留空，`.env` 与 `frontend/.env` 均被 `.gitignore` 覆盖。
+- 首次启动时若密码为空，后端随机生成 18 字节口令并写入 `data/bootstrap-admin-password.txt`，登录后应立即改密并删除该文件。
+- 登录页**默认不预填任何凭据**。如确需在评审机上一键进入，可在构建前于 `frontend/.env`（已被忽略）设置 `VITE_DEMO_USERNAME` / `VITE_DEMO_PASSWORD`，凭据只会进 `dist` 产物，不进入源码与仓库；提交前请清空。
+- 提供提交包时请用专用的演示口令，不要复用公共账号密码；正式部署必须重新设置密码并清空注入项。
+
 ## 生产环境要求
 
 ```env
