@@ -26,6 +26,16 @@ SHOTS = DOCS / "screenshots"
 PPT_TEMPLATE = Path(r"C:\Users\22103\Desktop\2026未来杯PPT模版.pptx")
 TARGET = DOCS / "急先锋_项目讲解PPT.pptx"
 
+# ── 队伍信息：提交前只需改这一段，然后重跑 py tools/build_ppt.py ──────────
+TEAM = {
+    "name": "OKC",
+    "speaker": "【待填】",          # 答辩/演讲人姓名
+    "advisor": "【待填】",          # 指导教师
+    "school": "【待填】",           # 学校 / 单位
+    "repo": "github.com/Jtyang123/jixianfeng",
+    "members": ["【待填】", "【待填】", "【待填】", "【待填】"],
+}
+
 # 模版主题色（取自模版 theme1.xml）
 BLUE = RGBColor(0x48, 0x74, 0xCB)
 BLUE_DEEP = RGBColor(0x1B, 0x36, 0x7A)
@@ -204,10 +214,11 @@ def build() -> Path:
     rect(slide, 0.98, 3.22, 1.55, 0.055, ORANGE)
     text(slide, 0.95, 3.44, 9.8, 0.42, "生成 · 独立核验 · 结构化退回 · 重算 · 人工审批 · 可复现交付",
          13.5, RGBColor(0xBB, 0xCF, 0xF0))
-    info = "队伍名称：【待填】　　演讲人：【待填】　　指导教师：【待填】　　学校：【待填】"
+    info = (f"队伍名称：{TEAM['name']}　　演讲人：{TEAM['speaker']}　　"
+            f"指导教师：{TEAM['advisor']}　　学校：{TEAM['school']}")
     text(slide, 0.95, 4.28, 10.2, 0.3, info, 13, RGBColor(0x9F, 0xB8, 0xE6), True)
     text(slide, 0.95, 4.78, 10.2, 0.3,
-         "仓库：github.com/   ｜   演示数据均已标识，不替代现场应急指挥", 10,
+         f"仓库：{TEAM['repo']}   ｜   演示数据均已标识，不替代现场应急指挥", 10,
          RGBColor(0x82, 0x9C, 0xCE))
 
     # ── 02 目录 ──────────────────────────────────────────────────────────
@@ -449,7 +460,7 @@ def build() -> Path:
     page_title(slide, "03　应用成效", "六阶段耗时可归因，基准可复现")
     picture(slide, SHOTS / "ppt_stage.png", 0.66, 1.9, 7.55, 4.15, trim=(0.0, 0.035, 0.0, 0.0))
     evidence = [
-        ("72", "样本基准", "6 场景 × 4 难度 × 3 重复", BLUE),
+        ("72", "样本基准", "6 场景 × 3 重复 × 4 并发档", BLUE),
         ("100%", "安全结果率", "单 Agent 贪心基线 66.67%", GREEN),
         ("72.67", "多 Agent 平均评分", "基线 66.67，提升 +6.0", ORANGE),
         ("137 / 7", "后端 / 前端测试", "全部通过，PG 项 3 项跳过", TEAL),
@@ -506,10 +517,10 @@ def build() -> Path:
     slide = prs.slides.add_slide(content)
     page_title(slide, "05　团队介绍", "四人分工覆盖全链路，工程化能力可验证")
     members = [
-        ("队长【待填】", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
-        ("成员【待填】", "后端与算法", "工具层、库存原子扣减、\nRAG 检索与基准评测。", ORANGE),
-        ("成员【待填】", "前端与可视化", "工作台、地图态势、\n轨迹面板与阶段耗时。", TEAL),
-        ("成员【待填】", "测试与文档", "137 项后端测试、CI、\n方案书与演示材料。", GREEN),
+        (f"队长{TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
+        (f"成员{TEAM['members'][1]}", "后端与算法", "工具层、库存原子扣减、\nRAG 检索与基准评测。", ORANGE),
+        (f"成员{TEAM['members'][2]}", "前端与可视化", "工作台、地图态势、\n轨迹面板与阶段耗时。", TEAL),
+        (f"成员{TEAM['members'][3]}", "测试与文档", "137 项后端测试、CI、\n方案书与演示材料。", GREEN),
     ]
     for index, (name, role, body, accent) in enumerate(members):
         card(slide, 0.66 + index * 3.1, 1.94, 2.86, 2.16, name, role + "\n\n" + body, accent,

@@ -17,17 +17,34 @@ EXCLUDED_DIR_NAMES = {
 EXCLUDED_FILE_NAMES = {".env", "$null", "dict", ".DS_Store"}
 EXCLUDED_FILE_SUFFIXES = (".db", ".db-journal", ".db-wal", ".db-shm", ".pyc", ".pid", ".log")
 
+# 评审不应看到的内部管理文档：自查报告、待办清单、自评表、赛题原文摘录。
+INTERNAL_DOCS = {
+    "TRACK1_COMPLIANCE_REVIEW.md",
+    "初赛提交清单.md",
+    "评分标准对齐清单.md",
+    "competition_deck_text.txt",
+}
+INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
+
 
 def _excluded_dir(name: str) -> bool:
-    return (
-        name.startswith(".pytest_tmp")
-        or name.startswith(".edge-")
-        or name in EXCLUDED_DIR_NAMES
-    )
+    # 隐藏目录一律排除（.github 是 CI 证据，必须保留）
+    if name.startswith(".") and name != ".github":
+        return True
+    return name in EXCLUDED_DIR_NAMES
 
 
 def _excluded_file(name: str) -> bool:
     return name in EXCLUDED_FILE_NAMES or name.endswith(EXCLUDED_FILE_SUFFIXES)
+
+
+def _excluded_internal_doc(relative: Path) -> bool:
+    """内部管理文档不进演示包，避免评审看到自查与待办。"""
+    if relative.parts[:1] != ("docs",):
+        return False
+    if relative.name in INTERNAL_DOCS:
+        return True
+    return relative.name.endswith(INTERNAL_DOC_SUFFIXES)
 
 
 def _copy_ignore(directory: str, names: list[str]) -> set[str]:
@@ -37,7 +54,7 @@ def _copy_ignore(directory: str, names: list[str]) -> set[str]:
         path = parent / name
         if path.is_dir() and _excluded_dir(name):
             ignored.add(name)
-        elif path.is_file() and _excluded_file(name):
+        elif path.is_file() and (_excluded_file(name) or _excluded_internal_doc(path.relative_to(ROOT))):
             ignored.add(name)
     return ignored
 
@@ -63,6 +80,8 @@ def _verify(package: Path) -> None:
             violations.append(str(relative))
         if path.is_file() and _excluded_file(path.name):
             violations.append(str(relative))
+        if path.is_file() and _excluded_internal_doc(relative):
+            violations.append(f"内部文档: {relative}")
 
     top_dirs: list[tuple[str, int]] = []
     for child in package.iterdir():
@@ -75,6 +94,17 @@ def _verify(package: Path) -> None:
     print("Top directories:")
     for name, size in top_dirs[:10]:
         print(f"  {name}: {_human_size(size)}")
+
+    print("Key materials:")
+    for item in files:
+        relative = item.relative_to(package)
+        if relative.parts[:1] == ("docs",) and (
+            item.suffix in {".pdf", ".pptx"} or item.name == "项目白皮书.md"
+        ):
+            print(f"  OK  {relative} ({_human_size(item.stat().st_size)})")
+    if not any(f.suffix == ".pdf" for f in files if f.relative_to(package).parts[:1] == ("docs",)):
+        print("  提示：本包不含白皮书 PDF，白皮书按赛事要求单独提交")
+
     if len(files) > 400:
         print(f"WARNING: package has {len(files)} files; review before submission")
     if violations:
@@ -106,9 +136,10 @@ def build() -> None:
         "浏览器打开 `http://127.0.0.1:8010`。\n\n"
         "如果本机没有 PostgreSQL，系统会自动回退 SQLite；公网部署使用 `Dockerfile` 与 `docker-compose.yml`，详见 `deploy/DEPLOYMENT.md`。\n\n"
         "## 材料\n\n"
-        "- `docs/急先锋_项目方案书.pdf`\n- `docs/急先锋_项目讲解PPT.pptx`\n"
-        "- `docs/DEMO_SCRIPT.md`\n- `docs/DEMO_VIDEO_SCRIPT.md`\n- `docs/答辩问答.md`\n- `docs/评分标准对齐清单.md`\n"
-        "- `docs/初赛提交清单.md`\n- `docs/screenshots/`\n\n"
+        "- `docs/急先锋_项目讲解PPT.pptx`（16 页，官方模版）\n"
+        "- `docs/项目白皮书.md`\n"
+        "- `docs/DEMO_SCRIPT.md`\n- `docs/DEMO_VIDEO_SCRIPT.md`\n- `docs/答辩问答.md`\n"
+        "- `docs/AGENTARTS_VERIFICATION.md`\n- `docs/screenshots/`\n\n"
         "## 重要说明\n\n华为云 AgentArts 的真实调用需要配置 `AGENTARTS_BASE_URL`、`AGENTARTS_API_KEY` 和模型服务。"
         "未配置时，系统使用本地确定性回退以保证演示可运行。\n",
         encoding="utf-8",
