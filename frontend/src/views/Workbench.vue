@@ -22,7 +22,7 @@ const runSource = ref('demo')
 const selectedEventId = ref('')
 const network = ref({})
 const inventoryData = ref({ summary: [], snapshot: null })
-const selectedScenarioId = ref('rainstorm-ii')
+const selectedScenarioId = ref('')
 const demandItems = ref([])
 const weights = ref({ speed: 38, cost: 27, risk: 35 })
 const loading = ref(true)
@@ -385,7 +385,7 @@ async function loadData() {
       if (eventRows.length) applyOperationalEvent(eventRows[0].id)
       else runSource.value = 'event'
     } else {
-      applyScenario(scenarioRows.find((item) => item.id === 'rainstorm-ii')?.id || scenarioRows[0]?.id || 'rainstorm-ii')
+      applyScenario(scenarioRows[0]?.id || '')
     }
     await restoreRunFromQuery()
   } catch (exc) {

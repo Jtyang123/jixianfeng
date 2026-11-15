@@ -1256,7 +1256,8 @@ class Database:
 
     def scenario_rows(self) -> list[dict]:
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM scenarios ORDER BY id").fetchall()
+            # Historical runs keep the retired scenario row; new runs must not select it.
+            rows = conn.execute("SELECT * FROM scenarios WHERE id <> 'rainstorm-ii' ORDER BY id").fetchall()
             result = []
             for row in rows:
                 item = dict(row)

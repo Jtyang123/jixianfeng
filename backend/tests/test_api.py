@@ -27,8 +27,10 @@ def test_api_run_flow(tmp_path: Path):
     materials = client.get("/api/materials").json()
     scenarios = client.get("/api/scenarios").json()
     assert materials and scenarios
+    assert all(item["id"] != "rainstorm-ii" for item in scenarios)
 
-    scenario = next(item for item in scenarios if item['id'] == 'rainstorm-ii')
+    scenario = test_db.get_scenario("rainstorm-ii")
+    assert scenario is not None
     assert scenario["lat"] is not None
     assert scenario["lng"] is not None
     material_ids = {item["code"]: item["id"] for item in materials}
