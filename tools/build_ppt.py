@@ -515,11 +515,11 @@ def build() -> Path:
 
     # ── 15 05 团队介绍 ──────────────────────────────────────────────────
     slide = prs.slides.add_slide(content)
-    page_title(slide, "05　团队介绍", "三人分工覆盖全链路，工程化能力可验证")
+    page_title(slide, "05　团队介绍", "队长主导全链路实现，工程化能力可验证")
     members = [
         (f"队长 {TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
-        (f"成员 {TEAM['members'][1]}", "后端与算法", "工具层、库存原子扣减、\nRAG 检索与基准评测。", ORANGE),
-        (f"成员 {TEAM['members'][2]}", "前端与可视化", "工作台、地图态势、\n轨迹面板与阶段耗时。", TEAL),
+        (f"成员 {TEAM['members'][1]}", "队员", "参与项目方案讨论。\n\n武汉学院在校本科生。", ORANGE),
+        (f"成员 {TEAM['members'][2]}", "队员", "参与项目方案讨论。\n\n武汉学院在校本科生。", TEAL),
     ]
     for index, (name, role, body, accent) in enumerate(members):
         card(slide, 0.66 + index * 3.9, 1.94, 3.6, 1.86, name, role + "\n\n" + body, accent,
@@ -537,7 +537,7 @@ def build() -> Path:
         text(slide, 0.94, top + 0.16, 1.5, 0.26, name, 10, BLUE, True)
         text(slide, 2.3, top + 0.17, 10.0, 0.24, body, 9.5, MUTED)
     text(slide, 0.74, 6.62, 11.6, 0.26,
-         "注：测试与文档由三人共同承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
+         "注：需求、实现、测试与文档均由队长承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
     page_foot(slide, 15)
 
     # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────

@@ -6,13 +6,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "release"
+DOCS = ROOT / "docs"
 PACKAGE = RELEASE / "急先锋_初赛提交包"
 ZIP_PATH = RELEASE / "急先锋_初赛提交包.zip"
 
 EXCLUDED_DIR_NAMES = {
     ".venv", "venv", "env", "node_modules", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", "htmlcov", ".git", "release", "data", "logs",
-    ".slidep", ".workbuddy", ".vscode", ".idea",
+    ".slidep", ".workbuddy", ".vscode", ".idea", "ppt_build",
 }
 EXCLUDED_FILE_NAMES = {".env", "$null", "dict", ".DS_Store"}
 EXCLUDED_FILE_SUFFIXES = (".db", ".db-journal", ".db-wal", ".db-shm", ".pyc", ".pid", ".log")
@@ -150,6 +151,15 @@ def build() -> None:
     sample = Path(r"D:\FarmMatch_库存数据.xlsx")
     if sample.exists():
         shutil.copy2(sample, PACKAGE / "docs" / "FarmMatch_库存数据.xlsx")
+
+    # PPT 预览面板会长期占用 docs/ 下的成品，导致覆盖失败；若存在更新的重新构建版本，以它为准
+    deck_target = PACKAGE / "docs" / "急先锋_项目讲解PPT.pptx"
+    deck_rebuilt = ROOT / "ppt_build" / "急先锋_项目讲解PPT.pptx"
+    deck_original = DOCS / "急先锋_项目讲解PPT.pptx"
+    if deck_rebuilt.exists() and deck_target.exists():
+        if deck_original.exists() and deck_rebuilt.stat().st_mtime > deck_original.stat().st_mtime:
+            shutil.copy2(deck_rebuilt, deck_target)
+            print("Deck: 使用 ppt_build 中的较新版本")
 
     (PACKAGE / "提交说明.md").write_text(
         "# 急先锋初赛提交包\n\n"
