@@ -45,7 +45,7 @@ async function submit() {
       <form class="auth-card" @submit.prevent="submit">
         <div class="eyebrow">SECURE ACCESS</div>
         <h2>登录调度平台</h2>
-        <p>评委演示环境已自动填入管理员账号，直接点击“进入平台”。</p>
+
         <div class="auth-demo-credentials" data-testid="demo-credentials"><strong>演示账号</strong><code>{{ DEMO_USERNAME }}</code><strong>密码</strong><code>{{ DEMO_PASSWORD }}</code></div>
         <label><span>用户名</span><div class="auth-input"><UserRound :size="16" /><input v-model="username" autocomplete="username" maxlength="64" placeholder="请输入用户名" /></div></label>
         <label><span>密码</span><div class="auth-input"><LockKeyhole :size="16" /><input v-model="password" type="password" autocomplete="current-password" maxlength="200" placeholder="请输入密码" /></div></label>
