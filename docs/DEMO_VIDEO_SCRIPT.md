@@ -6,7 +6,7 @@
 
 ## 录制前检查单
 
-1. 运行 `cd backend && ../.venv/Scripts/python.exe -m benchmark.demo_preflight`，确认 `blockers=[]`，`latest_run.status=awaiting_approval`，`latest_run.verdict=pass`。
+1. 运行 `cd backend && ../.venv/Scripts/python.exe -m benchmark.demo_preflight`，确认 `blockers` 为空数组、`recent_runs.needs_human_ratio=0.0`、`agentarts.online_rate=1.0`、`recommended_demo_mode=llm-planner`；同一次输出里 `preferred_scenarios` 会把 `heatwave-iii`、`rainstorm-ii` 排在前面。
 2. 正式录制前 dry-run 一次完整 run，确认运行详情显示 `final_verification.verdict=pass` 且状态为 `awaiting_approval`。
 3. 关闭所有显示 `.env`、API Key、Authorization、终端历史记录和本地数据库路径的窗口；录制画面中禁止出现密钥。
 4. 浏览器缩放建议 80%-90%，关闭无关标签页、聊天软件通知和系统弹窗。

@@ -396,7 +396,7 @@ def build_ppt_legacy() -> Path:
     add_picture(slide, SHOTS / "stage_metrics.png", .65, 1.42, 7.65, 5.45)
     add_card(slide, 8.65, 1.55, 3.95, 1.15, "匹配赛题评分", "功能完整性 · 技术可靠性\nAI 合理性 · 文档质量", TEAL, "25×4")
     add_card(slide, 8.65, 2.92, 3.95, 1.15, "量化证据", "72 样本 · 100% vs 66.67%\n评分 72.67 vs 66.67", ORANGE, "BENCH")
-    add_card(slide, 8.65, 4.29, 3.95, 1.15, "可复现证据", "scope deterministic-core only\n后端 137 / 前端 7", RGBColor(83, 107, 72), "REPRO")
+    add_card(slide, 8.65, 4.29, 3.95, 1.15, "可复现证据", "scope deterministic-core only\n后端 137 / 前端 9", RGBColor(83, 107, 72), "REPRO")
     add_card(slide, 8.65, 5.66, 3.95, 1.15, "诚实边界", "演练数据 · 人工审批\n不宣称真实自动指挥", MUTED, "BOUND")
     add_footer(slide, 14)
 

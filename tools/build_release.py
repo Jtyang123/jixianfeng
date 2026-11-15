@@ -33,12 +33,19 @@ INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
 DUPLICATED_ARTIFACTS = {
     "赛题一+OKC+急先锋_项目白皮书.pdf",
     "赛题一+OKC+急先锋_项目白皮书.docx",
+    # 方案书 HTML 与 05_其他材料 的附录重复，代码包只留 md 源
+    "方案书.html",
+    # 声明模板由 04_相关证明材料 单独提交，代码包里不需要
+    "OKC_项目原创性声明_待签字.docx",
 }
 
 
 def _excluded_dir(name: str) -> bool:
     # 隐藏目录一律排除（.github 是 CI 证据，必须保留）
     if name.startswith(".") and name != ".github":
+        return True
+    # tmp_/build_ 这类临时工作目录不得进包（曾把 5MB 的临时演示稿带进来）
+    if name.startswith(("tmp", "build_", "_")):
         return True
     return name in EXCLUDED_DIR_NAMES
 
