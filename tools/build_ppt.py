@@ -33,7 +33,7 @@ TEAM = {
     "advisor": "【待填】",          # 指导教师
     "school": "【待填】",           # 学校 / 单位
     "repo": "github.com/Jtyang123/jixianfeng",
-    "members": ["杨郁然", "赵立薇", "周梦瑶"],
+    "members": ["杨鄢然", "赵立薇", "周梦瑶"],
 }
 
 # 模版主题色（取自模版 theme1.xml）
