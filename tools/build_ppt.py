@@ -33,7 +33,7 @@ TEAM = {
     "advisor": "【待填】",          # 指导教师
     "school": "【待填】",           # 学校 / 单位
     "repo": "github.com/Jtyang123/jixianfeng",
-    "members": ["【待填】", "【待填】", "【待填】", "【待填】"],
+    "members": ["杨郁然", "赵立薇", "周梦瑶"],
 }
 
 # 模版主题色（取自模版 theme1.xml）
@@ -515,30 +515,29 @@ def build() -> Path:
 
     # ── 15 05 团队介绍 ──────────────────────────────────────────────────
     slide = prs.slides.add_slide(content)
-    page_title(slide, "05　团队介绍", "四人分工覆盖全链路，工程化能力可验证")
+    page_title(slide, "05　团队介绍", "三人分工覆盖全链路，工程化能力可验证")
     members = [
-        (f"队长{TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
-        (f"成员{TEAM['members'][1]}", "后端与算法", "工具层、库存原子扣减、\nRAG 检索与基准评测。", ORANGE),
-        (f"成员{TEAM['members'][2]}", "前端与可视化", "工作台、地图态势、\n轨迹面板与阶段耗时。", TEAL),
-        (f"成员{TEAM['members'][3]}", "测试与文档", "137 项后端测试、CI、\n方案书与演示材料。", GREEN),
+        (f"队长 {TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
+        (f"成员 {TEAM['members'][1]}", "后端与算法", "工具层、库存原子扣减、\nRAG 检索与基准评测。", ORANGE),
+        (f"成员 {TEAM['members'][2]}", "前端与可视化", "工作台、地图态势、\n轨迹面板与阶段耗时。", TEAL),
     ]
     for index, (name, role, body, accent) in enumerate(members):
-        card(slide, 0.66 + index * 3.1, 1.94, 2.86, 2.16, name, role + "\n\n" + body, accent,
+        card(slide, 0.66 + index * 3.9, 1.94, 3.6, 1.86, name, role + "\n\n" + body, accent,
              None, 12.5, 10)
-    text(slide, 0.7, 4.38, 6.0, 0.3, "团队优势", 13, INK, True)
+    text(slide, 0.7, 4.14, 6.0, 0.3, "团队优势", 13, INK, True)
     strengths = [
         ("可验证", "后端 137 项、前端 7 项测试全绿，CI 可复跑。"),
         ("可复现", "固定库存快照与运行事件，历史方案可对照重放。"),
         ("守边界", "演练数据明确标识，不宣称真实自动指挥。"),
     ]
     for index, (name, body) in enumerate(strengths):
-        top = 4.82 + index * 0.62
-        rect(slide, 0.7, top, 11.7, 0.52, CARD, LINE, rounded=True)
-        rect(slide, 0.7, top, 0.05, 0.52, BLUE)
-        text(slide, 0.94, top + 0.14, 1.5, 0.26, name, 10, BLUE, True)
-        text(slide, 2.3, top + 0.15, 10.0, 0.24, body, 9.5, MUTED)
+        top = 4.58 + index * 0.66
+        rect(slide, 0.7, top, 11.7, 0.56, CARD, LINE, rounded=True)
+        rect(slide, 0.7, top, 0.05, 0.56, BLUE)
+        text(slide, 0.94, top + 0.16, 1.5, 0.26, name, 10, BLUE, True)
+        text(slide, 2.3, top + 0.17, 10.0, 0.24, body, 9.5, MUTED)
     text(slide, 0.74, 6.62, 11.6, 0.26,
-         "注：姓名、学校与指导教师信息由团队在提交前补齐，本节仅呈现分工与能力结构。", 8.5, ORANGE)
+         "注：测试与文档由三人共同承担；学校与指导教师信息由团队在提交前补齐。", 8.5, ORANGE)
     page_foot(slide, 15)
 
     # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────

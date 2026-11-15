@@ -26,6 +26,12 @@ INTERNAL_DOCS = {
 }
 INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
 
+# 与提交目录 01_项目白皮书 重复的成品，演示包只保留 md 源文件
+DUPLICATED_ARTIFACTS = {
+    "赛题一+OKC+急先锋_项目白皮书.pdf",
+    "赛题一+OKC+急先锋_项目白皮书.docx",
+}
+
 
 def _excluded_dir(name: str) -> bool:
     # 隐藏目录一律排除（.github 是 CI 证据，必须保留）
@@ -42,7 +48,7 @@ def _excluded_internal_doc(relative: Path) -> bool:
     """内部管理文档不进演示包，避免评审看到自查与待办。"""
     if relative.parts[:1] != ("docs",):
         return False
-    if relative.name in INTERNAL_DOCS:
+    if relative.name in INTERNAL_DOCS or relative.name in DUPLICATED_ARTIFACTS:
         return True
     return relative.name.endswith(INTERNAL_DOC_SUFFIXES)
 
@@ -81,7 +87,8 @@ def _verify(package: Path) -> None:
         if path.is_file() and _excluded_file(path.name):
             violations.append(str(relative))
         if path.is_file() and _excluded_internal_doc(relative):
-            violations.append(f"内部文档: {relative}")
+            kind = "重复成品" if relative.name in DUPLICATED_ARTIFACTS else "内部文档"
+            violations.append(f"{kind}: {relative}")
 
     top_dirs: list[tuple[str, int]] = []
     for child in package.iterdir():
