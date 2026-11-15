@@ -1256,8 +1256,8 @@ class Database:
 
     def scenario_rows(self) -> list[dict]:
         with self.connect() as conn:
-            # Historical runs keep the retired scenario row; new runs must not select it.
-            rows = conn.execute("SELECT * FROM scenarios WHERE id <> 'rainstorm-ii' ORDER BY id").fetchall()
+            # Demo selectors exclude retired scenarios and event-derived scenarios.
+            rows = conn.execute("SELECT * FROM scenarios WHERE id <> 'rainstorm-ii' AND id NOT LIKE 'event-%' ORDER BY id").fetchall()
             result = []
             for row in rows:
                 item = dict(row)

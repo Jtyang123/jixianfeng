@@ -28,6 +28,7 @@ def test_api_run_flow(tmp_path: Path):
     scenarios = client.get("/api/scenarios").json()
     assert materials and scenarios
     assert all(item["id"] != "rainstorm-ii" for item in scenarios)
+    assert all(not item["id"].startswith("event-") for item in scenarios)
 
     scenario = test_db.get_scenario("rainstorm-ii")
     assert scenario is not None
