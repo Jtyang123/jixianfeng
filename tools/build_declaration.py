@@ -22,6 +22,8 @@ INK = RGBColor(0x14, 0x2A, 0x28)
 MUTED = RGBColor(0x5F, 0x6E, 0x68)
 
 MEMBERS = ["杨鄢然（队长）", "赵立薇", "周梦瑶"]
+# 签署人：由队长代表本队签署，避免出现"三人签字位只签一人"的半成品观感
+SIGNER = "杨鄢然（队长）"
 
 COMPONENTS = [
     ("FastAPI", "0.115.x", "MIT"),
@@ -122,10 +124,10 @@ def build() -> Path:
     intro = doc.add_paragraph()
     intro.paragraph_format.space_after = Pt(6)
     intro.paragraph_format.line_spacing = 1.35
-    _font(intro.add_run("本队全体成员就上述项目作出如下声明，并对声明内容的真实性承担全部责任："), 10, True)
+    _font(intro.add_run("本人作为 OKC 队伍队长，代表本队就上述项目作出如下声明，并对声明内容的真实性承担全部责任："), 10, True)
 
     clauses = [
-        "本项目由 OKC 队伍三名成员独立完成，不存在抄袭、代做、购买成品或由第三方机构代写的情形。",
+        "本项目由 OKC 队伍独立完成，不存在抄袭、代做、购买成品或由第三方机构代写的情形。",
         "提交的源代码、项目白皮书、介绍 PPT、演示视频、界面截图与运行数据，均由本队自行产出；"
         "未使用其他参赛队伍的材料，也未使用任何未经授权的第三方素材。",
         "项目使用的主要开源组件及其许可证见下表。本队遵守各组件许可证条款，未删除或修改其版权与许可声明。",
@@ -167,13 +169,12 @@ def build() -> Path:
     sign = doc.add_paragraph()
     sign.paragraph_format.space_before = Pt(0)
     sign.paragraph_format.space_after = Pt(2)
-    _font(sign.add_run("队伍成员签字（本人手写）："), 9.5, True)
+    _font(sign.add_run("签署人（本人手写）："), 9.5, True)
 
-    # 5 列：签名格 / 间隔 / 签名格 / 间隔 / 签名格，间隔列不加边框，三条横线互不相连
-    columns = [Cm(4.2), Cm(0.9), Cm(4.2), Cm(0.9), Cm(4.2)]
-    cells_total = len(columns)
-    sign_table = doc.add_table(rows=2, cols=cells_total)
-    sign_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    # 单人签署：一条 7.6cm 横线，线上签字、线下打印身份标注，不留空白签字位
+    columns = [Cm(8.0)]
+    sign_table = doc.add_table(rows=2, cols=len(columns))
+    sign_table.alignment = WD_TABLE_ALIGNMENT.LEFT
     sign_table.autofit = False
     sign_table.rows[0].height = Cm(1.0)
     sign_table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
@@ -182,14 +183,12 @@ def build() -> Path:
     for cell, width in zip(sign_table.rows[1].cells, columns):
         cell.width = width
 
-    member_columns = (0, 2, 4)
-    for index, name in zip(member_columns, MEMBERS):
-        _bottom_border(sign_table.rows[0].cells[index])
-        paragraph = sign_table.rows[1].cells[index].paragraphs[0]
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.paragraph_format.space_before = Pt(1)
-        paragraph.paragraph_format.space_after = Pt(0)
-        _font(paragraph.add_run(name), 9.5, False, MUTED)
+    _bottom_border(sign_table.rows[0].cells[0])
+    label = sign_table.rows[1].cells[0].paragraphs[0]
+    label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    label.paragraph_format.space_before = Pt(1)
+    label.paragraph_format.space_after = Pt(0)
+    _font(label.add_run(f"{SIGNER}　队长代表本队签署"), 9.5, False, MUTED)
 
     date = doc.add_paragraph()
     date.alignment = WD_ALIGN_PARAGRAPH.RIGHT
