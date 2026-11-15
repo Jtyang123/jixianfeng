@@ -8,8 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_ROW_HEIGHT_RULE, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
@@ -44,7 +45,7 @@ def _font(run, size: float, bold: bool = False, color: RGBColor = INK) -> None:
 
 def _para(doc, text: str, size: float = 10, bold: bool = False, color: RGBColor = INK,
           align=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after: float = 5, first_line: float = 0.74,
-          line_spacing: float = 1.4):
+          line_spacing: float = 1.25):
     paragraph = doc.add_paragraph()
     paragraph.alignment = align
     paragraph.paragraph_format.space_after = Pt(space_after)
@@ -55,13 +56,28 @@ def _para(doc, text: str, size: float = 10, bold: bool = False, color: RGBColor 
     return paragraph
 
 
+def _bottom_border(cell, size: int = 8, color: str = "3A3A3A") -> None:
+    """只给单元格加下边框，作为可书写的手写签名线。"""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), str(size))
+    bottom.set(qn("w:space"), "0")
+    bottom.set(qn("w:color"), color)
+    borders.append(bottom)
+
+
 def build() -> Path:
     doc = Document()
     section = doc.sections[0]
     section.page_height = Cm(29.7)
     section.page_width = Cm(21.0)
     section.top_margin = Cm(1.9)
-    section.bottom_margin = Cm(1.7)
+    section.bottom_margin = Cm(1.3)
     section.left_margin = Cm(2.2)
     section.right_margin = Cm(2.2)
 
@@ -145,16 +161,39 @@ def build() -> Path:
 
     note = doc.add_paragraph()
     note.paragraph_format.space_before = Pt(3)
-    note.paragraph_format.space_after = Pt(10)
+    note.paragraph_format.space_after = Pt(2)
     _font(note.add_run("说明：上表为主要运行时依赖；openpyxl、Vite、@lucide/vue 等其余组件为 MIT / Apache-2.0 / ISC 许可，完整版本以 requirements.txt 与 package-lock.json 为准。"), 8, False, MUTED)
 
     sign = doc.add_paragraph()
-    sign.paragraph_format.space_before = Pt(4)
-    sign.paragraph_format.space_after = Pt(12)
-    _font(sign.add_run("队伍成员签字：________（杨鄢然）　　________（赵立薇）　　________（周梦瑶）"), 9.5)
+    sign.paragraph_format.space_before = Pt(0)
+    sign.paragraph_format.space_after = Pt(2)
+    _font(sign.add_run("队伍成员签字（本人手写）："), 9.5, True)
+
+    # 5 列：签名格 / 间隔 / 签名格 / 间隔 / 签名格，间隔列不加边框，三条横线互不相连
+    columns = [Cm(4.2), Cm(0.9), Cm(4.2), Cm(0.9), Cm(4.2)]
+    cells_total = len(columns)
+    sign_table = doc.add_table(rows=2, cols=cells_total)
+    sign_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    sign_table.autofit = False
+    sign_table.rows[0].height = Cm(1.0)
+    sign_table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+    for cell, width in zip(sign_table.rows[0].cells, columns):
+        cell.width = width
+    for cell, width in zip(sign_table.rows[1].cells, columns):
+        cell.width = width
+
+    member_columns = (0, 2, 4)
+    for index, name in zip(member_columns, MEMBERS):
+        _bottom_border(sign_table.rows[0].cells[index])
+        paragraph = sign_table.rows[1].cells[index].paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_before = Pt(1)
+        paragraph.paragraph_format.space_after = Pt(0)
+        _font(paragraph.add_run(name), 9.5, False, MUTED)
 
     date = doc.add_paragraph()
     date.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    date.paragraph_format.space_before = Pt(6)
     _font(date.add_run("日期：      年    月    日"), 10)
 
     TARGET.parent.mkdir(parents=True, exist_ok=True)
