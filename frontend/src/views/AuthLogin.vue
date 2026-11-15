@@ -50,7 +50,10 @@ async function submit() {
         <h2>登录调度平台</h2>
 
         <div v-if="hasDemoHint" class="auth-demo-credentials" data-testid="demo-credentials"><strong>演示账号</strong><code>{{ DEMO_USERNAME }}</code><strong>密码</strong><code>{{ DEMO_PASSWORD }}</code></div>
-        <p v-else>请使用管理员分配的值班账号登录。首次启动的初始密码见项目根目录 <code>data/bootstrap-admin-password.txt</code>。</p>
+        <div v-else class="auth-first-run" data-testid="first-run-hint">
+          <strong>首次使用？账号固定为 <code>admin</code></strong>
+          <span>密码在首次启动时随机生成：启动窗口会直接打印，也可以打开项目根目录的 <code>data/bootstrap-admin-password.txt</code> 复制。</span>
+        </div>
         <label><span>用户名</span><div class="auth-input"><UserRound :size="16" /><input v-model="username" autocomplete="username" maxlength="64" placeholder="请输入用户名" /></div></label>
         <label><span>密码</span><div class="auth-input"><LockKeyhole :size="16" /><input v-model="password" type="password" autocomplete="current-password" maxlength="200" placeholder="请输入密码" /></div></label>
         <div v-if="error" class="inline-error">{{ error }}</div>

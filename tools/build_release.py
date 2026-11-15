@@ -17,6 +17,9 @@ EXCLUDED_DIR_NAMES = {
 EXCLUDED_FILE_NAMES = {".env", "$null", "dict", ".DS_Store"}
 EXCLUDED_FILE_SUFFIXES = (".db", ".db-journal", ".db-wal", ".db-shm", ".pyc", ".pid", ".log")
 
+# 隐藏文件默认不进包（.ppt_check.pdf 这类临时产物曾混入过），只保留运行必需的几个
+KEPT_DOTFILES = {".env.example", ".gitignore", ".gitattributes", ".dockerignore"}
+
 # 评审不应看到的内部管理文档：自查报告、待办清单、自评表、赛题原文摘录。
 INTERNAL_DOCS = {
     "TRACK1_COMPLIANCE_REVIEW.md",
@@ -41,7 +44,10 @@ def _excluded_dir(name: str) -> bool:
 
 
 def _excluded_file(name: str) -> bool:
-    return name in EXCLUDED_FILE_NAMES or name.endswith(EXCLUDED_FILE_SUFFIXES)
+    if name in EXCLUDED_FILE_NAMES or name.endswith(EXCLUDED_FILE_SUFFIXES):
+        return True
+    # 隐藏文件（点开头）除白名单外一律排除，避免校验用临时文件混进评审包
+    return name.startswith(".") and name not in KEPT_DOTFILES
 
 
 def _excluded_internal_doc(relative: Path) -> bool:
@@ -139,12 +145,24 @@ def build() -> None:
 
     (PACKAGE / "提交说明.md").write_text(
         "# 急先锋初赛提交包\n\n"
-        "## 运行\n\nWindows 下双击或执行：\n\n```powershell\n.\\start.cmd\n```\n\n"
+        "## 第一步：启动并登录（评委请看这一节）\n\n"
+        "Windows 下双击或执行：\n\n```powershell\n.\\start.cmd\n```\n\n"
         "浏览器打开 `http://127.0.0.1:8010`。\n\n"
-        "如果本机没有 PostgreSQL，系统会自动回退 SQLite；公网部署使用 `Dockerfile` 与 `docker-compose.yml`，详见 `deploy/DEPLOYMENT.md`。\n\n"
+        "- **用户名固定为 `admin`**。\n"
+        "- **密码**：首次启动时 `start.cmd` 窗口会打印一段标题为「急先锋 · 首次启动，已创建管理员账号」的信息，"
+        "里面直接给出了密码；也可以打开包根目录的 `data/bootstrap-admin-password.txt`，文件内容就是密码。\n"
+        "- 密码由系统在首次启动时随机生成、只保存在本机，仓库与压缩包内都不含明文密码，"
+        "因此文档里不存在固定口令，请按上面两种方式获取。\n"
+        "- 首次登录后建议点右上角钥匙按钮修改密码。\n\n"
+        "如果启动窗口已经滚过去看不到密码：直接打开 `data/bootstrap-admin-password.txt` 读取。"
+        "如果改过密码又忘记：删除 `data/` 下的数据库文件后重启，系统会重新生成管理员账号并再次打印密码。\n\n"
+        "## 运行环境\n\n"
+        "如果本机没有 PostgreSQL，系统会自动回退 SQLite；公网部署使用 `Dockerfile` 与 `docker-compose.yml`，"
+        "详见 `deploy/DEPLOYMENT.md`。首次运行前需要执行一次 `setup.cmd` 安装依赖并构建前端。\n\n"
         "## 材料\n\n"
         "- `docs/急先锋_项目讲解PPT.pptx`（16 页，官方模版）\n"
         "- `docs/项目白皮书.md`\n"
+        "- `docs/安装与运行说明.md`\n"
         "- `docs/DEMO_SCRIPT.md`\n- `docs/DEMO_VIDEO_SCRIPT.md`\n- `docs/答辩问答.md`\n"
         "- `docs/AGENTARTS_VERIFICATION.md`\n- `docs/screenshots/`\n\n"
         "## 重要说明\n\n华为云 AgentArts 的真实调用需要配置 `AGENTARTS_BASE_URL`、`AGENTARTS_API_KEY` 和模型服务。"

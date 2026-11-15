@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .config import (
@@ -26,6 +28,38 @@ ROLE_LABELS = {
 }
 VALID_ROLES = set(ROLE_LABELS)
 PASSWORD_ITERATIONS = 310_000
+
+
+def _announce_bootstrap(username: str, password: str | None, credential_file: Path | None) -> None:
+    """首次启动时把登录信息打印到控制台，评委不需要翻文档也能登进系统。
+
+    仅在本进程随机生成密码时打印明文；密码由 .env 的 AUTH_BOOTSTRAP_PASSWORD
+    指定时不打印，避免服务端日志留存明文口令。
+    """
+    port = os.environ.get("PORT") or "8010"
+    line = "=" * 68
+    rows = [
+        "",
+        line,
+        "  急先锋 · 首次启动，已创建管理员账号",
+        "",
+        f"    用户名   {username}",
+    ]
+    if password:
+        rows.append(f"    密  码   {password}")
+    else:
+        rows.append("    密  码   使用 .env 中 AUTH_BOOTSTRAP_PASSWORD 配置的值")
+    rows.append(f"    登录地址 http://127.0.0.1:{port}")
+    if credential_file is not None:
+        rows.append(f"    凭据文件 {credential_file}")
+    rows.extend([
+        "",
+        "  评委请用以上账号登录；登录后可在右上角修改密码。",
+        "  该密码只保存在本机，不会进入代码仓库或提交材料。",
+        line,
+        "",
+    ])
+    print("\n".join(rows), flush=True)
 
 
 def _b64(value: bytes) -> str:
@@ -97,11 +131,14 @@ class AuthService:
         if not password:
             password = secrets.token_urlsafe(18)
             generated = True
-        user = self.create_user(AUTH_BOOTSTRAP_USERNAME or "admin", password, role="admin", display_name="系统管理员")
+        username = AUTH_BOOTSTRAP_USERNAME or "admin"
+        user = self.create_user(username, password, role="admin", display_name="系统管理员")
+        target = None
         if generated:
             target = PROJECT_DIR / "data" / "bootstrap-admin-password.txt"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(password + "\n", encoding="utf-8")
+        _announce_bootstrap(username, password if generated else None, target)
         return user
 
     def create_user(self, username: str, password: str, role: str = "viewer", display_name: str = "") -> dict:

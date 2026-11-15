@@ -9,4 +9,13 @@ if [ ! -f frontend/dist/index.html ]; then
 fi
 if [ -x "$ROOT/.venv/bin/python" ]; then PYTHON="$ROOT/.venv/bin/python"; else PYTHON="python3"; fi
 cd backend
+echo ""
+echo "Jixianfeng (Rapid Response OS) starting: http://127.0.0.1:${PORT:-8010}"
+echo "  Login username : admin"
+if [ -f "$ROOT/data/bootstrap-admin-password.txt" ]; then
+  echo "  Admin password : see data/bootstrap-admin-password.txt"
+else
+  echo "  Admin password : generated on first run, shown below and saved to data/bootstrap-admin-password.txt"
+fi
+echo ""
 exec "$PYTHON" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8010}"

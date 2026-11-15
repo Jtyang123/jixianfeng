@@ -549,6 +549,9 @@ def build() -> Path:
     text(slide, 0.95, 4.82, 10.4, 0.34,
          "生成 · 独立核验 · 结构化退回 · 重算 · 人工审批 · 可复现交付", 11,
          RGBColor(0xA9, 0xC4, 0xF5))
+    text(slide, 0.95, 5.26, 10.8, 0.28,
+         "现场体验：start.cmd → http://127.0.0.1:8010 · 用户名 admin · 初始密码见启动窗口打印或 data/bootstrap-admin-password.txt",
+         9, RGBColor(0xBF, 0xD2, 0xF0))
     text(slide, 0.95, 6.42, 10.4, 0.3, "演示数据，不替代现场应急指挥。", 9, RGBColor(0x7B, 0x95, 0xC7))
 
     prs.save(TARGET)

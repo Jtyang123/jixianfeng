@@ -954,6 +954,9 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .auth-demo-credentials { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 10px 11px; color: var(--ink-2); background: #eef4ee; border: 1px solid #c9dccb; border-radius: 9px; font-size: 9px; }
 .auth-demo-credentials strong { color: var(--teal); font-size: 8px; letter-spacing: .04em; }
 .auth-demo-credentials code { padding: 2px 5px; color: var(--ink); background: #fffdf8; border: 1px solid #d9e2d8; border-radius: 5px; font-family: Consolas, monospace; font-size: 9px; user-select: all; }
+.auth-first-run { display: grid; gap: 5px; padding: 10px 12px; color: var(--ink-2); background: #fdf6e7; border: 1px solid #e7d7b3; border-radius: 9px; font-size: 9px; line-height: 1.75; }
+.auth-first-run strong { color: #8a6110; font-size: 9.5px; font-weight: 700; }
+.auth-first-run code { padding: 1px 4px; color: var(--ink); background: #fffdf8; border: 1px solid #e2d4b3; border-radius: 4px; font-family: Consolas, monospace; font-size: 9px; user-select: all; }
 .auth-card label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; }
 .auth-input { display: flex; align-items: center; gap: 8px; padding: 10px 11px; background: #faf8f2; border: 1px solid var(--line); border-radius: 8px; }
 .auth-input:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }

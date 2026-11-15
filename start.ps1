@@ -46,7 +46,16 @@ if (Test-Path $venvPython) { $python = $venvPython } else { $python = 'python' }
 
 Push-Location (Join-Path $Root 'backend')
 try {
-    Write-Host "FarmMatch is starting: http://127.0.0.1:$Port" -ForegroundColor Green
+    $credentialFile = Join-Path $Root 'data\bootstrap-admin-password.txt'
+    Write-Host ""
+    Write-Host "Jixianfeng (Rapid Response OS) starting: http://127.0.0.1:$Port" -ForegroundColor Green
+    Write-Host "  Login username : admin"
+    if (Test-Path -LiteralPath $credentialFile) {
+        Write-Host "  Admin password : see $credentialFile" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Admin password : generated on first run, shown below and saved to data\bootstrap-admin-password.txt" -ForegroundColor Yellow
+    }
+    Write-Host ""
     & $python -m uvicorn app.main:app --host 0.0.0.0 --port $Port
 } finally {
     Pop-Location
