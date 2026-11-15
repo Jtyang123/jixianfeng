@@ -139,7 +139,7 @@ cd frontend
 npm run build
 ```
 
-当前基线：后端 `137 passed, 3 skipped`、前端 `7 passed`（4 个测试文件），前端生产构建通过。
+当前基线：后端 `137 passed, 3 skipped`、前端 `8 passed`（5 个测试文件），前端生产构建通过。
 
 ## 10. 协作约定
 

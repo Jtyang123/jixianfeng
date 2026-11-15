@@ -951,6 +951,9 @@ input[type='range'] { height: 3px; accent-color: var(--orange); }
 .auth-card { width: min(430px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 34px; background: rgba(255,253,248,.94); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 24px 60px rgba(20,40,35,.12); }
 .auth-card h2 { font-size: 24px; }
 .auth-card > p { margin-top: -5px; color: var(--muted); font-size: 10px; }
+.auth-demo-credentials { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 10px 11px; color: var(--ink-2); background: #eef4ee; border: 1px solid #c9dccb; border-radius: 9px; font-size: 9px; }
+.auth-demo-credentials strong { color: var(--teal); font-size: 8px; letter-spacing: .04em; }
+.auth-demo-credentials code { padding: 2px 5px; color: var(--ink); background: #fffdf8; border: 1px solid #d9e2d8; border-radius: 5px; font-family: Consolas, monospace; font-size: 9px; user-select: all; }
 .auth-card label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; }
 .auth-input { display: flex; align-items: center; gap: 8px; padding: 10px 11px; background: #faf8f2; border: 1px solid var(--line); border-radius: 8px; }
 .auth-input:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }

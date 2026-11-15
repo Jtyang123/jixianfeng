@@ -4,8 +4,10 @@ import { ArrowRight, LockKeyhole, RadioTower, ShieldCheck, UserRound } from '@lu
 import { api } from '../api'
 
 const emit = defineEmits(['success'])
-const username = ref('')
-const password = ref('')
+const DEMO_USERNAME = 'admin'
+const DEMO_PASSWORD = '4JHcg071wjryH1e_uupnZX1Q'
+const username = ref(DEMO_USERNAME)
+const password = ref(DEMO_PASSWORD)
 const loading = ref(false)
 const error = ref('')
 
@@ -43,12 +45,13 @@ async function submit() {
       <form class="auth-card" @submit.prevent="submit">
         <div class="eyebrow">SECURE ACCESS</div>
         <h2>登录调度平台</h2>
-        <p>请使用管理员分配的值班账号登录。</p>
+        <p>评委演示环境已自动填入管理员账号，直接点击“进入平台”。</p>
+        <div class="auth-demo-credentials" data-testid="demo-credentials"><strong>演示账号</strong><code>{{ DEMO_USERNAME }}</code><strong>密码</strong><code>{{ DEMO_PASSWORD }}</code></div>
         <label><span>用户名</span><div class="auth-input"><UserRound :size="16" /><input v-model="username" autocomplete="username" maxlength="64" placeholder="请输入用户名" /></div></label>
         <label><span>密码</span><div class="auth-input"><LockKeyhole :size="16" /><input v-model="password" type="password" autocomplete="current-password" maxlength="200" placeholder="请输入密码" /></div></label>
         <div v-if="error" class="inline-error">{{ error }}</div>
         <button class="primary-action auth-submit" type="submit" :disabled="loading">{{ loading ? '登录中...' : '进入平台' }}<ArrowRight :size="16" /></button>
-        <small>初始管理员密码保存在服务器本地，不在网页中暴露。</small>
+        <small>演示密码仅用于本地评审；正式部署请修改密码并关闭自动填入。</small>
       </form>
     </section>
   </main>
