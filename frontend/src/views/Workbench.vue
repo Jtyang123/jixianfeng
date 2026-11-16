@@ -926,7 +926,7 @@ onBeforeUnmount(() => {
             <div class="evidence-line"><span>证据链</span><em v-for="ref in runResult.final_verification.evidence_refs" :key="ref">{{ ref }}</em></div>
           </div>
 
-          <div v-if="resultTab === 'tasks'" class="detail-content task-tracking-content">
+          <div v-if="resultTab === 'tasks' && (approved || dispatchTasks.length)" class="detail-content task-tracking-content">
             <div class="task-tracking-head"><div><div class="eyebrow">DISPATCH EXECUTION</div><h3>执行任务跟踪</h3><p>更新任务状态后，系统会记录负责人和最后更新时间。</p></div><span class="workflow-chip">{{ dispatchTasks.length }} 条任务</span></div>
             <div v-if="dispatchTasks.length" class="dispatch-task-block dispatch-task-block--page">
               <div v-for="task in dispatchTasks" :key="task.id" class="dispatch-task-row">
@@ -1007,7 +1007,7 @@ onBeforeUnmount(() => {
                 <ol><li v-for="action in runResult.delivery.actions" :key="action">{{ action }}</li></ol>
               </div>
             </div>
-            <div class="task-tracking-hint"><strong>审批已完成</strong><span>运输任务、库存预留和签收状态在“执行任务”页签中跟踪。</span><button class="text-action" @click="resultTab = 'tasks'">前往执行任务</button></div>
+            <div v-if="approvalDisplay === 'approved'" class="task-tracking-hint"><strong>审批已完成</strong><span>运输任务、库存预留和签收状态在“执行任务”页签中跟踪。</span><button class="text-action" @click="resultTab = 'tasks'">前往执行任务</button></div>
             <div class="timeline-table">
               <div v-for="item in runResult.delivery.timeline.slice(0, 6)" :key="`${item.warehouse}-${item.destination}`" class="timeline-row">
                 <span class="timeline-time">{{ item.departure.slice(11, 16) }}</span>
