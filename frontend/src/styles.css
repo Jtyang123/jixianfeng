@@ -1461,7 +1461,6 @@ input[type="checkbox"], input[type="radio"] {
     margin-top: 14px;
     box-shadow: 0 10px 24px rgba(217, 84, 49, .24), 0 -8px 16px rgba(255, 254, 249, .88);
   }
-  .center-stack,
   .agent-rail {
     position: sticky;
     top: 84px;
@@ -1470,18 +1469,21 @@ input[type="checkbox"], input[type="radio"] {
     min-height: 560px;
   }
   .center-stack {
-    height: calc(100vh - 104px);
+    position: static;
+    height: auto;
+    min-height: 0;
+    align-self: start;
   }
   .map-panel {
-    flex: 1;
+    flex: 0 0 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
   .map-panel .leaflet-shell {
-    flex: 1;
-    height: auto;
-    min-height: 390px;
+    flex: none;
+    height: 420px;
+    min-height: 420px;
   }
   .agent-rail {
     min-height: 560px;
