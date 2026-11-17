@@ -540,20 +540,6 @@ def build() -> Path:
          "注：需求、实现、测试与文档均由队长承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
     page_foot(slide, 15)
 
-    # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────
-    slide = prs.slides.add_slide(section)
-    text(slide, 0.92, 2.34, 6.0, 1.0, "谢谢观看", 44, WHITE, True)
-    text(slide, 0.95, 3.42, 6.0, 0.42, "Thanks for watching", 16, RGBColor(0x9F, 0xB8, 0xE6))
-    rect(slide, 0.98, 4.12, 1.55, 0.055, ORANGE)
-    text(slide, 0.95, 4.38, 9.6, 0.34, "急先锋 · 应急资源调度多智能体编排平台", 13, WHITE, True)
-    text(slide, 0.95, 4.82, 10.4, 0.34,
-         "生成 · 独立核验 · 结构化退回 · 重算 · 人工审批 · 可复现交付", 11,
-         RGBColor(0xA9, 0xC4, 0xF5))
-    text(slide, 0.95, 5.26, 10.8, 0.28,
-         "现场体验：start.cmd → http://127.0.0.1:8010 · 用户名 admin · 初始密码见启动窗口打印或 data/bootstrap-admin-password.txt",
-         9, RGBColor(0xBF, 0xD2, 0xF0))
-    text(slide, 0.95, 6.42, 10.4, 0.3, "演示数据，不替代现场应急指挥。", 9, RGBColor(0x7B, 0x95, 0xC7))
-
     prs.save(TARGET)
     return TARGET
 
