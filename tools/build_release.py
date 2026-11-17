@@ -53,6 +53,8 @@ def _excluded_dir(name: str) -> bool:
 
 
 def _excluded_file(name: str) -> bool:
+    if name == "farmmatch-demo.db":
+        return False
     if name in EXCLUDED_FILE_NAMES or name.endswith(EXCLUDED_FILE_SUFFIXES):
         return True
     # 隐藏文件（点开头）除白名单外一律排除，避免校验用临时文件混进评审包
