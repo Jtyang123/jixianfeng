@@ -103,6 +103,20 @@ docker compose up --build -d
 
 编辑 `.env` 可启用 AgentArts、高德地址解析、PostgreSQL 和自建 OSRM。任何 `.env` 和 API Key 都不得提交到 Git。
 
+### 复现视频中的历史运行
+
+仓库附带脱敏演示数据库 `backend/demo/farmmatch-demo.db`，其中保留了视频使用的两条运行：
+
+- `RUN-20261117-115022-58E6`：现场 `heatwave-iii` Planner 推演
+- `RUN-20261114-210325-F769`：核验退回、重规划、第二轮通过、审批和库存预留
+
+首次使用先执行 `setup.cmd`，再运行：
+
+```powershell
+.\start-demo.cmd
+```
+
+该脚本会把演示库复制为 `backend/farmmatch.demo-runtime.db` 再启动，不会修改仓库中的快照。演示库不含用户、会话、审计日志、重试任务和外部 AgentArts 端点；首次启动会重新生成管理员密码。
 ## 三种演示形态
 
 以下时长指 `LLM_ENABLED=false` 时展示四角色 AgentArts 编排链路；若启用 LLM Planner，主链路由 DeepSeek 规划工具调用，AgentArts 只参与扩展审查。演示前运行 `demo_preflight` 判定实时环境。

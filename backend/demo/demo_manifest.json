@@ -1,0 +1,29 @@
+{
+  "selected_runs": [
+    "RUN-20261117-115022-58E6",
+    "RUN-20261114-210325-F769"
+  ],
+  "counts": {
+    "runs": 2,
+    "llm_calls": 4,
+    "agent_events": 106,
+    "tool_calls": 18,
+    "a2a_messages": 2,
+    "agent_memory": 9,
+    "dispatch_tasks": 4,
+    "inventory_reservations": 12,
+    "agent_performance": 21,
+    "workflow_definitions": 8,
+    "agent_registry": 8,
+    "knowledge_documents": 9,
+    "knowledge_chunks": 9,
+    "inventory_snapshots": 3,
+    "inventory": 144,
+    "users": 0,
+    "auth_sessions": 0,
+    "login_attempts": 0,
+    "audit_logs": 0
+  },
+  "integrity": "ok",
+  "database_bytes": 1347584
+}

@@ -35,3 +35,4 @@ docs/competition_deck_text.txt
 
 # Local assistant memory
 .workbuddy/
+!backend/demo/farmmatch-demo.db
