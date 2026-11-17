@@ -157,7 +157,7 @@ docker compose up --build -d
 
 - 技术方案书：`docs/方案书.md`（7438 个中文字符）
 - PDF 方案书：`docs/急先锋_项目方案书.pdf`
-- 讲解 PPT：`docs/急先锋_项目讲解PPT.pptx`（16 页，正文 13 页 + 致谢，按官方模版蓝白配色）
+- 讲解 PPT：`docs/急先锋_项目讲解PPT.pptx`（15 页，正文 13 页 + 致谢，按官方模版蓝白配色）
 - 演示脚本：`docs/DEMO_SCRIPT.md`
 - 答辩问答：`docs/答辩问答.md`
 - 评分标准对齐：`docs/评分标准对齐清单.md`

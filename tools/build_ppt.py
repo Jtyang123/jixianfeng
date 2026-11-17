@@ -221,25 +221,6 @@ def build() -> Path:
          f"仓库：{TEAM['repo']}   ｜   演示数据均已标识，不替代现场应急指挥", 10,
          RGBColor(0x82, 0x9C, 0xCE))
 
-    # ── 02 目录 ──────────────────────────────────────────────────────────
-    slide = prs.slides.add_slide(content)
-    text(slide, 1.05, 1.62, 1.5, 0.85, "目", 44, BLUE, True)
-    text(slide, 1.05, 2.46, 1.5, 0.85, "录", 44, BLUE, True)
-    text(slide, 1.05, 3.52, 2.2, 0.28, "CONTENTS", 10, MUTED, True)
-    chapters = [
-        ("01", "项目概述", "背景痛点 · 平台定位 · 核心优势"),
-        ("02", "解决方案", "五层架构 · 四 Agent · 编排调度 · 独立核验 · 自循环"),
-        ("03", "应用成效", "真实运行轨迹 · 六阶段耗时 · 72 样本基准"),
-        ("04", "商业模式", "推广路径 · 目标客户 · 生态运作"),
-        ("05", "团队介绍", "成员分工 · 工程化能力 · 团队优势"),
-    ]
-    for index, (num, name, detail) in enumerate(chapters):
-        top = 1.58 + index * 1.02
-        rect(slide, 3.62, top + 0.06, 0.5, 0.5, BLUE if index % 2 == 0 else BLUE_DEEP, rounded=True)
-        text(slide, 3.62, top + 0.15, 0.5, 0.3, num, 11, WHITE, True, PP_ALIGN.CENTER)
-        text(slide, 4.32, top, 3.4, 0.36, name, 19, INK, True)
-        text(slide, 7.14, top + 0.08, 5.2, 0.3, detail, 10.5, MUTED)
-    page_foot(slide, 2)
 
     # ── 03 01 项目概述：背景与痛点 ────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -258,7 +239,7 @@ def build() -> Path:
     text(slide, 0.92, 6.32, 11.4, 0.34,
          "核心判断：平台价值不在于生成长报告，而在于让方案经过硬规则核验，并在失败后收敛。",
          12.5, BLUE_DEEP, True)
-    page_foot(slide, 3)
+    page_foot(slide, 2)
 
     # ── 04 01 项目概述：定位与边界 ────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -280,7 +261,7 @@ def build() -> Path:
     text(slide, 0.68, 6.22, 11.9, 0.34,
          "核心优势：四角色权限隔离 + 硬规则独立核验 + 结构化回环收敛 + 固定快照可复现。",
          12, BLUE_DEEP, True)
-    page_foot(slide, 4)
+    page_foot(slide, 3)
 
     # ── 05 02 解决方案：架构 ─────────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -302,7 +283,7 @@ def build() -> Path:
     text(slide, 0.84, 6.44, 11.8, 0.3,
          "三档互斥：llm-planner（核心本地 + AgentArts 扩展审查）　/　agentarts（四角色云端）　/　local（全本地）",
          9.5, ORANGE, True)
-    page_foot(slide, 5)
+    page_foot(slide, 4)
 
     # ── 06 02 解决方案：Agent 团队 ───────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -318,7 +299,7 @@ def build() -> Path:
     text(slide, 0.7, 6.28, 11.9, 0.34,
          "统一契约：run_id、输入产物、约束条件、数据范围、证据引用、置信度、下一步动作。",
          10.5, MUTED)
-    page_foot(slide, 6)
+    page_foot(slide, 5)
 
     # ── 07 02 解决方案：编排流程 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -345,7 +326,7 @@ def build() -> Path:
          10.5, BLUE_DEEP, True)
     text(slide, 0.76, 6.34, 11.8, 0.3,
          "门控原则：核验不通过不交付，人工未确认不执行；每一步状态变化都写入事件流。", 10.5, MUTED)
-    page_foot(slide, 7)
+    page_foot(slide, 6)
 
     # ── 08 02 解决方案：动态调度 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -374,7 +355,7 @@ def build() -> Path:
     text(slide, 0.82, 6.28, 11.8, 0.34,
          "调度器按能力画像、历史成功率与当前负载打分排序，并把每次分配写入可审计事件。",
          10.5, BLUE_DEEP, True)
-    page_foot(slide, 8)
+    page_foot(slide, 7)
 
     # ── 09 02 解决方案：独立核验 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -399,7 +380,7 @@ def build() -> Path:
     text(slide, 0.72, 6.24, 11.8, 0.34,
          "7 类问题代码：道路阻断、库存不足、载重超限、时效违约、需求缺口、数据过期、方案冲突。",
          10, MUTED)
-    page_foot(slide, 9)
+    page_foot(slide, 8)
 
     # ── 10 02 解决方案：自循环 ───────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -424,7 +405,7 @@ def build() -> Path:
          10.5, ORANGE, True)
     text(slide, 0.7, 6.24, 11.8, 0.3,
          "实测：首轮因主通道封闭被独立核验退回，第二轮改走备用通道后通过，评分恢复 100。", 10, MUTED)
-    page_foot(slide, 10)
+    page_foot(slide, 9)
 
     # ── 11 02 解决方案：技术底座 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -441,7 +422,7 @@ def build() -> Path:
     text(slide, 0.72, 6.24, 11.8, 0.34,
          "边界：LLM 不直接改数字。数量、路线、载重与库存全部由确定性工具计算，模型只做判断与解释。",
          10.5, BLUE_DEEP, True)
-    page_foot(slide, 11)
+    page_foot(slide, 10)
 
     # ── 12 03 应用成效：真实轨迹 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -453,7 +434,7 @@ def build() -> Path:
         left = 0.66 + index * 3.02
         text(slide, left, 6.34, 0.72, 0.34, value, 17, accent, True)
         text(slide, left + 0.42, 6.44, 2.4, 0.24, label, 9.5, MUTED)
-    page_foot(slide, 12, "急先锋 · Planner 轨迹面板    演练数据，不替代现场指挥")
+    page_foot(slide, 11, "急先锋 · Planner 轨迹面板    演练数据，不替代现场指挥")
 
     # ── 13 03 应用成效：阶段耗时与基准 ───────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -474,7 +455,7 @@ def build() -> Path:
         text(slide, 10.14, top + 0.42, 2.34, 0.42, detail, 8.5, MUTED, spacing=1.2)
     text(slide, 0.68, 6.32, 7.6, 0.3, "阶段耗时覆盖工具执行与对应决策，编排开销单独记账。", 9.5, MUTED)
     text(slide, 8.5, 6.32, 4.2, 0.3, "基准 scope：确定性核心，不含 LLM 与 IO。", 9, ORANGE, True)
-    page_foot(slide, 13)
+    page_foot(slide, 12)
 
     # ── 14 04 商业模式 ──────────────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -511,7 +492,7 @@ def build() -> Path:
          8.8, MUTED, spacing=1.3)
     text(slide, 0.72, 6.28, 11.8, 0.34,
          "收入结构规划：软件订阅 + 演练服务 + 定制实施。现阶段不对外承诺规模化营收。", 10, MUTED)
-    page_foot(slide, 14)
+    page_foot(slide, 13)
 
     # ── 15 05 团队介绍 ──────────────────────────────────────────────────
     slide = prs.slides.add_slide(content)
@@ -539,7 +520,7 @@ def build() -> Path:
         text(slide, 2.3, top + 0.17, 10.0, 0.24, body, 9.5, MUTED)
     text(slide, 0.74, 6.62, 11.6, 0.26,
          "注：需求、实现、测试与文档均由队长承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
-    page_foot(slide, 15)
+    page_foot(slide, 14)
 
     # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────
     slide = prs.slides.add_slide(section)
