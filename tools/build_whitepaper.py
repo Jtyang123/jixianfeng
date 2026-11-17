@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -22,8 +23,9 @@ from docx.shared import Cm, Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-SOURCE = DOCS / "项目白皮书.md"
-TARGET = DOCS / "赛题一+OKC+急先锋_项目白皮书.docx"
+# 默认生成白皮书；设置环境变量可复用同一套排版生成其它 Markdown 文档
+SOURCE = Path(os.getenv("DOC_SOURCE", str(DOCS / "项目白皮书.md")))
+TARGET = Path(os.getenv("DOC_TARGET", str(DOCS / "赛题一+OKC+急先锋_项目白皮书.docx")))
 
 HEI = "黑体"
 SONG = "宋体"

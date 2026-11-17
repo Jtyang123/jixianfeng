@@ -27,6 +27,8 @@ INTERNAL_DOCS = {
     "初赛提交清单.md",
     "评分标准对齐清单.md",
     "competition_deck_text.txt",
+    # 学籍报告/声明的办理指引，属内部流程，不应出现在评审包里
+    "证明材料清单.md",
 }
 INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
 
@@ -34,6 +36,8 @@ INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
 DUPLICATED_ARTIFACTS = {
     "赛题一+OKC+急先锋_项目白皮书.pdf",
     "赛题一+OKC+急先锋_项目白皮书.docx",
+    # 方案书 PDF 与 01_方案书与项目白皮书 重复提交，代码包只留 md 源
+    "赛题一+OKC+急先锋_方案书.pdf",
     # 方案书 HTML 与 05_其他材料 的附录重复，代码包只留 md 源
     "方案书.html",
     # 声明模板由 04_相关证明材料 单独提交，代码包里不需要
@@ -59,6 +63,11 @@ def _excluded_file(name: str) -> bool:
         return True
     # 隐藏文件（点开头）除白名单外一律排除，避免校验用临时文件混进评审包
     return name.startswith(".") and name not in KEPT_DOTFILES
+
+
+def _excluded_top_file(name: str) -> bool:
+    """根目录的 package.json 是 npm init 误生成的空壳，前端真实工程在 frontend/。"""
+    return name == "package.json"
 
 
 def _excluded_internal_doc(relative: Path) -> bool:
@@ -143,7 +152,7 @@ def build() -> None:
     for source in ROOT.iterdir():
         if source.is_dir() and _excluded_dir(source.name):
             continue
-        if source.is_file() and _excluded_file(source.name):
+        if source.is_file() and (_excluded_file(source.name) or _excluded_top_file(source.name)):
             continue
         if source.is_dir():
             shutil.copytree(source, PACKAGE / source.name, ignore=_copy_ignore)
@@ -180,11 +189,22 @@ def build() -> None:
         "如果本机没有 PostgreSQL，系统会自动回退 SQLite；公网部署使用 `Dockerfile` 与 `docker-compose.yml`，"
         "详见 `deploy/DEPLOYMENT.md`。首次运行前需要执行一次 `setup.cmd` 安装依赖并构建前端。\n\n"
         "## 材料\n\n"
-        "- `docs/急先锋_项目讲解PPT.pptx`（16 页，官方模版）\n"
-        "- `docs/项目白皮书.md`\n"
-        "- `docs/安装与运行说明.md`\n"
-        "- `docs/DEMO_SCRIPT.md`\n- `docs/DEMO_VIDEO_SCRIPT.md`\n- `docs/答辩问答.md`\n"
-        "- `docs/AGENTARTS_VERIFICATION.md`\n- `docs/screenshots/`\n\n"
+        "本代码包内含：\n\n"
+        "- `README.md`：项目说明、架构、运行方式\n"
+        "- `docs/AGENT_DESIGN.md`：四个 Agent 的契约、职责边界与禁止事项\n"
+        "- `docs/AGENTARTS_VERIFICATION.md`、`docs/AGENTARTS_4_AGENT_SETUP.md`：云端四角色验证与配置\n"
+        "- `docs/DEMO_SCRIPT.md`、`docs/DEMO_VIDEO_SCRIPT.md`：演示步骤与视频脚本\n"
+        "- `docs/agentarts_prompts/`：四个角色的提示词原文\n"
+        "- `docs/screenshots/`：界面截图\n"
+        "- `backend/demo/`：脱敏演示数据库，含演示视频中的两条运行记录\n\n"
+        "方案书、项目白皮书、讲解 PPT、演示视频是独立提交件，见大赛提交页对应的 01~03 目录，"
+        "不重复放进代码包。\n\n"
+        "## 想直接看视频里那条运行记录\n\n"
+        "视频中的 `RUN-20261114-210325-F769`（核验退回 → 重规划 → 第二轮通过 → 人工审批）"
+        "和 `RUN-20261117-115022-58E6`（现场高温推演）都在 `backend/demo/farmmatch-demo.db` 里。\n\n"
+        "```powershell\n.\\setup.cmd\n.\\start-demo.cmd\n```\n\n"
+        "`start-demo.cmd` 会把演示库复制成运行时数据库（不影响你后续自己新增的运行），"
+        "然后照常首次启动、打印管理员密码。左侧「运行记录」可直接打开这两条。\n\n"
         "## 重要说明\n\n华为云 AgentArts 的真实调用需要配置 `AGENTARTS_BASE_URL`、`AGENTARTS_API_KEY` 和模型服务。"
         "未配置时，系统使用本地确定性回退以保证演示可运行。\n",
         encoding="utf-8",
