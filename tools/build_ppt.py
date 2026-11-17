@@ -517,13 +517,14 @@ def build() -> Path:
     slide = prs.slides.add_slide(content)
     page_title(slide, "05　团队介绍", "队长主导全链路实现，工程化能力可验证")
     members = [
-        (f"队长 {TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度、\n核验门控与整体架构。", BLUE),
-        (f"成员 {TEAM['members'][1]}", "队员", "参与项目方案讨论。\n\n武汉学院在校本科生。", ORANGE),
-        (f"成员 {TEAM['members'][2]}", "队员", "参与项目方案讨论。\n\n武汉学院在校本科生。", TEAL),
+        (f"队长 {TEAM['members'][0]}", "编排引擎与调度", "负责 Planner、DAG 调度与核验门控。", BLUE),
+        (f"成员 {TEAM['members'][1]}", "队员", "参与项目方案讨论。", ORANGE),
+        (f"成员 {TEAM['members'][2]}", "队员", "参与项目方案讨论。", TEAL),
     ]
     for index, (name, role, body, accent) in enumerate(members):
         card(slide, 0.66 + index * 3.9, 1.94, 3.6, 1.86, name, role + "\n\n" + body, accent,
              None, 12.5, 10)
+    text(slide, 0.7, 3.88, 11.7, 0.24, "三名成员均为武汉学院信息工程学院软件工程专业 2024 级本科生。", 8.5, MUTED)
     text(slide, 0.7, 4.14, 6.0, 0.3, "团队优势", 13, INK, True)
     strengths = [
         ("可验证", "后端 137 项、前端 9 项测试全绿，CI 可复跑。"),
