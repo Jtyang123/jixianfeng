@@ -427,13 +427,13 @@ def build() -> Path:
     # ── 12 03 应用成效：真实轨迹 ─────────────────────────────────────────
     slide = prs.slides.add_slide(content)
     page_title(slide, "03　应用成效", "Planner 真实轨迹：8 步计划 · 10 步执行 · 1 次重规划")
-    picture(slide, SHOTS / "ppt_planner.png", 0.66, 1.88, 12.0, 4.32, trim=(0.021, 0.0, 0.0, 0.0))
+    picture(slide, SHOTS / "ppt_planner.png", 0.86, 1.78, 11.6, 4.12, trim=(0.021, 0.0, 0.0, 0.0))
     metrics = [("10", "实际执行步骤", BLUE), ("1", "触发重规划", ORANGE),
-               ("5", "LLM 决策次数", TEAL), ("8", "初始计划步骤", MUTED)]
+               ("3", "LLM 调用次数", TEAL), ("8", "初始计划步骤", MUTED)]
     for index, (value, label, accent) in enumerate(metrics):
         left = 0.66 + index * 3.02
-        text(slide, left, 6.34, 0.72, 0.34, value, 17, accent, True)
-        text(slide, left + 0.42, 6.44, 2.4, 0.24, label, 9.5, MUTED)
+        text(slide, left, 6.02, 0.72, 0.34, value, 17, accent, True)
+        text(slide, left + 0.42, 6.12, 2.4, 0.24, label, 9.5, MUTED)
     page_foot(slide, 11, "急先锋 · Planner 轨迹面板    演练数据，不替代现场指挥")
 
     # ── 13 03 应用成效：阶段耗时与基准 ───────────────────────────────────
