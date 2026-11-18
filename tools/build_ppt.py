@@ -30,7 +30,6 @@ TARGET = DOCS / "急先锋_项目讲解PPT.pptx"
 TEAM = {
     "name": "OKC",
     "speaker": "杨鄢然",           # 答辩/演讲人姓名
-    "advisor": "李哲",             # 指导教师
     "school": "武汉学院",          # 学校 / 单位
     "repo": "github.com/Jtyang123/jixianfeng",
     "members": ["杨鄢然", "赵立薇", "周梦瑶"],
@@ -215,7 +214,7 @@ def build() -> Path:
     text(slide, 0.95, 3.44, 9.8, 0.42, "生成 · 独立核验 · 结构化退回 · 重算 · 人工审批 · 可复现交付",
          13.5, RGBColor(0xBB, 0xCF, 0xF0))
     info = (f"队伍名称：{TEAM['name']}　　演讲人：{TEAM['speaker']}　　"
-            f"指导教师：{TEAM['advisor']}　　学校：{TEAM['school']}")
+            f"学校：{TEAM['school']}")
     text(slide, 0.95, 4.28, 10.2, 0.3, info, 13, RGBColor(0x9F, 0xB8, 0xE6), True)
     text(slide, 0.95, 4.78, 10.2, 0.3,
          f"仓库：{TEAM['repo']}   ｜   演示数据均已标识，不替代现场应急指挥", 10,
@@ -519,7 +518,7 @@ def build() -> Path:
         text(slide, 0.94, top + 0.16, 1.5, 0.26, name, 10, BLUE, True)
         text(slide, 2.3, top + 0.17, 10.0, 0.24, body, 9.5, MUTED)
     text(slide, 0.74, 6.62, 11.6, 0.26,
-         "注：需求、实现、测试与文档均由队长承担；团队来自武汉学院，指导教师李哲。", 8.5, ORANGE)
+         "注：需求、实现、测试与文档均由队长承担；团队来自武汉学院。", 8.5, ORANGE)
     page_foot(slide, 14)
 
     # ── 16 致谢（深蓝数据流）─────────────────────────────────────────────

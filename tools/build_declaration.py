@@ -103,7 +103,6 @@ def build() -> Path:
         ("参赛队伍", "OKC"),
         ("队伍成员", "、".join(MEMBERS)),
         ("所在院校", "武汉学院"),
-        ("指导教师", "李哲"),
         ("代码仓库", "https://github.com/Jtyang123/jixianfeng"),
     ]
     table = doc.add_table(rows=0, cols=2)
