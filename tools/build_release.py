@@ -29,6 +29,9 @@ INTERNAL_DOCS = {
     "competition_deck_text.txt",
     # 学籍报告/声明的办理指引，属内部流程，不应出现在评审包里
     "证明材料清单.md",
+    # 拍摄/现场演示脚本属团队自用，且与实际演示库场景、4 分钟成片已不一致
+    "DEMO_VIDEO_SCRIPT.md",
+    "DEMO_SCRIPT.md",
 }
 INTERNAL_DOC_SUFFIXES = ("-verify.png", "key-crop.png", "endpoint-crop.png")
 
@@ -45,6 +48,7 @@ DUPLICATED_ARTIFACTS = {
     # 声明模板由 04_相关证明材料 单独提交，代码包里不需要
     "OKC_项目原创性声明_待签字.docx",
     "OKC_项目原创性声明_待签字.pdf",
+    "OKC_项目原创性声明.pdf",
 }
 
 
